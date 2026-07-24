@@ -240,6 +240,24 @@ static bool isServoTrimAdjustment(int adjFunc)
         adjFunc == ADJUSTMENT_SERVO_TRIM_YAW;
 }
 
+/*
+ * The SERVO_TRIM_* adjustments are re-baselined to zero whenever the servo
+ * mid points get persisted (see servoTrimCommit()), so that further trim is
+ * only ever allowed to move +-200us away from the last saved value. Every
+ * adjustment range driving one of those functions must be resynced right
+ * after that happens, otherwise adjState->adjValue keeps the stale
+ * pre-commit value and the next (possibly tiny) stick movement is compared
+ * against it, producing a large, discontinuous jump in cfgSet()'s delta.
+ */
+void resyncServoTrimAdjustments(void)
+{
+    for (int index = 0; index < MAX_ADJUSTMENT_RANGE_COUNT; index++) {
+        if (isServoTrimAdjustment(adjustmentRanges(index)->function)) {
+            adjustmentRangeReset(index);
+        }
+    }
+}
+
 static void updateAdjustmentData(int adjFunc, int value)
 {
     const timeMs_t now = millis();

@@ -53,6 +53,7 @@ void servoUpdate(void);
 void servoShutdown(void);
 
 void validateAndFixServoConfig(void);
+void servoTrimCommit(void);
 
 ADJFUN_DECLARE(SERVO_TRIM_ROLL)
 ADJFUN_DECLARE(SERVO_TRIM_PITCH)

@@ -108,6 +108,23 @@ void set_ADJUSTMENT_SERVO_TRIM_PITCH(int v) { applyServoAxisTrim(1, v); }
 int get_ADJUSTMENT_SERVO_TRIM_YAW(void)     { return lrintf(servoAxisTrim[2]); }
 void set_ADJUSTMENT_SERVO_TRIM_YAW(int v)   { applyServoAxisTrim(2, v); }
 
+/*
+ * Re-baseline the runtime trim tracking to zero once the current servo
+ * mid points have actually been persisted (written to EEPROM). The
+ * adjustment range for SERVO_TRIM_* is clamped to +-200us of whatever
+ * servoAxisTrim[] currently reads, so without this call that window would
+ * stay relative to the value at boot rather than the last saved value,
+ * letting repeated save cycles drift the servo center arbitrarily far.
+ * The mid points themselves are already live-updated by applyServoAxisTrim(),
+ * so this only resets the tracking, it does not touch servoParams()->mid.
+ */
+void servoTrimCommit(void)
+{
+    servoAxisTrim[0] = 0;
+    servoAxisTrim[1] = 0;
+    servoAxisTrim[2] = 0;
+}
+
 uint8_t getServoCount(void)
 {
     return servoCount;

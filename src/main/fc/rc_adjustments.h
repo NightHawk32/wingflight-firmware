@@ -175,6 +175,7 @@ typedef enum {
 
 void adjustmentRangeInit(void);
 void adjustmentRangeReset(int index);
+void resyncServoTrimAdjustments(void);
 
 void processRcAdjustments(void);
 
