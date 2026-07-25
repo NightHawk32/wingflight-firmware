@@ -1,3 +1,14 @@
+# 0.0.9
+
+Add servo trim adjustments for roll/pitch/yaw, with resync/commit support.
+Add governor RPM max limiter.
+Add FrSKY RPM S.Port sensor support.
+Add runtime effective PID gain MSP endpoint.
+Allow old and new mode for XDFLY/ZTW/OMPHOBBY ESC telemetry.
+Fix S.Port master detection when checking forwarded FBUS sensor telemetry.
+Fix mixer/gain curve point count validation from MSP.
+Widen master_gain range for finer PID gain resolution.
+
 # 0.0.8
 
 Rework fixed-wing throttle attenuation (TPA) to use the shared gain-curve pool instead of a fixed linear ramp.
