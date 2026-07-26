@@ -1,3 +1,8 @@
+# 0.0.10
+
+Remove legacy heli tail_rotor_mode; rename main/tail naming to motor1/motor2 throughout (gear ratios, RPM/speed accessors, telemetry sensor IDs, blackbox log fields).
+Add descriptive model_type field to mixer config.
+
 # 0.0.9
 
 Add servo trim adjustments for roll/pitch/yaw, with resync/commit support.
