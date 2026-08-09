@@ -97,6 +97,7 @@
 #include "flight/imu.h"
 #include "flight/mixer.h"
 #include "flight/pid.h"
+#include "flight/tv_pid.h"
 #include "flight/servos.h"
 #include "flight/rpm_filter.h"
 
@@ -685,6 +686,11 @@ void init(void)
 
     // Initialize PID control
     pidInit(currentPidProfile);
+
+    // Initialize the independent Thrust Vector PID loop. Always initialised (state
+    // stays valid even if FEATURE_THRUST_VECTOR is toggled without a reboot) -- only
+    // its execution is gated by the feature flag, in subTaskPidController().
+    tvPidInit(tvPidProfile());
 
 #ifdef USE_SERVOS
     servoInit();

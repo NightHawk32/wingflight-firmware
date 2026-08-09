@@ -306,4 +306,6 @@
 #define MSP2_WING_CLEAR_FBUS_SENSORS         0x5F08
 #define MSP2_WING_FBUS_MASTER_CONFIG         0x5F09
 #define MSP2_WING_SET_FBUS_MASTER_CONFIG     0x5F0A
+#define MSP2_WING_TV_PID_CONFIG              0x5F0B
+#define MSP2_WING_SET_TV_PID_CONFIG          0x5F0C
 #define MSP_V2_FRAME                         255
