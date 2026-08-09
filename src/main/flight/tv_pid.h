@@ -26,6 +26,20 @@
 // same setpoint as the main roll/pitch/yaw loop but with its own gains/filters/
 // iterm state, feeding the MIXER_IN_STABILIZED_TV_ROLL/PITCH/YAW mixer inputs.
 
+// Kept as its own type (not flight/pid.h's pidAxisData_t) so this loop stays
+// textually independent of the main loop -- see the "not sharing state"
+// comment in tv_pid.c. Exposed here (rather than staying private to the .c)
+// so blackbox.c can log it the same way it logs the main loop's pidData[].
+typedef struct {
+    float P;
+    float I;
+    float D;
+    float F;
+    float B;
+    float pidSum;
+    float axisError;
+} tvPidAxisData_t;
+
 void tvPidInit(const tvPidProfile_t *profile);
 void tvPidLoadProfile(const tvPidProfile_t *profile);
 void tvPidReset(void);
@@ -33,6 +47,7 @@ void tvPidReset(void);
 void tvPidController(timeUs_t currentTimeUs);
 
 float tvPidGetOutput(int axis);
+const tvPidAxisData_t * tvPidGetAxisData(void);
 
 ADJFUN_DECLARE(TV_MASTER_GAIN_ROLL)
 ADJFUN_DECLARE(TV_MASTER_GAIN_PITCH)

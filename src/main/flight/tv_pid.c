@@ -40,16 +40,6 @@
 // touching the other.
 
 typedef struct {
-    float P;
-    float I;
-    float D;
-    float F;
-    float B;
-    float pidSum;
-    float axisError;
-} tvPidAxisData_t;
-
-typedef struct {
     pidAxisCoef_t coef[PID_AXIS_COUNT];
     tvPidAxisData_t data[PID_AXIS_COUNT];
 
@@ -75,6 +65,11 @@ static FAST_DATA_ZERO_INIT tvPidData_t tvPid;
 float tvPidGetOutput(int axis)
 {
     return tvPid.data[axis].pidSum;
+}
+
+const tvPidAxisData_t * tvPidGetAxisData(void)
+{
+    return tvPid.data;
 }
 
 void tvPidReset(void)
