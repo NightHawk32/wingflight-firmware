@@ -96,16 +96,18 @@ float governorApply(float throttle)
             const float filteredError = pt1FilterApply(&rpmErrorFilter, rpmError);
 
             const float ceilingFrac = cfg->governor_ceiling / 100.0f;
+            const float idleFloorFrac = constrainf(cfg->governor_throttle / 100.0f, 0.0f, ceilingFrac);
             const float pTerm = filteredError * (cfg->governor_gain * 0.000005f);
 
             // A pure P term always settles with some droop below the target RPM -- the throttle
             // needed to hold speed is rarely exactly "gain * error". The integrator slowly closes
-            // that remaining gap to zero. Clamped (not conditional) anti-windup: simple and
-            // sufficient for this slow, low-stakes loop.
+            // that remaining gap to zero. RPM idle hold starts from governor_throttle as a powered
+            // idle floor, then only adds correction above that floor; this keeps the ESC alive
+            // during a rapid throttle chop instead of allowing an RPM overshoot to command 0%.
             integrator += filteredError * (cfg->governor_i_gain * 0.000005f) * pidGetDT();
-            integrator = constrainf(integrator, 0.0f, ceilingFrac);
+            integrator = constrainf(integrator, 0.0f, ceilingFrac - idleFloorFrac);
 
-            target = constrainf(pTerm + integrator, 0.0f, ceilingFrac);
+            target = constrainf(idleFloorFrac + pTerm + integrator, idleFloorFrac, ceilingFrac);
         } else if (!belowHandover && ARMING_FLAG(ARMED) && IS_RC_MODE_ACTIVE(BOXGOVERNOR) &&
             cfg->governor_rpm_max > 0 && isMotorRpmSourceActive(0)) {
             rpmErrorFilter.y1 = 0.0f;

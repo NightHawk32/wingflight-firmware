@@ -5,7 +5,7 @@ Add Thrust Vector PID control and blackbox logging.
 Add MSP commands for FBUS/S.Port sensor diagnostics and forwarding.
 Add airborne re-arm grace settings for improved in-flight safety.
 Improve HoTT telemetry responsiveness and GPS accuracy.
-Add learned governor idle hold-throttle floor to avoid ESC cut on rapid throttle chop.
+Use governor idle throttle as the RPM idle-hold floor to avoid ESC cut on rapid throttle chop.
 Fix blackbox MSC mass storage startup.
 Remove OSD and CMS.
 
