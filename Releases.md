@@ -1,3 +1,14 @@
+# 0.0.11
+
+Add basic GPS Loiter and RTH flight modes.
+Add Thrust Vector PID control and blackbox logging.
+Add MSP commands for FBUS/S.Port sensor diagnostics and forwarding.
+Add airborne re-arm grace settings for improved in-flight safety.
+Improve HoTT telemetry responsiveness and GPS accuracy.
+Add learned governor idle hold-throttle floor to avoid ESC cut on rapid throttle chop.
+Fix blackbox MSC mass storage startup.
+Remove OSD and CMS.
+
 # 0.0.10
 
 Remove legacy heli tail_rotor_mode; rename main/tail naming to motor1/motor2 throughout (gear ratios, RPM/speed accessors, telemetry sensor IDs, blackbox log fields).
