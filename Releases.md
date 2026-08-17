@@ -1,3 +1,10 @@
+# 0.0.12
+
+Fix BOXTHRUSTVECTOR/BOXLOITER permanentId collision.
+Fix governor bypassing RX-loss failsafe throttle cut.
+Clamp m/3s telemetry to 0 when out of range.
+Update current sensor FBUS refresh to accept timestamp and adjust capacity calculation.
+
 # 0.0.11
 
 Add basic GPS Loiter and RTH flight modes.
