@@ -1,6 +1,7 @@
 # 0.0.13
 
 Fix servo trim ignoring mixer-rule-based servo reversal, causing mirrored servos (e.g. dual ailerons) to trim the same direction.
+Fix servo trim also ignoring a negative (Inverted) rate on the driving mixer input, causing trim to apply backwards on models using axis invert.
 
 # 0.0.12
 
