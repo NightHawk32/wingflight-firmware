@@ -1,3 +1,7 @@
+# 0.0.13
+
+Fix servo trim ignoring mixer-rule-based servo reversal, causing mirrored servos (e.g. dual ailerons) to trim the same direction.
+
 # 0.0.12
 
 Fix BOXTHRUSTVECTOR/BOXLOITER permanentId collision.
