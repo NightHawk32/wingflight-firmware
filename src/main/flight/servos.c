@@ -85,11 +85,16 @@ static void applyServoAxisTrim(int axis, int newValue)
             const mixerRule_t *rule = mixerRules(r);
             if (rule->oper && rule->output == (uint8_t)(MIXER_SERVO_OFFSET + s) &&
                 rule->input == axisInput[axis]) {
-                // SERVO_FLAG_REVERSED flips the sign of the stabilized input for this
-                // servo (servoUpdate() negates pos before applying rpos/rneg/mid), so
-                // the trim direction must be flipped the same way to stay coordinated
-                // with unreversed servos sharing the same axis.
-                const bool reversed = servoParams(s)->flags & SERVO_FLAG_REVERSED;
+                // Two independent things can flip this servo's direction relative
+                // to the stabilized axis: the per-servo SERVO_FLAG_REVERSED flag
+                // (servoUpdate() negates pos before applying rpos/rneg/mid), and a
+                // negative mixer rule weight (e.g. paired aileron servos driven from
+                // the same input with opposite-signed weights instead of the flag).
+                // Both must be folded into the trim direction so it stays coordinated
+                // with other servos sharing the same axis.
+                const bool flagReversed = servoParams(s)->flags & SERVO_FLAG_REVERSED;
+                const bool weightReversed = (rule->weight != 0 ? rule->weight : rule->weightNeg) < 0;
+                const bool reversed = flagReversed != weightReversed;
                 servoParamsMutable(s)->mid += lrintf(reversed ? -delta : delta);
                 break;
             }
