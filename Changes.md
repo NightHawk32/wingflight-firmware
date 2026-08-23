@@ -524,6 +524,21 @@ Support for the IBUS2 protocol for control link and basic telemetry using the ib
 
 ## Bug Fixes
 
+### Servo trim (SERVO_TRIM_*) could snap on a boot-time or reacquired RX link
+
+The mapped/continuous ("Absolute") in-flight adjustment mode had no debounce
+of its own, unlike the stepped mode: it wrote whatever the adjustment channel
+read straight to the servo center on every tick. A single garbage or
+not-yet-settled frame right at boot, or immediately after the RX link was
+reacquired following a brief dropout, could snap a servo's trimmed center
+before the pilot had any control over it.
+
+`SERVO_TRIM_ROLL/PITCH/YAW` adjustments now require the RX link to have been
+continuously valid for 300 ms before they are evaluated at all, and the
+continuous/mapped mode now uses the same +-2 / 100 ms channel-stability
+debounce that stepped mode already had. Other adjustment functions (PID
+gains, rates, etc.) are unaffected.
+
 ### S.PORT telemetry Scaling for attitude sensors
 
 The attitiude sensors where found to be out by a factor of 10.  The scaling

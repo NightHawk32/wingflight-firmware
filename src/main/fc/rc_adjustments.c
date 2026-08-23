@@ -75,6 +75,14 @@
 // so they repeat much faster than other stepped adjustments (e.g. PID gains, rates).
 #define TRIM_REPEAT_DELAY 20
 
+// Servo trims move physical control surfaces, so their adjustment channels are
+// treated as untrustworthy until the RX link has been continuously valid for this
+// long. This rides out the garbage/failsafe-hold frames some receivers emit for a
+// moment right at boot, or when the link is reacquired after a brief drop, before
+// the pilot's actual stick/pot positions can be trusted -- mirrors the RX layer's
+// own MAX_INVALID_PULSE_TIME_MS hold window for bad channel data.
+#define SERVO_TRIM_LINK_SETTLE_MS 300
+
 // Timeout for the last changed adjustment (report for telemetry)
 #define ADJUSTMENT_LATENCY_MS 3000
 
@@ -277,6 +285,29 @@ void resyncServoTrimAdjustments(void)
     }
 }
 
+/*
+ * Tracks how long the RX link has been continuously up, used by
+ * processRcAdjustments() to gate SERVO_TRIM_* adjustments. Must be called on
+ * every processRcAdjustments() tick (regardless of whether the signal is
+ * currently present) so the timer correctly restarts on every fresh
+ * acquisition/reacquisition, not just the very first one at boot.
+ */
+static bool isServoTrimLinkSettled(void)
+{
+    static bool wasReceivingSignal = false;
+    static timeMs_t signalAcquiredAt = 0;
+
+    const bool receiving = rxIsReceivingSignal();
+    const timeMs_t now = millis();
+
+    if (receiving && !wasReceivingSignal) {
+        signalAcquiredAt = now;
+    }
+    wasReceivingSignal = receiving;
+
+    return receiving && cmp32(now, signalAcquiredAt + SERVO_TRIM_LINK_SETTLE_MS) >= 0;
+}
+
 static void updateAdjustmentData(int adjFunc, int value)
 {
     const timeMs_t now = millis();
@@ -301,6 +332,10 @@ void processRcAdjustments(void)
 {
     bool changed = false;
 
+    // Always evaluated, even if the signal is currently down, so the settle timer
+    // below tracks every link acquisition rather than just the first one at boot.
+    const bool servoTrimLinkSettled = isServoTrimLinkSettled();
+
     if (rxIsReceivingSignal())
     {
         for (int index = 0; index < MAX_ADJUSTMENT_RANGE_COUNT; index++)
@@ -316,6 +351,11 @@ void processRcAdjustments(void)
 
             // Entry is uninitialised
             if (adjConfig->cfgName == NULL)
+                continue;
+
+            // Refuse to touch a servo center on a link that hasn't proven stable yet --
+            // see SERVO_TRIM_LINK_SETTLE_MS.
+            if (isServoTrimAdjustment(adjFunc) && !servoTrimLinkSettled)
                 continue;
 
             if (adjRange->enaChannel == 0xff || isRangeActive(adjRange->enaChannel, &adjRange->enaRange))
@@ -352,6 +392,23 @@ void processRcAdjustments(void)
                 }
                 // Continuous adjustment
                 else {
+                    // Unlike stepped adjustments above, this branch has no debounce of its
+                    // own: it applies whatever the channel reads on every single tick. For
+                    // SERVO_TRIM_*, reuse the same stability check stepped mode already gets
+                    // (chValue must hold within +-2 for TRIGGER_DELAY) so a single noisy
+                    // frame can no longer snap a servo center -- only a movement the pilot
+                    // actually held can.
+                    if (isServoTrimAdjustment(adjFunc)) {
+                        if (abs(chValue - adjState->chValue) > 2) {
+                            adjState->trigTime = now + TRIGGER_DELAY;
+                            adjState->chValue = chValue;
+                            continue;
+                        }
+                        if (cmp32(now, adjState->trigTime) < 0) {
+                            continue;
+                        }
+                    }
+
                     const int rangeLower = STEP_TO_CHANNEL_VALUE(adjRange->adjRange1.startStep);
                     const int rangeUpper = STEP_TO_CHANNEL_VALUE(adjRange->adjRange1.endStep);
                     const int rangeWidth = rangeUpper - rangeLower;
