@@ -1,3 +1,7 @@
+# 0.0.14
+
+Add debounce for servo trim adjustments to prevent snapping on RX link reacquisition.
+
 # 0.0.13
 
 Fix servo trim ignoring mixer-rule-based servo reversal, causing mirrored servos (e.g. dual ailerons) to trim the same direction.
