@@ -86,5 +86,17 @@ enum rcc_reg {
 #define RCC_APB2(periph) RCC_ENCODE(RCC_APB2, RCC_APB2ENR_ ## periph ## EN)
 #endif
 
+#ifdef AT32F43x
+// AT32 CRM peripheral names generally match STM32 (GPIOA, SPI1, I2C1, USART1, DMA2, ...),
+// except timers which are named TMRn instead of TIMn (e.g. use RCC_APB2(TMR1), not TIM1).
+#undef  RCC_AHB
+#undef  RCC_APB2
+#undef  RCC_APB1
+#undef  RCC_AHB1
+#define RCC_AHB1(periph)  (CRM_ ## periph ## _PERIPH_CLOCK)
+#define RCC_APB1(periph)  (CRM_ ## periph ## _PERIPH_CLOCK)
+#define RCC_APB2(periph)  (CRM_ ## periph ## _PERIPH_CLOCK)
+#endif
+
 void RCC_ClockCmd(rccPeriphTag_t periphTag, FunctionalState NewState);
 void RCC_ResetCmd(rccPeriphTag_t periphTag, FunctionalState NewState);

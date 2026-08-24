@@ -21,6 +21,9 @@ UNIFIED_TARGETS := \
 	STM32F745  \
 	STM32G47X  \
 	STM32H743  \
+# AT32F435 is intentionally NOT added here (or to CI_TARGETS) yet: the AT32 driver
+# port is incomplete and won't compile. Add it once make/mcu/AT32F4.mk's
+# MCU_COMMON_SRC files all exist. See AT32F435_TODO.md.
 
 # Legacy targets are targets that have been replaced by Unified Target configurations
 LEGACY_TARGETS := \

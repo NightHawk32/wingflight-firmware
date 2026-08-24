@@ -41,6 +41,9 @@ typedef enum I2CDevice {
 #define I2CDEV_COUNT 3
 #elif defined(STM32F7)
 #define I2CDEV_COUNT 4
+#elif defined(AT32F43x)
+// AT32F435/437 has 3 physical I2C peripherals, no I2C4
+#define I2CDEV_COUNT 3
 #else
 #define I2CDEV_COUNT 4
 #endif

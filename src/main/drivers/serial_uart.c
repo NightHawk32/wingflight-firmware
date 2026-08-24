@@ -57,6 +57,9 @@
 #elif defined(STM32F4)
 #define UART_TX_BUFFER_ATTRIBUTE                    // NONE
 #define UART_RX_BUFFER_ATTRIBUTE                    // NONE
+#elif defined(AT32F43x)
+#define UART_TX_BUFFER_ATTRIBUTE                    // NONE
+#define UART_RX_BUFFER_ATTRIBUTE                    // NONE
 #else
 #error Undefined UART_{TX,RX}_BUFFER_ATTRIBUTE for this MCU
 #endif
@@ -285,6 +288,8 @@ static void uartWrite(serialPort_t *instance, uint8_t ch)
     {
 #ifdef USE_HAL_DRIVER
         __HAL_UART_ENABLE_IT(&uartPort->Handle, UART_IT_TXE);
+#elif defined(AT32F43x)
+        usart_interrupt_enable(uartPort->USARTx, USART_TDBE_INT, ENABLE);
 #else
         USART_ITConfig(uartPort->USARTx, USART_IT_TXE, ENABLE);
 #endif
@@ -351,6 +356,9 @@ void uartConfigureDma(uartDevice_t *uartdev)
         dmaIdentifier_e identifier = dmaGetIdentifier(uartPort->txDMAResource);
         if (dmaAllocate(identifier, OWNER_SERIAL_TX, RESOURCE_INDEX(hardware->device))) {
             dmaEnable(identifier);
+#if defined(AT32F43x)
+            dmaMuxEnable(identifier, uartPort->txDMAChannel);
+#endif
             dmaSetHandler(identifier, uartDmaIrqHandler, hardware->txPriority, (uint32_t)uartdev);
             uartPort->txDMAPeripheralBaseAddr = (uint32_t)&UART_REG_TXD(hardware->reg);
         }
@@ -360,6 +368,9 @@ void uartConfigureDma(uartDevice_t *uartdev)
         dmaIdentifier_e identifier = dmaGetIdentifier(uartPort->rxDMAResource);
         if (dmaAllocate(identifier, OWNER_SERIAL_RX, RESOURCE_INDEX(hardware->device))) {
             dmaEnable(identifier);
+#if defined(AT32F43x)
+            dmaMuxEnable(identifier, uartPort->rxDMAChannel);
+#endif
             uartPort->rxDMAPeripheralBaseAddr = (uint32_t)&UART_REG_RXD(hardware->reg);
         }
     }

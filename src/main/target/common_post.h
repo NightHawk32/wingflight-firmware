@@ -329,6 +329,17 @@
 #undef USE_DMA_SPEC
 #endif
 
+#if defined(AT32F43x)
+// The following timer-input-capture-based drivers are still raw STM32 StdPeriph/HAL
+// register code with no AT-BSP port yet. Disable them for AT32 builds until they are
+// ported (see AT32F435_TODO.md); this only affects AT32F43x, all other MCUs keep their
+// existing behavior unchanged.
+// NOTE: USE_PWM/USE_PPM (drivers/rx/rx_pwm.c), USE_SOFTSERIAL1/USE_SOFTSERIAL2
+// (drivers/serial_softserial.c), and USE_ESCSERIAL (drivers/serial_escserial.c) were
+// ported via additive #elif defined(AT32F43x) branches -- no longer disabled here.
+#endif
+
+
 #if !defined(USE_DMA_SPEC)
 #undef USE_TIMER_MGMT
 #endif

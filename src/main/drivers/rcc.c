@@ -21,8 +21,16 @@
 #include "platform.h"
 #include "rcc.h"
 
+#if defined(AT32F43x)
+#include "at32f435_437_conf.h"
+#endif
+
 void RCC_ClockCmd(rccPeriphTag_t periphTag, FunctionalState NewState)
 {
+#if defined(AT32F43x)
+    // periphTag is already a crm_periph_clock_type value (see RCC_AHB1/APB1/APB2 in rcc.h).
+    crm_periph_clock_enable((crm_periph_clock_type)periphTag, (NewState == ENABLE) ? TRUE : FALSE);
+#else
     int tag = periphTag >> 5;
     uint32_t mask = 1 << (periphTag & 0x1f);
 
@@ -126,10 +134,23 @@ void RCC_ClockCmd(rccPeriphTag_t periphTag, FunctionalState NewState)
 #endif
     }
 #endif
+#endif // AT32F43x
 }
 
 void RCC_ResetCmd(rccPeriphTag_t periphTag, FunctionalState NewState)
 {
+#if defined(AT32F43x)
+    // AT32 CRM reset registers parallel the clock-enable registers at a fixed -0x20 byte
+    // offset with matching bit positions (see MAKE_VALUE() in at32f435_437.h), except ADC1/2/3
+    // which share a single combined reset bit.
+    crm_periph_reset_type resetTag;
+    if (periphTag == CRM_ADC1_PERIPH_CLOCK || periphTag == CRM_ADC2_PERIPH_CLOCK || periphTag == CRM_ADC3_PERIPH_CLOCK) {
+        resetTag = CRM_ADC_PERIPH_RESET;
+    } else {
+        resetTag = (crm_periph_reset_type)(periphTag - (0x20 << 16));
+    }
+    crm_periph_reset(resetTag, (NewState == ENABLE) ? TRUE : FALSE);
+#else
     int tag = periphTag >> 5;
     uint32_t mask = 1 << (periphTag & 0x1f);
 
@@ -221,4 +242,5 @@ void RCC_ResetCmd(rccPeriphTag_t periphTag, FunctionalState NewState)
 #endif
     }
 #endif
+#endif // AT32F43x
 }

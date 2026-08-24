@@ -122,6 +122,8 @@ static void serialEnableCC(softSerial_t *softSerial)
 {
 #ifdef USE_HAL_DRIVER
     TIM_CCxChannelCmd(softSerial->timerHardware->tim, softSerial->timerHardware->channel, TIM_CCx_ENABLE);
+#elif defined(AT32F43x)
+    tmr_channel_enable(softSerial->timerHardware->tim, (tmr_channel_select_type)(softSerial->timerHardware->channel >> 1), TRUE);
 #else
     TIM_CCxCmd(softSerial->timerHardware->tim, softSerial->timerHardware->channel, TIM_CCx_Enable);
 #endif
@@ -152,6 +154,8 @@ static void serialInputPortDeActivate(softSerial_t *softSerial)
 
 #ifdef USE_HAL_DRIVER
     TIM_CCxChannelCmd(softSerial->timerHardware->tim, softSerial->timerHardware->channel, TIM_CCx_DISABLE);
+#elif defined(AT32F43x)
+    tmr_channel_enable(softSerial->timerHardware->tim, (tmr_channel_select_type)(softSerial->timerHardware->channel >> 1), FALSE);
 #else
     TIM_CCxCmd(softSerial->timerHardware->tim, softSerial->timerHardware->channel, TIM_CCx_Disable);
 #endif
@@ -506,6 +510,8 @@ void onSerialRxPinChange(timerCCHandlerRec_t *cbRec, captureCompare_t capture)
 
 #ifdef USE_HAL_DRIVER
         __HAL_TIM_SetCounter(self->timerHandle, __HAL_TIM_GetAutoreload(self->timerHandle) / 2);
+#elif defined(AT32F43x)
+        self->timerHardware->tim->cval = self->timerHardware->tim->pr / 2;
 #else
         TIM_SetCounter(self->timerHardware->tim, self->timerHardware->tim->ARR / 2);
 #endif
@@ -520,7 +526,7 @@ void onSerialRxPinChange(timerCCHandlerRec_t *cbRec, captureCompare_t capture)
         }
 
         timerChConfigIC(self->timerHardware, inverted ? ICPOLARITY_FALLING : ICPOLARITY_RISING, 0);
-#if defined(STM32F7) || defined(STM32H7) || defined(STM32G4)
+#if defined(STM32F7) || defined(STM32H7) || defined(STM32G4) || defined(AT32F43x)
         serialEnableCC(self);
 #endif
         self->rxEdge = LEADING;
@@ -545,7 +551,7 @@ void onSerialRxPinChange(timerCCHandlerRec_t *cbRec, captureCompare_t capture)
         self->rxEdge = TRAILING;
         timerChConfigIC(self->timerHardware, inverted ? ICPOLARITY_RISING : ICPOLARITY_FALLING, 0);
     }
-#if defined(STM32F7) || defined(STM32H7) || defined(STM32G4)
+#if defined(STM32F7) || defined(STM32H7) || defined(STM32G4) || defined(AT32F43x)
     serialEnableCC(self);
 #endif
 }

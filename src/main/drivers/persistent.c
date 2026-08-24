@@ -31,7 +31,32 @@
 
 #define PERSISTENT_OBJECT_MAGIC_VALUE (('B' << 24)|('e' << 16)|('f' << 8)|('1' << 0))
 
-#ifdef USE_HAL_DRIVER
+#if defined(AT32F43x)
+
+uint32_t persistentObjectRead(persistentObjectId_e id)
+{
+    return ertc_bpr_data_read((ertc_dt_type)id);
+}
+
+void persistentObjectWrite(persistentObjectId_e id, uint32_t value)
+{
+    ertc_write_protect_disable();
+    ertc_bpr_data_write((ertc_dt_type)id, value);
+    ertc_write_protect_enable();
+}
+
+void persistentObjectRTCEnable(void)
+{
+    crm_periph_clock_enable(CRM_PWC_PERIPH_CLOCK, TRUE); // Enable Access to PWC
+    pwc_battery_powered_domain_access(TRUE); // Disable backup domain protection
+
+    // We don't need a clock source for RTC itself. Skip it.
+
+    ertc_write_protect_enable();  // Reset sequence
+    ertc_write_protect_disable(); // Apply sequence
+}
+
+#elif defined(USE_HAL_DRIVER)
 
 uint32_t persistentObjectRead(persistentObjectId_e id)
 {
@@ -130,7 +155,9 @@ void persistentObjectInit(void)
 
     uint32_t wasSoftReset;
 
-#ifdef STM32H7
+#if defined(AT32F43x)
+    wasSoftReset = crm_flag_get(CRM_SW_RESET_FLAG);
+#elif defined(STM32H7)
     wasSoftReset = RCC->RSR & RCC_RSR_SFTRSTF;
 #else
     wasSoftReset = RCC->CSR & RCC_CSR_SFTRSTF;

@@ -59,7 +59,10 @@ static uint32_t cpuClockFrequency = 0;
 
 void cycleCounterInit(void)
 {
-#if defined(USE_HAL_DRIVER)
+#if defined(AT32F43x)
+    extern unsigned int system_core_clock; // set/updated by system_at32f435_437.c
+    cpuClockFrequency = system_core_clock;
+#elif defined(USE_HAL_DRIVER)
     cpuClockFrequency = HAL_RCC_GetSysClockFreq();
 #else
     RCC_ClocksTypeDef clocks;

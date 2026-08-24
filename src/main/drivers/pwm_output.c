@@ -57,6 +57,28 @@ static void pwmOCConfig(TIM_TypeDef *tim, uint8_t channel, uint16_t value, uint8
     TIM_OCInitStructure.OCFastMode = TIM_OCFAST_DISABLE;
 
     HAL_TIM_PWM_ConfigChannel(Handle, &TIM_OCInitStructure, channel);
+#elif defined(AT32F43x)
+    // AT-BSP's tmr_output_config_type (aliased as TIM_OCInitTypeDef, see platform.h) has no
+    // pulse/CCR field, unlike StdPeriph's TIM_OCInitTypeDef.TIM_Pulse -- the compare value is
+    // set separately below via tmr_channel_value_set(). Channel select uses the same byte
+    // offset -> AT-BSP channel-index conversion as timer_at32bsp.c's AT_CH_SELECT() (channel >> 1).
+    TIM_OCInitTypeDef TIM_OCInitStructure = { 0 };
+
+    TIM_OCInitStructure.oc_mode = TMR_OUTPUT_CONTROL_PWM_MODE_A;
+
+    if (output & TIMER_OUTPUT_N_CHANNEL) {
+        TIM_OCInitStructure.occ_output_state = TRUE;
+        TIM_OCInitStructure.occ_idle_state = FALSE;
+        TIM_OCInitStructure.occ_polarity = (output & TIMER_OUTPUT_INVERTED) ? TMR_OUTPUT_ACTIVE_LOW : TMR_OUTPUT_ACTIVE_HIGH;
+    } else {
+        TIM_OCInitStructure.oc_output_state = TRUE;
+        TIM_OCInitStructure.oc_idle_state = TRUE;
+        TIM_OCInitStructure.oc_polarity = (output & TIMER_OUTPUT_INVERTED) ? TMR_OUTPUT_ACTIVE_LOW : TMR_OUTPUT_ACTIVE_HIGH;
+    }
+
+    timerOCInit(tim, channel, &TIM_OCInitStructure);
+    timerOCPreloadConfig(tim, channel, ENABLE);
+    tmr_channel_value_set(tim, (tmr_channel_select_type)(channel >> 1), value);
 #else
     TIM_OCInitTypeDef TIM_OCInitStructure;
 
@@ -99,6 +121,9 @@ void pwmOutConfig(timerChannel_t *channel, const timerHardware_t *timerHardware,
     else
         HAL_TIM_PWM_Start(Handle, timerHardware->channel);
     HAL_TIM_Base_Start(Handle);
+#elif defined(AT32F43x)
+    tmr_output_enable(timerHardware->tim, TRUE);
+    tmr_counter_enable(timerHardware->tim, TRUE);
 #else
     TIM_CtrlPWMOutputs(timerHardware->tim, ENABLE);
     TIM_Cmd(timerHardware->tim, ENABLE);

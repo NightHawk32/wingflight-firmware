@@ -124,7 +124,44 @@
 #define USE_TELEMETRY_CASTLE
 #endif
 
-#if defined(STM32F4) || defined(STM32F7) || defined(STM32H7) || defined(STM32G4)
+#ifdef AT32F43x
+// Minimal set for now — only what's actually needed by driver code already written
+// (dma_reqmap.c's AT32 branch is entirely guarded by USE_DMA_SPEC, so this must be
+// defined for that prior work to compile in at all). USE_TIMER_MGMT is now safe to add
+// too since drivers/timer_at32bsp.c and timer_at32f43x.c's fullTimerHardware[] table
+// exist and this is a unified build (needs the dynamic timerHardware/CLI `timer` command
+// path, not a fixed per-board timerHardware[] table). USE_USB_MSC is now enabled too
+// since drivers/usb_msc_at32f43x.c/drivers/msc_desc.h/drivers/msc_diskio.h exist (see
+// AT32F435_TODO.md). Add USE_USB_CDC_HID/USE_MCO/etc. once needed.
+//
+// USE_DSHOT is now enabled: drivers/pwm_output_dshot_at32bsp.c implements classic
+// single-channel DMA-to-CCR DSHOT output natively against AT-BSP. Deliberately NOT yet
+// enabled alongside it:
+//   - USE_DSHOT_DMAR (4-channel timer-update-event burst DMA into consecutive CCR
+//     registers via STM32's ->DMAR alias register) -- AT-BSP timers have no equivalent
+//     alias register, so this needs its own implementation strategy later.
+//   - USE_DSHOT_TELEMETRY / USE_DSHOT_TELEMETRY_STATS (bidirectional DSHOT / ESC
+//     telemetry, which periodically switches the timer channel between output-compare
+//     and input-capture) -- not yet implemented in pwm_output_dshot_at32bsp.c.
+//   - USE_DSHOT_BITBANG -- drivers/dshot_bitbang_stdperiph.c (the StdPeriph DMA-GPIO
+//     bitbang backend) is STM32-only StdPeriph code with no AT-BSP port yet; would need
+//     its own _at32bsp.c equivalent (see AT32F435_TODO.md). dshot_bitbang.c/
+//     dshot_bitbang_decode.c stay listed in MCU_COMMON_SRC as harmless empty translation
+//     units (entirely guarded by #ifdef USE_DSHOT_BITBANG) until then.
+//
+// USE_ADC_INTERNAL is now enabled: drivers/adc_at32f43x.c implements vrefint/tempsensor
+// as an ADC1 preempt (injected) channel pair against AT-BSP's preempt-channel API, using
+// fixed nominal datasheet calibration constants (AT32 has no per-chip OTP calibration
+// words, unlike STM32) sourced from betaflight's own official AT32 ADC driver.
+#define USE_DMA_SPEC
+#define USE_TIMER_MGMT
+#define USE_DSHOT
+#define USE_USB_MSC
+#define USE_PERSISTENT_MSC_RTC
+#define USE_ADC_INTERNAL
+#endif
+
+#if defined(STM32F4) || defined(STM32F7) || defined(STM32H7) || defined(STM32G4) || defined(AT32F43x)
 #define TASK_GYROPID_DESIRED_PERIOD     125 // 125us = 8kHz
 #define SCHEDULER_DELAY_LIMIT           10
 #else
@@ -182,9 +219,12 @@
 #define FAST_DATA
 #endif // USE_FAST_DATA
 
-#if defined(STM32F4) || defined(STM32G4)
+#if defined(STM32F4) || defined(STM32G4) || defined(AT32F43x)
 // F4 can't DMA to/from CCM (core coupled memory) SRAM (where the stack lives)
 // On G4 there is no specific DMA target memory
+// AT32F435/437 (AT-BSP) also has no known DMA-target-memory restriction, and no dedicated
+// DMA-RAM linker section exists for it yet -- matches the same "no special region needed"
+// choice already made for AT32's UART_TX_BUFFER_ATTRIBUTE/UART_RX_BUFFER_ATTRIBUTE.
 #define DMA_DATA_ZERO_INIT
 #define DMA_DATA
 #define STATIC_DMA_DATA_AUTO        static

@@ -39,6 +39,11 @@
 #else
 #define ADC_TAG_MAP_COUNT 47
 #endif
+#elif defined(AT32F43x)
+// AT32F435/437 has 16 ADC1/2/3-capable pins (PA0-7, PB0-1, PC0-5). USE_ADC_INTERNAL's
+// vrefint/tempsensor channels are handled as ADC1 preempt (injected) channels directly by
+// channel constant in adc_at32f43x.c, not via adcTagMap, so no extra entries are needed here.
+#define ADC_TAG_MAP_COUNT 16
 #else
 #define ADC_TAG_MAP_COUNT 10
 #endif
@@ -138,4 +143,18 @@ void adcGetChannelValues(void);
 #define TEMPSENSOR_CAL_VREFANALOG          (3300U)
 #define TEMPSENSOR_CAL1_TEMP               ((int32_t)  30)
 #define TEMPSENSOR_CAL2_TEMP               ((int32_t) 110)
+#endif
+
+#ifdef AT32F43x
+// AT32F435/437 has no factory-programmed OTP calibration words for vrefint/tempsensor
+// (unlike STM32), so fixed nominal datasheet constants are used instead. These values are
+// taken directly from betaflight's own official AT32 ADC driver (not fabricated here) --
+// see betaflight/src/platform/common/stm32/platform/adc_impl.h's `#ifdef AT32F435` block
+// and betaflight/src/platform/AT32/adc_at32f43x.c's setScalingFactors().
+#define VREFINT_EXPECTED                   (1489U)             // raw 12-bit ADC reading expected for the 1.2V internal reference
+#define VREFINT_CAL_VREF                   (3300U)             // nominal external Vref+ for the above reading
+#define TEMPSENSOR_CAL_VREFANALOG          (3300U)
+#define TEMPSENSOR_CAL1_TEMP               ((int32_t)  25)
+#define TEMPSENSOR_CAL1_V                  (1.27f)
+#define TEMPSENSOR_SLOPE                   (-4.13f)            // mV/C
 #endif

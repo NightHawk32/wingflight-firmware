@@ -131,6 +131,11 @@ static void TIM_DeInit(TIM_TypeDef *tim)
 {
     UNUSED(tim);
 }
+#elif defined(AT32F43x)
+static void TIM_DeInit(TIM_TypeDef *tim)
+{
+    tmr_reset(tim);
+}
 #endif
 
 static void setTxSignalEsc(escSerial_t *escSerial, uint8_t state)
@@ -376,6 +381,8 @@ static void onSerialRxPinChangeBL(timerCCHandlerRec_t *cbRec, captureCompare_t c
         // always half-duplex.
 #ifdef USE_HAL_DRIVER
         __HAL_TIM_SetCounter(escSerial->txTimerHandle, __HAL_TIM_GetAutoreload(escSerial->txTimerHandle) / 2);
+#elif defined(AT32F43x)
+        escSerial->txTimerHardware->tim->cval = escSerial->txTimerHardware->tim->pr / 2;
 #else
         TIM_SetCounter(escSerial->txTimerHardware->tim, escSerial->txTimerHardware->tim->ARR / 2);
 #endif
@@ -569,6 +576,8 @@ static void onSerialRxPinChangeEsc(timerCCHandlerRec_t *cbRec, captureCompare_t 
     //clear timer
 #ifdef USE_HAL_DRIVER
     __HAL_TIM_SetCounter(escSerial->rxTimerHandle, 0);
+#elif defined(AT32F43x)
+    escSerial->rxTimerHardware->tim->cval = 0;
 #else
     TIM_SetCounter(escSerial->rxTimerHardware->tim,0);
 #endif

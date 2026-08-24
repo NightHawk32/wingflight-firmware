@@ -58,6 +58,15 @@
 #ifndef UART_TX_BUFFER_SIZE
 #define UART_TX_BUFFER_SIZE     256
 #endif
+#elif defined(AT32F43x)
+#define UARTDEV_COUNT_MAX 8 // USART1-3, UART4-5, USART6, UART7-8
+#define UARTHARDWARE_MAX_PINS 4
+#ifndef UART_RX_BUFFER_SIZE
+#define UART_RX_BUFFER_SIZE     128
+#endif
+#ifndef UART_TX_BUFFER_SIZE
+#define UART_TX_BUFFER_SIZE     256
+#endif
 #else
 #error unknown MCU family
 #endif
@@ -134,7 +143,7 @@
 
 typedef struct uartPinDef_s {
     ioTag_t pin;
-#if defined(STM32F7) || defined(STM32H7) || defined(STM32G4)
+#if defined(STM32F7) || defined(STM32H7) || defined(STM32G4) || defined(AT32F43x)
     uint8_t af;
 #endif
 } uartPinDef_t;
@@ -157,7 +166,7 @@ typedef struct uartHardware_s {
 
     rccPeriphTag_t rcc;
 
-#if !defined(STM32F7)
+#if !defined(STM32F7) && !defined(AT32F43x)
     uint8_t af;
 #endif
 
@@ -219,6 +228,10 @@ void uartDmaIrqHandler(dmaChannelDescriptor_t* descriptor);
 #elif defined(STM32F4)
 #define UART_REG_RXD(base) ((base)->DR)
 #define UART_REG_TXD(base) ((base)->DR)
+#elif defined(AT32F43x)
+// AT-BSP's usart_type shares a single data register (dt) for both TX and RX.
+#define UART_REG_RXD(base) ((base)->dt)
+#define UART_REG_TXD(base) ((base)->dt)
 #endif
 
 #define UART_BUFFER(type, n, rxtx) type volatile uint8_t uart ## n ## rxtx ## xBuffer[UART_ ## rxtx ## X_BUFFER_SIZE]

@@ -51,6 +51,8 @@
 
 #if defined(USE_HAL_DRIVER)
 #define Bit_RESET GPIO_PIN_RESET
+#elif defined(AT32F43x)
+#define Bit_RESET false // IORead() returns bool; false == pin low / reset state
 #endif
 
 #define USE_TXRX_LED

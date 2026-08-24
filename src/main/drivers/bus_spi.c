@@ -351,6 +351,9 @@ uint16_t spiCalculateDivider(uint32_t freq)
     uint32_t spiClk = SystemCoreClock / 2;
 #elif defined(STM32H7)
     uint32_t spiClk = 100000000;
+#elif defined(AT32F43x)
+    extern unsigned int system_core_clock; // set/updated by system_at32f435_437.c
+    uint32_t spiClk = system_core_clock / 2;
 #else
 #error "Base SPI clock not defined for this architecture"
 #endif
@@ -370,6 +373,9 @@ uint32_t spiCalculateClock(uint16_t spiClkDivisor)
     uint32_t spiClk = SystemCoreClock / 2;
 #elif defined(STM32H7)
     uint32_t spiClk = 100000000;
+#elif defined(AT32F43x)
+    extern unsigned int system_core_clock; // set/updated by system_at32f435_437.c
+    uint32_t spiClk = system_core_clock / 2;
 #else
 #error "Base SPI clock not defined for this architecture"
 #endif
@@ -587,10 +593,18 @@ void spiInitBusDMA(void)
                     continue;
                 }
                 bus->dmaTx = dmaGetDescriptorByIdentifier(dmaTxIdentifier);
+#if !defined(AT32F43x)
+                // dmaChannelDescriptor_t has no .stream member on AT32 (channel-based DMA, no stream concept)
                 bus->dmaTx->stream = DMA_DEVICE_INDEX(dmaTxIdentifier);
+#endif
                 bus->dmaTx->channel = dmaTxChannelSpec->channel;
 
                 dmaEnable(dmaTxIdentifier);
+#if defined(AT32F43x)
+                // On AT32, .channel holds the DMAMUX request ID rather than a StdPeriph-style
+                // sub-channel selector, so it must be bound to the channel's DMAMUX here.
+                dmaMuxEnable(dmaTxIdentifier, bus->dmaTx->channel);
+#endif
 
                 break;
             }
@@ -621,10 +635,15 @@ void spiInitBusDMA(void)
                     continue;
                 }
                 bus->dmaRx = dmaGetDescriptorByIdentifier(dmaRxIdentifier);
+#if !defined(AT32F43x)
                 bus->dmaRx->stream = DMA_DEVICE_INDEX(dmaRxIdentifier);
+#endif
                 bus->dmaRx->channel = dmaRxChannelSpec->channel;
 
                 dmaEnable(dmaRxIdentifier);
+#if defined(AT32F43x)
+                dmaMuxEnable(dmaRxIdentifier, bus->dmaRx->channel);
+#endif
 
                 break;
             }

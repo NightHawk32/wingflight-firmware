@@ -45,7 +45,7 @@
 // Maximum depends on the max clock freq
 #if defined(STM32F411xE)
 #define FREQ_PRESCALER_MAX    0x0080
-#elif defined(STM32F4) || defined(STM32G4) || defined(STM32F7)
+#elif defined(STM32F4) || defined(STM32G4) || defined(STM32F7) || defined(AT32F43x)
 #define FREQ_PRESCALER_MAX    0x0100
 #elif defined(STM32H7)
 #define FREQ_PRESCALER_MAX    0x0200
@@ -64,6 +64,13 @@
 // Input signal max deviation from average 66%..150%
 #define FREQ_PERIOD_MIN(p)    ((uint32_t)(p)*2/3)
 #define FREQ_PERIOD_MAX(p)    ((uint32_t)(p)*3/2)
+
+// AT-BSP names the raw counter register "cval" (STM32's CNT equivalent)
+#if defined(AT32F43x)
+#define FREQ_TIM_CNT(tim) ((tim)->cval)
+#else
+#define FREQ_TIM_CNT(tim) ((tim)->CNT)
+#endif
 
 
 #define UPDATE_FREQ_FILTER(_input,_freq) \
@@ -146,9 +153,15 @@ static void freqSetBaseClock(freqInputPort_t *input, uint32_t prescaler)
 
     input->prescaler = prescaler;
 
+#if defined(AT32F43x)
+    tim->div = prescaler - 1;
+    tim->pr = 0xffffffff;
+    tim->swevt_bit.ovfswtr = 1; // force an update event, same effect as STM32's TIM_EGR_UG
+#else
     tim->PSC = prescaler - 1;
     tim->ARR = 0xffffffff;
     tim->EGR = TIM_EGR_UG;
+#endif
 }
 
 static void freqResetCapture(freqInputPort_t *input, uint8_t port)
@@ -300,6 +313,13 @@ void freqICConfig(const timerHardware_t *timer, bool rising, uint16_t filter)
         HAL_TIM_IC_Start_IT(handle, timer->channel);
     }
 }
+#elif defined(AT32F43x)
+void freqICConfig(const timerHardware_t *timer, bool rising, uint16_t filter)
+{
+    // reuses timer_at32bsp.c's existing, already-verified input-capture helper directly --
+    // its signature already matches freqICConfig's exactly.
+    timerChConfigIC(timer, rising, filter);
+}
 #else
 void freqICConfig(const timerHardware_t *timer, bool rising, uint16_t filter)
 {
@@ -325,7 +345,19 @@ void freqInit(const freqConfig_t *freqConfig)
 
             input->timerHardware = timer;
             input->enabled = true;
+#if defined(AT32F43x)
+            // AT-BSP's TMR2/TMR5 support a "32-bit function (plus mode)" (ctrl1_bit.pmen,
+            // set via tmr_32_bit_function_enable()) matching STM32's TIM2/TIM5 32-bit counters,
+            // but it is NOT enabled by default -- confirmed via the vendored SDK's own
+            // at32f435_437_tmr.c comment ("enable or disable tmr 32 bit function(plus mode)...
+            // only for TMR2/TMR5"), so it must be explicitly turned on here.
+            input->timer32 = (timer->tim == TMR2 || timer->tim == TMR5);
+            if (input->timer32) {
+                tmr_32_bit_function_enable(timer->tim, TRUE);
+            }
+#else
             input->timer32 = (timer->tim == TIM2 || timer->tim == TIM5);
+#endif
             input->clock = timerClock(timer->tim);
             input->prescaler = (input->timer32) ? 1 : FREQ_PRESCALER_MAX;
             input->overflows = 0;
@@ -374,12 +406,12 @@ void freqUpdate(void)
         if (input->enabled && input->capture) {
             uint32_t delta;
             if (input->timer32) {
-                uint32_t count = input->timerHardware->tim->CNT;
+                uint32_t count = FREQ_TIM_CNT(input->timerHardware->tim);
                 uint32_t ticks = count - input->capture;
                 delta = input->prescaler * ticks;
             }
             else {
-                uint16_t count = input->timerHardware->tim->CNT;
+                uint16_t count = FREQ_TIM_CNT(input->timerHardware->tim);
                 uint16_t ticks = count - input->capture;
                 delta = input->prescaler * ticks;
             }

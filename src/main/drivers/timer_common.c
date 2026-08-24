@@ -193,6 +193,12 @@ ioTag_t timerioTagGetByUsage(timerUsageFlag_e usageFlag, uint8_t index)
 
 volatile timCCR_t* timerCCR(TIM_TypeDef *tim, uint8_t channel)
 {
+#if defined(AT32F43x)
+    // AT-BSP's tmr_type has c1dt/c2dt/c3dt/c4dt spaced 4 bytes apart, same as STM32's
+    // CCR1..4 -- the byte-offset channel encoding (0/4/8/12) works identically here.
+    return (volatile timCCR_t*)((volatile char*)&tim->c1dt + channel);
+#else
     return (volatile timCCR_t*)((volatile char*)&tim->CCR1 + channel);
+#endif
 }
 #endif

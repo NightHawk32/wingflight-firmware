@@ -22,6 +22,9 @@
 
 #if defined(STM32H7)
 typedef uint16_t rccPeriphTag_t;
+#elif defined(AT32F43x)
+// AT32 CRM periph tags are the vendor's own crm_periph_clock_type enum values (see rcc.c).
+typedef uint32_t rccPeriphTag_t;
 #else
 typedef uint8_t rccPeriphTag_t;
 #endif

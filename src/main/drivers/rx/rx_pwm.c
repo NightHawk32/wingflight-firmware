@@ -299,6 +299,8 @@ static void pwmEdgeCallback(timerCCHandlerRec_t *cbRec, captureCompare_t capture
         pwmInputPort->state = 1;
 #if defined(USE_HAL_DRIVER)
         pwmICConfig(timerHardwarePtr->tim, timerHardwarePtr->channel, TIM_ICPOLARITY_FALLING);
+#elif defined(AT32F43x)
+        pwmICConfig(timerHardwarePtr->tim, timerHardwarePtr->channel, TMR_INPUT_FALLING_EDGE);
 #else
         pwmICConfig(timerHardwarePtr->tim, timerHardwarePtr->channel, TIM_ICPolarity_Falling);
 #endif
@@ -313,6 +315,8 @@ static void pwmEdgeCallback(timerCCHandlerRec_t *cbRec, captureCompare_t capture
         pwmInputPort->state = 0;
 #if defined(USE_HAL_DRIVER)
         pwmICConfig(timerHardwarePtr->tim, timerHardwarePtr->channel, TIM_ICPOLARITY_RISING);
+#elif defined(AT32F43x)
+        pwmICConfig(timerHardwarePtr->tim, timerHardwarePtr->channel, TMR_INPUT_RISING_EDGE);
 #else
         pwmICConfig(timerHardwarePtr->tim, timerHardwarePtr->channel, TIM_ICPolarity_Rising);
 #endif
@@ -341,6 +345,24 @@ void pwmICConfig(TIM_TypeDef *tim, uint8_t channel, uint16_t polarity)
 
     HAL_TIM_IC_ConfigChannel(Handle, &TIM_ICInitStructure, channel);
     HAL_TIM_IC_Start_IT(Handle,channel);
+}
+#elif defined(AT32F43x)
+void pwmICConfig(TIM_TypeDef *tim, uint8_t channel, uint16_t polarity)
+{
+    tmr_input_config_type tmr_icInitStructure;
+
+    // byte-offset channel (0/4/8/12) -> tmr_channel_select_type (0/2/4/6), see timer_at32bsp.c's AT_CH_SELECT()
+    tmr_icInitStructure.input_channel_select = (tmr_channel_select_type)(channel >> 1);
+    tmr_icInitStructure.input_polarity_select = (tmr_input_polarity_type)polarity;
+    tmr_icInitStructure.input_mapped_select = TMR_CC_CHANNEL_MAPPED_DIRECT;
+
+    if (inputFilteringMode == INPUT_FILTERING_ENABLED) {
+        tmr_icInitStructure.input_filter_value = INPUT_FILTER_TO_HELP_WITH_NOISE_FROM_OPENLRS_TELEMETRY_RX;
+    } else {
+        tmr_icInitStructure.input_filter_value = 0x00;
+    }
+
+    tmr_input_channel_init(tim, &tmr_icInitStructure, TMR_CHANNEL_INPUT_DIV_1);
 }
 #else
 void pwmICConfig(TIM_TypeDef *tim, uint8_t channel, uint16_t polarity)
@@ -394,6 +416,8 @@ void pwmRxInit(const pwmConfig_t *pwmConfig)
 
 #if defined(USE_HAL_DRIVER)
         pwmICConfig(timer->tim, timer->channel, TIM_ICPOLARITY_RISING);
+#elif defined(AT32F43x)
+        pwmICConfig(timer->tim, timer->channel, TMR_INPUT_RISING_EDGE);
 #else
         pwmICConfig(timer->tim, timer->channel, TIM_ICPolarity_Rising);
 #endif
@@ -412,7 +436,12 @@ void ppmAvoidPWMTimerClash(TIM_TypeDef *pwmTimer)
             continue;
         }
 
+#if defined(AT32F43x)
+        // AT-BSP names the prescaler register "div" (STM32's PSC equivalent)
+        ppmCountDivisor = timerClock(pwmTimer) / (pwmTimer->div + 1);
+#else
         ppmCountDivisor = timerClock(pwmTimer) / (pwmTimer->PSC + 1);
+#endif
         return;
     }
 }
@@ -448,6 +477,8 @@ void ppmRxInit(const ppmConfig_t *ppmConfig)
 
 #if defined(USE_HAL_DRIVER)
     pwmICConfig(timer->tim, timer->channel, TIM_ICPOLARITY_RISING);
+#elif defined(AT32F43x)
+    pwmICConfig(timer->tim, timer->channel, TMR_INPUT_RISING_EDGE);
 #else
     pwmICConfig(timer->tim, timer->channel, TIM_ICPolarity_Rising);
 #endif

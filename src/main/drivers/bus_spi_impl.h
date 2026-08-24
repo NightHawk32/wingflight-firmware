@@ -26,7 +26,8 @@
 #define MAX_SPI_PIN_SEL 2
 #elif defined(STM32F7)
 #define MAX_SPI_PIN_SEL 4
-#elif defined(STM32H7)
+#elif defined(STM32H7) || defined(AT32F43x)
+// AT32: matches betaflight's own AT32 platform.h (needs 5 slots for SPI3 MOSI's real pin table)
 #define MAX_SPI_PIN_SEL 5
 #else
 #error Unknown MCU family
@@ -36,7 +37,7 @@
 
 typedef struct spiPinDef_s {
     ioTag_t pin;
-#if defined(STM32F7) || defined(STM32H7) || defined(STM32G4)
+#if defined(STM32F7) || defined(STM32H7) || defined(STM32G4) || defined(AT32F43x)
     uint8_t af;
 #endif
 } spiPinDef_t;
@@ -47,7 +48,7 @@ typedef struct spiHardware_s {
     spiPinDef_t sckPins[MAX_SPI_PIN_SEL];
     spiPinDef_t misoPins[MAX_SPI_PIN_SEL];
     spiPinDef_t mosiPins[MAX_SPI_PIN_SEL];
-#ifndef STM32F7
+#if !defined(STM32F7) && !defined(AT32F43x)
     uint8_t af;
 #endif
     rccPeriphTag_t rcc;
@@ -63,7 +64,7 @@ typedef struct SPIDevice_s {
     ioTag_t sck;
     ioTag_t miso;
     ioTag_t mosi;
-#if defined(STM32F7) || defined(STM32H7) || defined(STM32G4)
+#if defined(STM32F7) || defined(STM32H7) || defined(STM32G4) || defined(AT32F43x)
     uint8_t sckAF;
     uint8_t misoAF;
     uint8_t mosiAF;

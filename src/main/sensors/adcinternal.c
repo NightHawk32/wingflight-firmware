@@ -117,4 +117,12 @@ uint16_t getVrefMv(void)
     return 3300;
 #endif
 }
+
+// blackbox.c calls getCoreTemperatureCelsius() unconditionally (not gated on
+// USE_ADC_INTERNAL), so it must always be linkable even on targets without internal
+// ADC channel support.
+int16_t getCoreTemperatureCelsius(void)
+{
+    return 0;
+}
 #endif
