@@ -135,19 +135,38 @@
 // AT32F435_TODO.md). Add USE_USB_CDC_HID/USE_MCO/etc. once needed.
 //
 // USE_DSHOT is now enabled: drivers/pwm_output_dshot_at32bsp.c implements classic
-// single-channel DMA-to-CCR DSHOT output natively against AT-BSP. Deliberately NOT yet
-// enabled alongside it:
-//   - USE_DSHOT_DMAR (4-channel timer-update-event burst DMA into consecutive CCR
-//     registers via STM32's ->DMAR alias register) -- AT-BSP timers have no equivalent
-//     alias register, so this needs its own implementation strategy later.
-//   - USE_DSHOT_TELEMETRY / USE_DSHOT_TELEMETRY_STATS (bidirectional DSHOT / ESC
-//     telemetry, which periodically switches the timer channel between output-compare
-//     and input-capture) -- not yet implemented in pwm_output_dshot_at32bsp.c.
-//   - USE_DSHOT_BITBANG -- drivers/dshot_bitbang_stdperiph.c (the StdPeriph DMA-GPIO
-//     bitbang backend) is STM32-only StdPeriph code with no AT-BSP port yet; would need
-//     its own _at32bsp.c equivalent (see AT32F435_TODO.md). dshot_bitbang.c/
-//     dshot_bitbang_decode.c stay listed in MCU_COMMON_SRC as harmless empty translation
-//     units (entirely guarded by #ifdef USE_DSHOT_BITBANG) until then.
+// single-channel DMA-to-CCR DSHOT output natively against AT-BSP.
+//
+// USE_DSHOT_TELEMETRY / USE_DSHOT_TELEMETRY_STATS (bidirectional DSHOT / ESC telemetry,
+// periodically switching the timer channel between output-compare and input-capture) are
+// now enabled too: pwm_output_dshot_at32bsp.c's pwmDshotSetDirectionOutput()/
+// pwmDshotSetDirectionInput()/dshotEnableChannels() are ported from betaflight's own real,
+// working upstream AT32 telemetry implementation (betaflight/src/platform/AT32/
+// pwm_output_dshot.c), including its documented cm1/cm2_output_bit.cXc register-clear
+// workaround for an apparent AT-BSP SDK bug where tmr_output_channel_config() doesn't
+// clear a channel's input/output mode selector left over from a prior input-capture
+// config. Required two small platform-level additions ported the same way: the
+// TIM_ICInitTypeDef alias (common/platform.h) and a TIM_DMACmd() wrapper (timer_at32bsp.c)
+// for the shared, MCU-agnostic pwm_output_dshot_shared.c to call.
+//
+// USE_DSHOT_DMAR (4-channel timer-update-event burst DMA into consecutive CCR registers
+// via STM32's ->DMAR alias register) is deliberately NOT enabled. AT-BSP timers have no
+// register equivalent to STM32's DMAR burst-address alias, and betaflight's own upstream
+// AT32 DMAR implementation (betaflight/src/platform/AT32/pwm_output_dshot.c) is itself
+// admittedly broken/untested ("// NB burst mode not tested", with the TIM_DMA_Update
+// equivalent call commented out as "XXX TODO") -- porting known-broken code for
+// safety-critical motor-output timing would be irresponsible. Revisit only if a working
+// reference implementation becomes available.
+//
+// USE_DSHOT_BITBANG -- now ported: drivers/dshot_bitbang_at32bsp.c implements the AT-BSP
+// low-level MCU-specific bb* functions (GPIO cfgr/scr direct register bit-banging + pacer
+// timer + DMA), ported from betaflight's own real, working upstream AT32 implementation
+// (betaflight/src/platform/AT32/dshot_bitbang_stdperiph.c). The shared, MCU-agnostic
+// dshot_bitbang.c/dshot_bitbang_decode.c needed only small additive branches (pacer
+// TMR1/TMR8 timerHardware table, buffer attributes, IO_CONFIG, BB_GPIO_PULL* macros).
+// Required two small additional platform-level prerequisites (common/platform.h):
+// WRITE_REG/READ_REG/MODIFY_REG register-manipulation macro aliases (AT-BSP's own headers,
+// unlike STM32's CMSIS device headers, don't provide these).
 //
 // USE_ADC_INTERNAL is now enabled: drivers/adc_at32f43x.c implements vrefint/tempsensor
 // as an ADC1 preempt (injected) channel pair against AT-BSP's preempt-channel API, using
@@ -156,6 +175,9 @@
 #define USE_DMA_SPEC
 #define USE_TIMER_MGMT
 #define USE_DSHOT
+#define USE_DSHOT_TELEMETRY
+#define USE_DSHOT_TELEMETRY_STATS
+#define USE_DSHOT_BITBANG
 #define USE_USB_MSC
 #define USE_PERSISTENT_MSC_RTC
 #define USE_ADC_INTERNAL
@@ -403,6 +425,15 @@ extern uint8_t _dmaram_end__;
 #endif
 
 #endif // TARGET_FLASH_SIZE > 128
+
+// USE_DSHOT_DMAR is enabled above by a generic, MCU-family-agnostic TARGET_FLASH_SIZE > 128
+// rule. AT32F43x deliberately never implements DSHOT DMAR (see the AT32F43x block above for
+// the full reasoning: betaflight's own upstream AT32 DMAR implementation is itself
+// admittedly broken/untested) -- guard against it being silently pulled in once
+// TARGET_FLASH_SIZE is defined for the AT32 unified target.
+#ifdef AT32F43x
+#undef USE_DSHOT_DMAR
+#endif
 
 #if (TARGET_FLASH_SIZE > 256)
 #define USE_GPS

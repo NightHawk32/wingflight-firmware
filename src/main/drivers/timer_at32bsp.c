@@ -866,6 +866,17 @@ void timerOCPreloadConfig(TIM_TypeDef *tim, uint8_t channel, uint16_t preload)
     tmr_output_channel_buffer_enable(tim, AT_CH_SELECT(channel), preload ? TRUE : FALSE);
 }
 
+// StdPeriph-signature-compatible wrapper around AT-BSP's tmr_dma_request_enable(), needed
+// because the shared, MCU-agnostic drivers/pwm_output_dshot_shared.c calls TIM_DMACmd()
+// unconditionally under USE_DSHOT_TELEMETRY (STM32F4 gets its own TIM_DMACmd() straight
+// from the vendor's StdPeriph library; AT-BSP has no equivalent, so this file provides one).
+// The "source" argument is one (or more, ORed) of the TIM_DMA_CCx/TIM_DMA_Update bit values
+// (see timer.h/timerDmaSource()), which map 1:1 onto AT-BSP's tmr_dma_request_type bits.
+void TIM_DMACmd(TIM_TypeDef *tim, uint16_t source, FunctionalState state)
+{
+    tmr_dma_request_enable(tim, (tmr_dma_request_type)source, state ? TRUE : FALSE);
+}
+
 uint16_t timerDmaSource(uint8_t channel)
 {
     switch (channel) {

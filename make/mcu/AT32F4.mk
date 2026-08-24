@@ -69,6 +69,7 @@ MCU_COMMON_SRC = \
             i2c_application.c \
             drivers/dma_at32f43x.c \
             drivers/dshot_bitbang.c \
+            drivers/dshot_bitbang_at32bsp.c \
             drivers/dshot_bitbang_decode.c \
             drivers/inverter.c \
             drivers/light_ws2811strip_at32f43x.c \

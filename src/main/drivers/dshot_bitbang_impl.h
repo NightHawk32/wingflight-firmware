@@ -79,6 +79,11 @@
 #ifdef USE_HAL_DRIVER
 #define BB_GPIO_PULLDOWN GPIO_PULLDOWN
 #define BB_GPIO_PULLUP   GPIO_PULLUP
+#elif defined(AT32F43x)
+// AT-BSP's io.h IOCFG_* macros use GPIO_PULL_DOWN/GPIO_PULL_UP naming, not StdPeriph's
+// GPIO_PuPd_DOWN/GPIO_PuPd_UP.
+#define BB_GPIO_PULLDOWN GPIO_PULL_DOWN
+#define BB_GPIO_PULLUP   GPIO_PULL_UP
 #else
 #define BB_GPIO_PULLDOWN GPIO_PuPd_DOWN
 #define BB_GPIO_PULLUP   GPIO_PuPd_UP
@@ -97,6 +102,12 @@ typedef struct dmaRegCache_s {
     uint32_t CNDTR;
     uint32_t CPAR;
     uint32_t CMAR;
+#elif defined(AT32F43x)
+    // AT-BSP's dma_channel_type register names (see IS_DMA_ENABLED() in drivers/dma.h).
+    uint32_t ctrl;
+    uint32_t dtcnt;
+    uint32_t paddr;
+    uint32_t maddr;
 #else
 #error No MCU dependent code here
 #endif
@@ -143,6 +154,11 @@ typedef struct bbPort_s {
 
 #ifdef USE_HAL_DRIVER
     LL_TIM_InitTypeDef timeBaseInit;
+#elif defined(AT32F43x)
+    // AT-BSP's tmr_base_init() takes scalar period/divider args directly (no StdPeriph-style
+    // init-struct); bbTIM_TimeBaseInit() in dshot_bitbang_at32bsp.c never reads this field, it
+    // only needs to exist with some concrete type for this shared struct to compile.
+    uint32_t timeBaseInit;
 #else
     TIM_TimeBaseInitTypeDef timeBaseInit;
 #endif

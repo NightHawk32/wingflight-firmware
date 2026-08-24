@@ -300,6 +300,13 @@ uint16_t timerDmaIndex(uint8_t channel);
 #else
 void timerOCInit(TIM_TypeDef *tim, uint8_t channel, TIM_OCInitTypeDef *init);
 void timerOCPreloadConfig(TIM_TypeDef *tim, uint8_t channel, uint16_t preload);
+#if defined(AT32F43x)
+// AT-BSP has no direct StdPeriph-signature-compatible TIM_DMACmd(); this thin wrapper
+// (implemented in timer_at32bsp.c via tmr_dma_request_enable()) lets the shared,
+// MCU-agnostic pwm_output_dshot_shared.c call it unconditionally under USE_DSHOT_TELEMETRY
+// exactly like it does for STM32F4 StdPeriph's own vendor-provided TIM_DMACmd().
+void TIM_DMACmd(TIM_TypeDef *tim, uint16_t source, FunctionalState state);
+#endif
 #endif
 
 volatile timCCR_t *timerCCR(TIM_TypeDef *tim, uint8_t channel);

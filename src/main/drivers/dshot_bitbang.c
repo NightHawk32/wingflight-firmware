@@ -78,6 +78,9 @@ dshotBitbangStatus_e bbStatus;
 #elif defined(STM32G4)
 #define BB_OUTPUT_BUFFER_ATTRIBUTE FAST_DATA_ZERO_INIT
 #define BB_INPUT_BUFFER_ATTRIBUTE  FAST_DATA_ZERO_INIT
+#elif defined(AT32F43x)
+#define BB_OUTPUT_BUFFER_ATTRIBUTE FAST_DATA_ZERO_INIT
+#define BB_INPUT_BUFFER_ATTRIBUTE  FAST_DATA_ZERO_INIT
 #endif
 #endif // USE_DSHOT_CACHE_MGMT
 
@@ -119,6 +122,18 @@ const timerHardware_t bbTimerHardware[] = {
     DEF_TIM(TIM1,  CH2, NONE,  TIM_USE_NONE, 0, 1, 0),
     DEF_TIM(TIM1,  CH3, NONE,  TIM_USE_NONE, 0, 2, 0),
     DEF_TIM(TIM1,  CH4, NONE,  TIM_USE_NONE, 0, 3, 0),
+
+#elif defined(AT32F43x)
+    // Pacing-only entries (pin=NONE): AT32F435/437 TMR1/TMR8 have full DMAMUX flexibility
+    // (see timer_def.h's AT32 DEF_TIM_DMA_FULL), same as STM32G4/H7 above.
+    DEF_TIM(TMR8,  CH1, NONE,  TIM_USE_NONE, 0, 0, 0),
+    DEF_TIM(TMR8,  CH2, NONE,  TIM_USE_NONE, 0, 1, 0),
+    DEF_TIM(TMR8,  CH3, NONE,  TIM_USE_NONE, 0, 2, 0),
+    DEF_TIM(TMR8,  CH4, NONE,  TIM_USE_NONE, 0, 3, 0),
+    DEF_TIM(TMR1,  CH1, NONE,  TIM_USE_NONE, 0, 0, 0),
+    DEF_TIM(TMR1,  CH2, NONE,  TIM_USE_NONE, 0, 1, 0),
+    DEF_TIM(TMR1,  CH3, NONE,  TIM_USE_NONE, 0, 2, 0),
+    DEF_TIM(TMR1,  CH4, NONE,  TIM_USE_NONE, 0, 3, 0),
 
 #else
 #error MCU dependent code required
@@ -763,6 +778,8 @@ motorDevice_t *dshotBitbangDevInit(const motorDevConfig_t *motorConfig, uint8_t 
         bbMotors[motorIndex].iocfg = IO_CONFIG(GPIO_Mode_OUT, GPIO_Speed_50MHz, GPIO_OType_PP, bbPuPdMode);
 #elif defined(STM32F7) || defined(STM32G4) || defined(STM32H7)
         bbMotors[motorIndex].iocfg = IO_CONFIG(GPIO_MODE_OUTPUT_PP, GPIO_SPEED_FREQ_LOW, bbPuPdMode);
+#elif defined(AT32F43x)
+        bbMotors[motorIndex].iocfg = IO_CONFIG(GPIO_MODE_OUTPUT, GPIO_DRIVE_STRENGTH_STRONGER, GPIO_OUTPUT_PUSH_PULL, bbPuPdMode);
 #endif
 
         IOInit(io, OWNER_MOTOR, RESOURCE_INDEX(motorIndex));

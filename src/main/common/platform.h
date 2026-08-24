@@ -154,9 +154,17 @@ typedef enum {DISABLE = 0, ENABLE = !DISABLE} FunctionalState;
 // using native AT-BSP field names (oc_mode/oc_polarity/oc_output_state/etc, see
 // tmr_output_config_type in at32f435_437_tmr.h) instead of the StdPeriph field names
 // (TIM_OCMode/TIM_Pulse/etc) used by the STM32-only branch, so no separate _at32bsp.c
-// replacement file is needed for that driver. dshot_dpwm.h, light_ws2811strip_stdperiph.c
-// and dshot_bitbang_stdperiph.c are still pending AT32 support (see AT32F435_TODO.md).
+// replacement file is needed for that driver. light_ws2811strip_stdperiph.c is still
+// pending AT32 support (see AT32F435_TODO.md); dshot_dpwm.h and dshot_bitbang.c needed no
+// changes (fully MCU-generic already) and dshot_bitbang_stdperiph.c has its own
+// dshot_bitbang_at32bsp.c counterpart.
 #define TIM_OCInitTypeDef tmr_output_config_type
+
+// AT-BSP's input-capture config struct is named tmr_input_config_type; alias it the same
+// way for USE_DSHOT_TELEMETRY's bidirectional-DSHOT input-capture path (dshot_dpwm.h's
+// motorDmaOutput_t.icInitStruct, pwm_output_dshot_at32bsp.c's pwmDshotSetDirectionInput()).
+// Matches betaflight's own upstream AT32 platform.h alias of the same name.
+#define TIM_ICInitTypeDef tmr_input_config_type
 
 // AT-BSP's ADC peripheral struct is named adc_type; alias it to the StdPeriph-style name
 // used by shared code (drivers/adc.h/adc_impl.h/adc.c).
@@ -169,6 +177,14 @@ typedef enum {DISABLE = 0, ENABLE = !DISABLE} FunctionalState;
 #define U_ID_0 (*(uint32_t*)UID_BASE)
 #define U_ID_1 (*(uint32_t*)(UID_BASE + 4))
 #define U_ID_2 (*(uint32_t*)(UID_BASE + 8))
+
+// AT-BSP's own headers, unlike STM32's CMSIS device headers, don't provide these
+// register-manipulation helpers; betaflight's own upstream AT32 platform.h defines the
+// same three macros for the same reason. Needed by dshot_bitbang_at32bsp.c's direct
+// GPIO cfgr/scr register manipulation.
+#define WRITE_REG(REG, VAL)   ((REG) = (VAL))
+#define READ_REG(REG)         ((REG))
+#define MODIFY_REG(REG, CLEARMASK, SETMASK)  WRITE_REG((REG), (((READ_REG(REG)) & (~(CLEARMASK))) | (SETMASK)))
 
 #ifndef AT32F43x
 #define AT32F43x

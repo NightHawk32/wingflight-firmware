@@ -273,14 +273,16 @@ Wingflight's current driver contracts (`timerHardware[]`, `ioTag_t`, `dmaMap`, e
       `dmaMuxEnable()` calls in `spiInitBusDMA()` after each `dmaEnable()` — **a deliberate
       deviation from upstream betaflight**, whose own AT32 port never calls `dmaMuxEnable()`
       for SPI/UART DMA (looks like a genuine upstream gap, only ADC/dshot/ws2811 call it).
-  - [ ] **BLOCKED**: [src/main/drivers/bus_spi_pinconfig.c](src/main/drivers/bus_spi_pinconfig.c)'s
-        `spiHardware[]` table still needs an AT32F435 SCK/MISO/MOSI pin → `GPIO_MUX_x` AF
-        mapping block for the unified-target CLI resource model. No reference for this exists
-        anywhere (vendored SDK headers only define the `GPIO_MUX_0..15` enum values, not which
-        physical pin maps to which peripheral/MUX; betaflight's own AT32 port doesn't use this
-        hardcoded-table architecture). Needs the actual AT32F435 datasheet alternate-function
-        table (or a specific board's verified pin/AF list) from the user before this can be
-        safely completed — do not guess these values.
+  - [x] [src/main/drivers/bus_spi_pinconfig.c](src/main/drivers/bus_spi_pinconfig.c)'s
+        `spiHardware[]` table gained a real AT32F435 SCK/MISO/MOSI pin → `GPIO_MUX_x` AF
+        mapping block. Previously believed blocked ("no reference exists"), but betaflight's
+        own vendored AT32 port (`betaflight/src/platform/common/stm32/bus_spi_pinconfig.c`'s
+        `#ifdef AT32F4` block) already contains this exact real, datasheet-derived per-pin
+        table — reused verbatim rather than fabricated. That upstream table needs 5 pin-select
+        slots for SPI3 MOSI, so `MAX_SPI_PIN_SEL` for `AT32F43x` was bumped from 4 to 5 in
+        [src/main/drivers/bus_spi_impl.h](src/main/drivers/bus_spi_impl.h) (matching
+        betaflight's own `platform/AT32/include/platform/platform.h`) instead of truncating
+        real pin data. Build-verified: `make TARGET=AT32F435 -j8` → `EXITCODE=0`, zero warnings.
 - [x] I2C bus (`bus_i2c_atbsp*`) — new [src/main/drivers/bus_i2c_at32bsp.c](src/main/drivers/bus_i2c_at32bsp.c)
       (single file, combining what betaflight splits into `bus_i2c_atbsp.c`+`bus_i2c_atbsp_init.c`),
       built on AT-BSP's higher-level blocking/interrupt **middleware** driver
@@ -537,13 +539,15 @@ Wingflight's current driver contracts (`timerHardware[]`, `ioTag_t`, `dmaMap`, e
          `AT32F4.mk`'s `MCU_COMMON_SRC` (no `MCU_EXCLUDES` entry needed for this one, unlike
          `timer.c` — `pwm_output_dshot.c` was never in the global `source.mk` `COMMON_SRC` to
          begin with, it's only ever referenced per-MCU).
-         **Deliberately scoped down for this first pass** (documented in the new file's header
-         comment and in `common_pre.h`): no `USE_DSHOT_DMAR` (4-channel timer-update-event burst
-         DMA via STM32's `->DMAR` alias register — AT-BSP timers have no equivalent alias
-         register, needs its own strategy later) and no `USE_DSHOT_TELEMETRY`/bidirectional
+         **Initial pass** (documented in the new file's header comment and in `common_pre.h`):
+         no `USE_DSHOT_DMAR` (4-channel timer-update-event burst DMA via STM32's `->DMAR` alias
+         register — AT-BSP timers have no equivalent alias register; see the dedicated
+         `USE_DSHOT_TELEMETRY`/`USE_DSHOT_DMAR` section below for why this is now a deliberate
+         permanent decision, not just a deferral) and no `USE_DSHOT_TELEMETRY`/bidirectional
          DSHOT (needs the timer channel to periodically flip between output-compare and
-         input-capture — not implemented yet). Implements `pwmDshotSetDirectionOutput()`
-         (3-arg, non-telemetry signature), `pwmCompleteDshotMotorUpdate()`,
+         input-capture — **since ported, see the dedicated section below**). Implements
+         `pwmDshotSetDirectionOutput()` (3-arg, non-telemetry signature at this initial-pass
+         point in time), `pwmCompleteDshotMotorUpdate()`,
          `motor_DMA_IRQHandler()`, `pwmDshotMotorHardwareConfig()` using
          `tmr_base_init()`/`tmr_clock_source_div_set(TMR_CLOCK_DIV1)`/`tmr_cnt_dir_set(TMR_COUNT_UP)`
          directly (not `configTimeBase()`, to preserve the original's exact
@@ -558,28 +562,41 @@ Wingflight's current driver contracts (`timerHardware[]`, `ioTag_t`, `dmaMap`, e
          `pwmCompleteDshotMotorUpdate()` unconditionally reloads the timer's period register
          from it on every motor update — dead/unexercised upstream only because
          `USE_DSHOT_TELEMETRY` happens to always be enabled for every currently-real target
-         (F4/F7/H7/G4). Since AT32 intentionally does NOT enable `USE_DSHOT_TELEMETRY`, the new
-         file sets `outputPeriod` **unconditionally** to avoid inheriting this gap.
-         **Also found and avoided**: AT-BSP's `tmr_output_channel_config()` (called via
-         `timerOCInit()`) applies its `oc_output_state`/`occ_output_state` struct fields as part
-         of the same call (their very names mean "output channel enable"/"output channel
-         complementary enable") — unlike STM32 StdPeriph, which needs a **separate**
-         `TIM_CCxCmd()`/`TIM_CCxNCmd()` call after `TIM_OCInit()` to actually enable the CCER
-         output. An initial draft mirrored StdPeriph's separate-enable-call pattern using a
-         local `AT_CH_SELECT()` macro, but this was removed as both unnecessary (redundant with
-         the OC-config-struct fields) and subtly wrong (a `channel+1`-based complementary-channel
-         selector calculation truncated incorrectly through the `>>1` conversion). Left the
-         config-struct fields as the sole enable mechanism, consistent with `pwm_output.c`'s new
-         AT32 branch which already relies on the same behavior.
+         (F4/F7/H7/G4). At the time this initial pass was written, AT32 did NOT yet enable
+         `USE_DSHOT_TELEMETRY` either, so the new file set `outputPeriod` **unconditionally**
+         (regardless of the `USE_DSHOT_TELEMETRY` define) to avoid inheriting this gap — this
+         unconditional assignment was kept as-is (harmlessly redundant, not removed) once
+         `USE_DSHOT_TELEMETRY` was later ported and enabled for AT32F43x (see the dedicated
+         section below).
+         **Also found (at this initial-pass point in time) and avoided**: AT-BSP's
+         `tmr_output_channel_config()` (called via `timerOCInit()`) applies its
+         `oc_output_state`/`occ_output_state` struct fields as part of the same call (their very
+         names mean "output channel enable"/"output channel complementary enable") — unlike
+         STM32 StdPeriph, which needs a **separate** `TIM_CCxCmd()`/`TIM_CCxNCmd()` call after
+         `TIM_OCInit()` to actually enable the CCER output. An initial draft mirrored StdPeriph's
+         separate-enable-call pattern using a local `AT_CH_SELECT()` macro, but this was removed
+         as both unnecessary (redundant with the OC-config-struct fields) and subtly wrong (a
+         `channel+1`-based complementary-channel selector calculation truncated incorrectly
+         through the `>>1` conversion). Left the config-struct fields as the sole enable
+         mechanism at that point in time, consistent with `pwm_output.c`'s AT32 branch.
+         **Superseded once `USE_DSHOT_TELEMETRY` was ported** (see dedicated section below): an
+         explicit `tmr_channel_enable()` disable/re-enable pair around `timerOCInit()` in
+         `pwmDshotSetDirectionOutput()` turned out to be required after all — not for the reason
+         above (the OC-config-struct fields still do apply the enable bits), but because
+         switching the channel *back* from input-capture mode (bidirectional DSHOT telemetry)
+         needs the channel explicitly disabled before reconfiguring it, and betaflight's own
+         real AT32 port does the same disable/re-enable around every direction switch.
          **`dshot_dpwm.h` fix**: `DSHOT_DMA_BUFFER_UNIT`'s `#if defined(STM32F4) || ...`
          condition didn't include `AT32F43x`, so it was defaulting to `uint8_t` (wrong — DMA-to-
          CCR needs 32-bit words); added `|| defined(AT32F43x)`.
          **`common_pre.h`**: added `#define USE_DSHOT` to the AT32F43x block, with the
          DMAR/telemetry/bitbang deferrals documented inline. Note `USE_DSHOT_DMAR` is enabled by
          a separate, MCU-family-agnostic rule keyed only on `TARGET_FLASH_SIZE > 128` — AT32F435
-         will very likely trip that rule once flash size is known for the unified target, so this
-         needs re-checking (and probably an explicit `#undef USE_DSHOT_DMAR` for AT32) once
-         `TARGET_FLASH_SIZE` is set up for `AT32_UNIFIED`; not yet resolved.
+         will very likely trip that rule once flash size is known for the unified target.
+         **Resolved in the `USE_DSHOT_TELEMETRY` follow-up session** (see dedicated section
+         below): an explicit `#ifdef AT32F43x #undef USE_DSHOT_DMAR #endif` was added right
+         after that generic rule's closing `#endif`, so this can no longer be silently
+         re-triggered once `TARGET_FLASH_SIZE` is defined for `AT32_UNIFIED`.
          **`make/mcu/AT32F4.mk`**: removed two stale/nonexistent-file references that would have
          broken any build attempt (`drivers/pwm_output_at32bsp.c` — no longer needed since
          `pwm_output.c` got an additive branch instead; `drivers/dshot_bitbang_at32bsp.c` — not
@@ -754,11 +771,13 @@ errors. Verified via actual `make` output plus a `Test-Path`/timestamp check on 
   `_init()`. Matches betaflight's own AT32 platform glue precedent exactly.
 
 **Known deliberate gaps after this milestone (tracked follow-up work, not bugs):**
-`bus_spi_pinconfig.c` AT32 pin/AF table (needs real datasheet data — do not fabricate),
+`bus_spi_pinconfig.c` AT32 pin/AF table — **now ported, see below**,
 `USE_ADC_INTERNAL` — **now ported, see below**, `USE_SOFTSERIAL1`/`2` — **now ported, see below**,
 `USE_ESCSERIAL` — **now ported, see below**, `USE_FREQ_SENSOR` — **now ported, see below**,
-`USE_DSHOT_DMAR`/`USE_DSHOT_TELEMETRY`/`USE_DSHOT_BITBANG` (pre-existing, unrelated to this
-session). The build has NOT been flashed/tested on real hardware yet — this is "compiles and
+`USE_DSHOT_TELEMETRY`/`USE_DSHOT_TELEMETRY_STATS` — **now ported, see below**,
+`USE_DSHOT_DMAR` — **deliberately not ported, see below** (upstream betaflight's own AT32
+implementation is itself broken/untested), `USE_DSHOT_BITBANG` (still pending, not yet
+started). The build has NOT been flashed/tested on real hardware yet — this is "compiles and
 links cleanly", not "verified working on a board".
 
 ## USE_PWM / USE_PPM (RX PWM/PPM input) — ported, build-verified
@@ -845,13 +864,16 @@ file:
   session's follow-up ports (`USE_PWM`/`USE_PPM`, `USE_FREQ_SENSOR`, `USE_SOFTSERIAL1/2`,
   `USE_ESCSERIAL`) now build together cleanly in one final combined rebuild.
 
-**Remaining known deliberate gaps** (not yet ported): `bus_spi_pinconfig.c` AT32 pin/AF table
-(needs real datasheet data — do not fabricate),
-`USE_DSHOT_DMAR`/`USE_DSHOT_TELEMETRY`/`USE_DSHOT_BITBANG` (pre-existing, unrelated). WS2811 LED
+**Remaining known deliberate gaps** (not yet ported):
+`USE_DSHOT_BITBANG` (not yet started). `USE_DSHOT_TELEMETRY`/`USE_DSHOT_TELEMETRY_STATS` are
+now ported too, see dedicated section below. `USE_DSHOT_DMAR` is deliberately NOT ported (see
+dedicated section below for reasoning). WS2811 LED
 strip (`light_ws2811strip_at32f43x.c`) was reconciled this session — it was already written and is
 already compiling/linking as an active code path (not a gap; the earlier checklist entry calling
 it "missing"/build-blocking was stale and has been corrected). `USE_ADC_INTERNAL` (core
-temp/vrefint) is now ported too, see dedicated section below. The build has still NOT been
+temp/vrefint) is now ported too, see dedicated section below. `bus_spi_pinconfig.c`'s AT32 pin/AF
+table is now ported too (reused verbatim from betaflight's own vendored AT32 driver), see
+dedicated section below. The build has still NOT been
 flashed/tested on real hardware.
 
 ## USE_ADC_INTERNAL (core temp/vrefint sensor) — ported, build-verified
@@ -924,6 +946,261 @@ against AT-BSP's preempt-channel API — this repo's older single-selected-ADC-d
   `sensors/adcinternal.c` (that `#else` branch is now dead code on AT32, since `USE_ADC_INTERNAL`
   is defined).
 - Rebuilt `make TARGET=AT32F435 -j8` — clean compile+link, `EXITCODE=0`, zero warnings.
+
+## bus_spi_pinconfig.c AT32 pin/AF table — ported, build-verified
+
+Previously marked **BLOCKED**, believing no real AT32F435 SPI pin → alternate-function mapping
+existed anywhere accessible. That assumption was wrong: betaflight's own vendored AT32 port,
+already present in this repo at
+[betaflight/src/platform/common/stm32/bus_spi_pinconfig.c](betaflight/src/platform/common/stm32/bus_spi_pinconfig.c),
+contains a complete, real, datasheet-derived `#ifdef AT32F4` `spiHardware[]` block for SPI1-4.
+Copied it verbatim into this repo's
+[src/main/drivers/bus_spi_pinconfig.c](src/main/drivers/bus_spi_pinconfig.c) rather than
+fabricating or guessing pin/AF data.
+
+- Betaflight's newer SPI architecture (`spiPinDef_t` with a per-pin `.af` field) is structurally
+  identical to what this repo already had wired up for `AT32F43x` (grouped with STM32F7/H7/G4's
+  per-pin-AF code paths in `bus_spi_impl.h`/`bus_spi_pinconfig.c` from an earlier session), so no
+  new architecture/plumbing was needed — this was a pure data port.
+- Betaflight's AT32 table needs 5 pin-select slots (SPI3's MOSI list has 5 real entries: PB0,
+  PB2, PB5, PC12, PD0), but this repo's `AT32F43x` branch of `MAX_SPI_PIN_SEL` was still set to
+  4 (inherited from being grouped with STM32F7). Rather than silently truncating real pin data
+  to fit, bumped `MAX_SPI_PIN_SEL` to 5 for `AT32F43x` in
+  [src/main/drivers/bus_spi_impl.h](src/main/drivers/bus_spi_impl.h) — this exactly matches
+  betaflight's own `src/platform/AT32/include/platform/platform.h` (`#define MAX_SPI_PIN_SEL 5`),
+  confirming 5 is the correct real value for this MCU family, not an arbitrary choice.
+- Verified `SPI1`/`SPI2`/`SPI3`/`SPI4` (`spi_type*` aliases) and `CRM_SPI1_PERIPH_CLOCK` through
+  `CRM_SPI4_PERIPH_CLOCK` all exist in the vendored `at32f435_437_spi.h`/`at32f435_437_crm.h`
+  before relying on them; `RCC_APB1(SPI2/3)`/`RCC_APB2(SPI1/4)` already resolve correctly for
+  `AT32F43x` via this repo's pre-existing `rcc.h` macro redefinitions (`RCC_APB1(periph)` →
+  `CRM_ ## periph ## _PERIPH_CLOCK`), so no `rcc.h` changes were needed.
+- Removed the now-obsolete `SPI_HARDWARE_TABLE_NOT_YET_POPULATED` sentinel/all-zero-entry
+  workaround that previously kept `spiHardware[]` non-empty on AT32.
+- Rebuilt `make TARGET=AT32F435 -j8` — clean compile+link, `EXITCODE=0`, zero warnings. As
+  always, SPI device/pin assignment via CLI `resource` commands on real AT32 hardware has not
+  been flashed/tested — this only confirms the table compiles and the pin-matching logic in
+  `spiPinConfigure()` runs over real (not placeholder) data.
+
+## USE_DSHOT_TELEMETRY / USE_DSHOT_TELEMETRY_STATS — ported, build-verified
+
+Bidirectional DSHOT (ESC telemetry returned on the same signal wire, direction-switched
+per-frame between output-compare and input-capture) is now implemented for AT32F43x, ported
+from betaflight's own real, working upstream AT32 driver
+([betaflight/src/platform/AT32/pwm_output_dshot.c](betaflight/src/platform/AT32/pwm_output_dshot.c)),
+cross-checked against this repo's own STM32 StdPeriph reference file
+([src/main/drivers/pwm_output_dshot.c](src/main/drivers/pwm_output_dshot.c)) for exact
+conventions/naming/struct-field usage. `USE_DSHOT_DMAR` remains deliberately NOT ported (see
+its own section immediately below).
+
+**Two platform-level prerequisites** (neither existed for AT32 before this work):
+- `TIM_ICInitTypeDef` type alias — added
+  `#define TIM_ICInitTypeDef tmr_input_config_type` to
+  [src/main/common/platform.h](src/main/common/platform.h), right after the existing
+  `TIM_OCInitTypeDef` alias. Needed because `drivers/dshot_dpwm.h`'s `motorDmaOutput_t` struct
+  has an `icInitStruct` field of this type, used to reconfigure the timer channel for
+  input-capture mode when switching direction to read telemetry. This matches betaflight's own
+  upstream alias of the same name.
+- `TIM_DMACmd()` function — the shared, MCU-agnostic
+  [src/main/drivers/pwm_output_dshot_shared.c](src/main/drivers/pwm_output_dshot_shared.c) calls
+  `TIM_DMACmd()` unconditionally under `USE_DSHOT_TELEMETRY` (STM32F4 gets this straight from its
+  vendor StdPeriph library; AT-BSP has no equivalent). Added a prototype to
+  [src/main/drivers/timer.h](src/main/drivers/timer.h) (guarded `#if defined(AT32F43x)`, inside
+  the non-HAL branch) and a one-line StdPeriph-signature-compatible wrapper implementation in
+  [src/main/drivers/timer_at32bsp.c](src/main/drivers/timer_at32bsp.c) that calls AT-BSP's
+  `tmr_dma_request_enable()`, since the `source` bitfield values (`TIM_DMA_CCx`/`TIM_DMA_Update`)
+  map 1:1 onto AT-BSP's `tmr_dma_request_type` bits.
+
+**[src/main/drivers/pwm_output_dshot_at32bsp.c](src/main/drivers/pwm_output_dshot_at32bsp.c)
+rewrite** (build-verified, `EXITCODE=0`, zero warnings):
+- `static tmr_channel_select_type toCHSelectType(uint8_t channel, bool useNChannel)` (new) — maps
+  a 1-based Betaflight channel number + N-channel flag to the AT-BSP
+  `TMR_SELECT_CHANNEL_1/2/3/4` or `_1C/_2C/_3C` enum values needed by
+  `tmr_primary_mode_select()`/`tmr_channel_enable()`.
+- `#ifdef USE_DSHOT_TELEMETRY void dshotEnableChannels(uint8_t motorCount)` (new) — loops all
+  DSHOT motors, calling `tmr_primary_mode_select()` + `tmr_channel_enable()` per motor, using
+  `timerHardware->output & TIMER_OUTPUT_N_CHANNEL` (confirmed as the always-accurate source for
+  this flag, not the unused `motor->output` field, since `dshot_dpwm.c`'s `dshotPwmDevInit()`
+  passes `timerHardware->output` through).
+- `pwmDshotSetDirectionOutput()` — signature is now conditional: 1-arg
+  (`motorDmaOutput_t * const motor`) under `USE_DSHOT_TELEMETRY`, using the motor-embedded
+  `ocInitStruct`/`dmaInitStruct` fields via `OCINIT`/`DMAINIT` macros; 3-arg (explicit
+  `TIM_OCInitTypeDef*`/`DMA_InitTypeDef*` params) otherwise — matching this repo's own STM32
+  reference file's exact pattern. Also applies an AT-BSP SDK workaround (ported verbatim from
+  betaflight, confirmed necessary): `tmr_output_channel_config()` does **not** clear a channel's
+  CxC capture/compare-selection bitfield in the `cm1_output_bit`/`cm2_output_bit` registers when
+  switching back from input-capture mode, so `timer->cm1_output_bit.c1c`/`.c2c` (ch1/ch2) and
+  `timer->cm2_output_bit.c3c`/`.c4c` (ch3/ch4) are manually zeroed before calling `timerOCInit()`.
+- `#ifdef USE_DSHOT_TELEMETRY static void pwmDshotSetDirectionInput(motorDmaOutput_t * const
+  motor)` (new) — sets `motor->isInput = true`, records `inputStampUs` via `micros()` on first
+  entry, disables the output-compare period buffer, sets `timer->pr = 0xffffffff` (max period so
+  the input-capture window doesn't wrap early), calls
+  `tmr_input_channel_init(timer, &motor->icInitStruct, TMR_CHANNEL_INPUT_DIV_1)`, and
+  reconfigures the DMA stream's direction to `DMA_DIR_PERIPHERAL_TO_MEMORY` for reading GCR
+  telemetry edges.
+- `motor_DMA_IRQHandler()` — under telemetry, now records
+  `dshotDMAHandlerCycleCounters.irqAt = getCycleCounter()` near the top, and its tail
+  unconditionally (when `useDshotTelemetry`) calls `pwmDshotSetDirectionInput()`, sets the DMA
+  transfer count to `GCR_TELEMETRY_INPUT_LEN`, re-enables the DMA stream + DMA request, and
+  records `dshotDMAHandlerCycleCounters.changeDirectionCompletedAt`.
+- `pwmDshotMotorHardwareConfig()` — added the `OCINIT`/`DMAINIT` macro pair at the top of the
+  function (resolving to the motor-embedded structs under telemetry, local stack structs
+  otherwise), matching this repo's own STM32 reference file's convention exactly (no `#undef` at
+  the end, since this is the last function in the file, again matching upstream). Added
+  `output ^= TIMER_OUTPUT_INVERTED` under telemetry (confirmed safe: `TIMER_OUTPUT_INVERTED =
+  (1<<0)` and `TIMER_OUTPUT_N_CHANNEL = (1<<1)` are distinct bits, per
+  [src/main/drivers/timer.h](src/main/drivers/timer.h)). All direct `ocInitStruct.`/
+  `dmaInitStruct.` field references were changed to go through the `OCINIT`/`DMAINIT` macros.
+  Added the `icInitStruct` setup block (input-capture polarity/filter config) under telemetry,
+  a `dshotTelemetryDeadtimeUs` computation, and a conditional call to
+  `pwmDshotSetDirectionOutput()` (1-arg under telemetry, 3-arg otherwise). Added a final
+  `*timerChCCR(timerHardware) = 0xffff` startup-safety line under telemetry (ensures the ESC
+  sees a safe/idle duty cycle before the first real DSHOT frame is armed).
+- A self-introduced bug (duplicated top-of-file scope comment left behind by an imprecise
+  `replace_string_in_file` edit) was found via a follow-up full-file re-read and fixed before the
+  final build verification.
+
+**`common_pre.h`**: `USE_DSHOT_TELEMETRY`/`USE_DSHOT_TELEMETRY_STATS` added to the AT32F43x
+`#define` block, with the comment block above it rewritten to document the current, accurate
+per-flag status (TELEMETRY/STATS ported this session; DMAR deliberately not ported; BITBANG
+still deferred/not started).
+
+Final rebuild after all of the above: `make TARGET=AT32F435 -j8` → `EXITCODE=0`, zero warnings,
+full link succeeded (FLASH1 455586 B / 992 KB = 44.85% used, RAM 103324 B / 192 KB = 52.55%
+used).
+
+## USE_DSHOT_DMAR — deliberately NOT ported
+
+`USE_DSHOT_DMAR` (STM32-style 4-channel timer-update-event burst DMA via the timer's `->DMAR`
+alias register, letting one DMA transfer update all 4 CCR registers plus ARR/etc. in one burst)
+is intentionally **not** ported to AT32F43x, and this is a considered decision rather than an
+oversight:
+
+- Betaflight's own real, upstream AT32 DSHOT DMAR implementation is itself admittedly
+  broken/untested — it contains a `// NB burst mode not tested` comment and a commented-out
+  `TIM_DMA_Update`-equivalent call marked `XXX TODO`. Porting known-broken/untested code for a
+  safety-critical motor-timing path would be irresponsible, so it was deliberately excluded.
+- AT-BSP's timer peripheral has no register directly equivalent to STM32's `TIMx->DMAR`/`DCR`
+  alias-address burst-DMA mechanism in the first place, so a real port (if ever undertaken) would
+  need its own from-scratch design, not a mechanical translation — there is currently no working
+  reference implementation (upstream or otherwise) to safely copy from.
+- **Defensive guard added**: [src/main/target/common_pre.h](src/main/target/common_pre.h) has a
+  separate, MCU-family-agnostic rule (`#if (TARGET_FLASH_SIZE > 128) #define USE_DSHOT_DMAR ...
+  #endif`) that could silently re-enable `USE_DSHOT_DMAR` for AT32 once `TARGET_FLASH_SIZE` is
+  eventually defined for the AT32 unified target (currently undefined for AT32 — only
+  `SITL/target.h` defines it today, so this rule is dormant/harmless for now, but not
+  permanently safe on its own). Added
+  `#ifdef AT32F43x #undef USE_DSHOT_DMAR #endif` immediately after that generic rule's closing
+  `#endif`, making the "AT32 never does DMAR" decision permanently enforced in the actual
+  preprocessor logic regardless of future `TARGET_FLASH_SIZE` changes, not just documented in a
+  comment.
+- Revisit only if/when a real, working AT32 DMAR reference implementation becomes available
+  (upstream betaflight or otherwise) — until then, this is a closed decision, not an open gap.
+
+## USE_DSHOT_BITBANG — ported, build-verified
+
+`USE_DSHOT_BITBANG` (software/DMA-driven "bitbang" DSHOT output on arbitrary GPIO pins, not
+requiring a hardware timer-channel-to-pin mapping — used for high motor counts and for pins
+without a usable timer resource) is now ported to AT32F43x.
+
+Betaflight's own upstream tree has **two** related files for this feature, and only one of them
+was actually portable:
+
+- `betaflight/src/platform/AT32/dshot_bitbang.c` (the higher-level shared motor/port/pacer logic)
+  turned out to be from a **newer, incompatible, refactored architecture** — confirmed via
+  `bbFindMotorPacer(timerResource_t *tim)` (a `timerResource_t`-based abstraction) vs. this
+  repo's own `bbFindMotorPacer(TIM_TypeDef *tim)`. This file was **not** used as a reference for
+  edits; this repo's own existing, MCU-agnostic
+  [src/main/drivers/dshot_bitbang.c](src/main/drivers/dshot_bitbang.c) was kept as the base and
+  only given small additive `#elif defined(AT32F43x)` branches (below).
+- `betaflight/src/platform/AT32/dshot_bitbang_stdperiph.c` (the low-level, per-MCU register/DMA
+  file, despite its "stdperiph" name still being genuinely AT-BSP-native code) **was** directly
+  portable, since it implements the same `bb*()` function contract that this repo's own STM32
+  [src/main/drivers/dshot_bitbang_stdperiph.c](src/main/drivers/dshot_bitbang_stdperiph.c)/
+  [src/main/drivers/dshot_bitbang_ll.c](src/main/drivers/dshot_bitbang_ll.c) files implement. This
+  was ported (with careful symbol-by-symbol cross-verification against both betaflight's and
+  this repo's own vendored `lib/main/AT32F43x` SDK headers) into a brand-new
+  [src/main/drivers/dshot_bitbang_at32bsp.c](src/main/drivers/dshot_bitbang_at32bsp.c).
+
+**New file: [src/main/drivers/dshot_bitbang_at32bsp.c](src/main/drivers/dshot_bitbang_at32bsp.c)**
+implements the full low-level `bb*()` API declared in
+[src/main/drivers/dshot_bitbang_impl.h](src/main/drivers/dshot_bitbang_impl.h):
+`bbGpioSetup()`, `bbTimerChannelInit()`, `bbLoadDMARegs()`/`bbSaveDMARegs()` (under
+`USE_DMA_REGISTER_CACHE`), `bbSwitchToOutput()`, `bbSwitchToInput()` (under
+`USE_DSHOT_TELEMETRY`), `bbDMAPreconfigure()`, `bbTIM_TimeBaseInit()`, `bbTIM_DMACmd()`,
+`bbDMA_ITConfig()`, `bbDMA_Cmd()`, `bbDMA_Count()`. Notable AT-BSP-specific details resolved
+during porting (all confirmed via grep against the vendored SDK headers before writing code,
+not just copied blindly from betaflight):
+
+- `BB_CH_SELECT(ch)` — a local, file-scoped macro (`((tmr_channel_select_type)((ch) >> 1))`)
+  converting this repo's byte-offset timer channel convention (0/4/8/12) to AT-BSP's
+  `tmr_channel_select_type` enum values (0/2/4/6). Mirrors the identical, already-existing
+  private `AT_CH_SELECT` macro in
+  [src/main/drivers/timer_at32bsp.c](src/main/drivers/timer_at32bsp.c) — redefined locally
+  rather than exported/shared, to avoid new header coupling for one line of arithmetic.
+- GPIO direct register access uses AT-BSP's `gpio_type` field names: `cfgr` (mode register,
+  STM32 `MODER` equivalent), `scr` (set/clear register, exact STM32 `BSRR` equivalent — bits
+  0-15 set, bits 16-31 clear), `idt` (input data register).
+- `TIM_OCStructInit()` (STdPeriph-only, no AT-BSP equivalent) replaced with AT-BSP's real
+  `tmr_output_default_para_init()` — confirmed by checking how
+  [src/main/drivers/pwm_output_dshot_at32bsp.c](src/main/drivers/pwm_output_dshot_at32bsp.c)
+  (from the earlier `USE_DSHOT_TELEMETRY` port) already solves the exact same problem.
+- `TIM_CtrlPWMOutputs()` (StdPeriph-only, called from the `DEBUG_MONITOR_PACER` debug block —
+  which is **not** a dead branch, since `DEBUG_MONITOR_PACER` is unconditionally `#define`d near
+  the top of `dshot_bitbang_impl.h`, so this code path is genuinely compiled) replaced with
+  AT-BSP's `tmr_output_enable()`, confirmed as the correct 1:1 substitute by checking
+  [src/main/drivers/pwm_output.c](src/main/drivers/pwm_output.c)'s own pre-existing
+  `#elif defined(AT32F43x)` branch, which makes the identical substitution.
+- `WRITE_REG`/`READ_REG`/`MODIFY_REG` (STM32 CMSIS-device-header macros, used for the direct
+  `cfgr`/`scr` register read-modify-write in `bbSwitchToOutput()`/`bbSwitchToInput()`) have
+  **no AT-BSP equivalent** (AT32's vendor SDK headers don't define them, unlike STM32's CMSIS
+  device headers) — confirmed missing via grep across both this repo's own and betaflight's
+  vendored `lib/main/AT32F43x` tree. Added the same three macros betaflight's own upstream AT32
+  `platform.h` defines, to this repo's
+  [src/main/common/platform.h](src/main/common/platform.h), inside the `#elif defined(AT32F43x)`
+  block.
+- `DMA_IT_TCIF` (this repo's own [src/main/drivers/dma.h](src/main/drivers/dma.h) constant, used
+  for AT32) confirmed as the correct choice over `DMA_IT_TC` (STM32 vendor-header-only, used by
+  the STM32 `dshot_bitbang_stdperiph.c` reference file).
+- `dma_init_type` field names (`peripheral_inc_enable`, `memory_inc_enable`,
+  `loop_mode_enable`, `direction`/`dma_dir_type`, `buffer_size`, `peripheral_base_addr`,
+  `peripheral_data_width`, `memory_base_addr`, `memory_data_width`, `priority`/
+  `dma_priority_level_type`) all confirmed present and correctly named via the vendored
+  `at32f435_437_dma.h`.
+- `tmr_base_init(tmr_type*, uint32_t period, uint32_t div)` takes scalar arguments directly (no
+  StdPeriph-style init-struct); `bbPort_t.timeBaseInit` was given a plain, deliberately-unused
+  `uint32_t` placeholder field type for AT32 (documented via comment) instead of a fabricated
+  fake struct alias.
+
+**Small additive `#elif defined(AT32F43x)` branches** (this repo's own files, MCU-agnostic
+shared logic kept intact):
+- [src/main/drivers/dshot_bitbang_impl.h](src/main/drivers/dshot_bitbang_impl.h) —
+  `BB_GPIO_PULLDOWN`/`BB_GPIO_PULLUP` (→ `GPIO_PULL_DOWN`/`GPIO_PULL_UP`, AT32's own `io.h`
+  naming, distinct from STM32's `GPIO_PuPd_DOWN`/`_UP`); `dmaRegCache_t` register-cache fields
+  (`ctrl`/`dtcnt`/`paddr`/`maddr`, matching AT-BSP's `dma_channel_type` field names); the
+  `timeBaseInit` placeholder field described above.
+- [src/main/drivers/dshot_bitbang.c](src/main/drivers/dshot_bitbang.c) — buffer-attribute
+  macros (`FAST_DATA_ZERO_INIT`, matching the existing STM32G4/F7 branch, no cache-coherency
+  concerns on Cortex-M4); the `bbTimerHardware[]` pacer-timer table (8 entries: `TMR8`
+  CH1-CH4 then `TMR1` CH1-CH4 via `DEF_TIM(..., TIM_USE_NONE, 0, chan_idx, 0)` — mirrors
+  betaflight's own AT32 bitbang pacer table exactly); the motor `iocfg` computation in
+  `dshotBitbangDevInit()` (`IO_CONFIG(GPIO_MODE_OUTPUT, GPIO_DRIVE_STRENGTH_STRONGER,
+  GPIO_OUTPUT_PUSH_PULL, bbPuPdMode)`, matching AT32's own `io.h` macro naming).
+
+**Build wiring**:
+- [make/mcu/AT32F4.mk](make/mcu/AT32F4.mk): added `drivers/dshot_bitbang_at32bsp.c` to
+  `MCU_COMMON_SRC`, next to the already-listed `drivers/dshot_bitbang.c`/
+  `drivers/dshot_bitbang_decode.c`.
+- `common_pre.h`: `USE_DSHOT_BITBANG` added to the AT32F43x `#define` block; the explanatory
+  comment above it (previously describing BITBANG as unported/deferred) rewritten to describe
+  the now-completed port and its two small platform.h prerequisites.
+
+Final build after all of the above: `make TARGET=AT32F435 -j8` → exit code 0, zero compiler
+errors, full link succeeded (`arm-none-eabi-size` on the resulting `.elf`: `text=454230
+data=10048 bss=96112`, i.e. ~464 KB flash / ~104 KB RAM used). All three touched/new
+`dshot_bitbang*.o` object files were confirmed freshly rebuilt (not stale) via file-timestamp
+check before accepting the result.
+
+
 
 
 
