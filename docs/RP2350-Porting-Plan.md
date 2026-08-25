@@ -149,9 +149,52 @@ framebuffer support dropped from scope per Phase 0 decision).
       `drivers/usb_msc_common.c`, `msc/usbd_storage*.c`, `msc/emfat*.c`) so the
       flight controller can expose config/blackbox storage as a mass-storage
       device over USB.
-- [ ] Port multicore support (`PICO/multicore.c`) — evaluate whether to also
-      enable `ENABLE_MULTICORE_INIT` (running FC init phases on core 1, per
-      `target_RP2350.h` comments) or just core-1 task offload.
+- [ ] Port multicore support in two parts:
+      1. **Straight port** (low risk): `platform/multicore.h`, `multicore.c`
+         (queue-based `multicoreExecute()`/`multicoreExecuteBlocking()` RPC to
+         core 1), and the `DMA_IRQ_CORE_NUM 1` wiring in the ported `dma.c` so
+         all DMA-completion interrupts land on core 1, keeping core 0 (the
+         scheduler/PID loop) free of DMA ISR jitter. Depends only on
+         pico-sdk's `pico_multicore`/`pico_sync`/`pico_util`, already in the
+         vendored SDK source list — no new dependency needed.
+      2. **New work** (not present upstream — Betaflight's `core1_main` is
+         just a command consumer with a `// TODO call scheduler here for
+         core 1 tasks`): build a real lightweight task consumer on core 1 and
+         move latency-tolerant, non-deterministic-timing work onto it —
+         candidates: USB-MSC block read/write servicing, blackbox I/O
+         flushing, CLI/MSP serial parsing outside the hot path, DSHOT
+         telemetry decode. Keep gyro sampling → filtering → PID → mixer →
+         motor output entirely on core 0 — that chain is serially
+         data-dependent and must not be split across cores.
+      - [ ] Decide whether to also enable `ENABLE_MULTICORE_INIT` (running FC
+            init phases 1/2 on core 1 during boot, per `target_RP2350.h`) —
+            boot-time only, not a runtime performance factor.
+
+### Multicore vs. STM32F405/STM32F722 performance (reference notes, 2026-08-25)
+
+| | Core | Clock (official) | Pipeline | FPU |
+|---|---|---|---|---|
+| STM32F405 | Cortex-M4 | 168 MHz | single-issue, 3-stage | single-precision |
+| STM32F722 | Cortex-M7 | 216 MHz | dual-issue superscalar, 6-stage, branch prediction, TCM/cache | single-precision |
+| RP2350 | Cortex-M33 ×2 | 150 MHz (datasheet spec) | single-issue, similar depth to M4 | single-precision (present on RP2350) |
+
+- A single RP2350 core is roughly F405-class per clock (slightly under, since
+  150 MHz < 168 MHz and M33/M4 IPC is similar for typical filter/PID C code).
+  It will **not** match F722's per-core throughput — M7's dual-issue pipeline
+  gives it a real IPC advantage on top of a higher clock.
+- The second core does not speed up the sequential gyro→PID→mixer→motor path
+  (inherently single-threaded, must stay that way for lowest latency). Its
+  value is removing DMA-ISR jitter and non-deterministic housekeeping
+  (USB-MSC, blackbox, CLI/MSP) from the core running the scheduler — which a
+  single-core F405/F722 cannot do. This can make loop-time **consistency**
+  competitive with or better than a heavily-loaded F405, even though the raw
+  core clock is lower.
+- Community RP2350 overclocking (200–300+ MHz) exists but is
+  unofficial/unvalidated for voltage/thermal margin — not assumed by this
+  plan; a candidate future research item only.
+- Practical takeaway: treat RP2350 as roughly F405-class parity target
+  (helped by multicore jitter reduction), not an F722 replacement for raw
+  single-thread filter/PID throughput.
 
 ## Phase 6 — Validation
 
@@ -176,4 +219,9 @@ framebuffer support dropped from scope per Phase 0 decision).
 - 2026-08-24: Phase 0 scope decision: keep USB-MSC and multicore support in
   scope, drop the OSD framebuffer entirely (not needed for fixed-wing use
   case). Phase 5 renamed/expanded to cover VCP + USB-MSC + multicore. No
+  implementation started yet.
+- 2026-08-25: Detailed the multicore implementation approach (straight port
+  of `multicore.c` + `DMA_IRQ_CORE_NUM` DMA-ISR offload, plus new work to
+  build a real core-1 task consumer for USB-MSC/blackbox/CLI offload) and
+  added performance-comparison notes vs. STM32F405/F722 to Phase 5. No
   implementation started yet.
