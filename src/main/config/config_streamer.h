@@ -26,7 +26,11 @@
 // Streams data out to the EEPROM, padding to the write size as
 // needed, and updating the checksum as it goes.
 
-#ifdef CONFIG_IN_EXTERNAL_FLASH
+#if defined(FLASH_CONFIG_STREAMER_BUFFER_SIZE)
+// Provided by target.h (e.g. RP2350/RP2354, whose pico-sdk flash_range_program() requires whole-page writes).
+#define CONFIG_STREAMER_BUFFER_SIZE FLASH_CONFIG_STREAMER_BUFFER_SIZE
+typedef uint32_t config_streamer_buffer_align_type_t;
+#elif defined(CONFIG_IN_EXTERNAL_FLASH)
 #define CONFIG_STREAMER_BUFFER_SIZE 8 // Must not be greater than the smallest flash page size of all compiled-in flash devices.
 typedef uint32_t config_streamer_buffer_align_type_t;
 #elif defined(STM32H743xx) || defined(STM32H750xx) || defined(STM32H723xx) || defined(STM32H725xx)

@@ -45,6 +45,7 @@ volatile FAST_DATA_ZERO_INIT uint16_t adcValues[ADC_CHANNEL_COUNT];
 volatile uint16_t adcValues[ADC_CHANNEL_COUNT];
 #endif
 
+#if !defined(PICO)
 uint8_t adcChannelByTag(ioTag_t ioTag)
 {
     for (uint8_t i = 0; i < ARRAYLEN(adcTagMap); i++) {
@@ -53,7 +54,9 @@ uint8_t adcChannelByTag(ioTag_t ioTag)
     }
     return 0;
 }
+#endif // !defined(PICO)
 
+#if !defined(PICO)
 ADCDevice adcDeviceByInstance(ADC_TypeDef *instance)
 {
     if (instance == ADC1) {
@@ -83,21 +86,33 @@ ADCDevice adcDeviceByInstance(ADC_TypeDef *instance)
 
     return ADCINVALID;
 }
+#else // defined(PICO)
+// PICO has no ADCx register-block/instance concept (drivers/adc_pico.c drives
+// the RP2350's single on-chip ADC directly); always report the single device.
+ADCDevice adcDeviceByInstance(ADC_TypeDef *instance)
+{
+    UNUSED(instance);
+    return ADCDEV_1;
+}
+#endif // !defined(PICO)
 
 bool adcIsEnabled(uint8_t channel)
 {
     return adcOperatingConfig[channel].enabled;
 }
 
+#if !defined(PICO)
 uint16_t adcGetChannel(uint8_t channel)
 {
     adcGetChannelValues();
 
     return adcValues[adcOperatingConfig[channel].dmaIndex];
 }
+#endif // !defined(PICO)
 
 // Verify a pin designated by tag has connection to an ADC instance designated by device
 
+#if !defined(PICO)
 bool adcVerifyPin(ioTag_t tag, ADCDevice device)
 {
     if (!tag) {
@@ -112,6 +127,7 @@ bool adcVerifyPin(ioTag_t tag, ADCDevice device)
 
     return false;
 }
+#endif // !defined(PICO)
 
 #ifdef USE_ADC_INTERNAL
 

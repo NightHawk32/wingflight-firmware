@@ -158,6 +158,10 @@ typedef enum {
 #define DMA_CLEAR_FLAG(d, flag) do { (void)(d); (void)(flag); } while (0)
 #define DMA_GET_FLAG_STATUS(d, flag) ((void)(d), (void)(flag), 0)
 
+#define DMA_OUTPUT_INDEX    0
+#define DMA_OUTPUT_STRING   "DMA%d Channel %d:"
+#define DMA_INPUT_STRING    "DMA%d_CH%d"
+
 #else
 
 #if defined(STM32G4)

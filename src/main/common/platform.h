@@ -171,6 +171,13 @@ typedef int32_t IRQn_Type;
 // CMSIS RP2350.h device header, which we deliberately don't include, see above).
 #define SPI0 spi0
 #define SPI1 spi1
+// ADC1: PICO has no ADCx register-block concept (drivers/adc_pico.c drives
+// the RP2350's single on-chip ADC directly), but pg/adc.c's adcConfig reset
+// unconditionally passes ADC_INSTANCE (default: ADC1, drivers/adc.h) to
+// adcDeviceByInstance() - provide an opaque, never-dereferenced placeholder
+// so that expression still compiles. adcDeviceByInstance()'s PICO branch
+// (drivers/adc.c) ignores the value and always returns ADCDEV_1.
+#define ADC1 ((ADC_TypeDef *)0)
 
 // bprintf()/tprintf() debug-trace macros used pervasively across betaflight's
 // ported *_pico.c driver files. No-ops unless PICO_TRACE is defined (mirrors
