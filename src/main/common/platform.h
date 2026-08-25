@@ -135,9 +135,13 @@ typedef void I2C_TypeDef;
 typedef void ADC_TypeDef;
 typedef void DMA_TypeDef;
 typedef void SPI_TypeDef;
-// used by-value (not just by pointer) in drivers/bus.h, so it must be a
-// complete type, unlike the opaque `void` placeholders above.
-typedef struct DMA_InitTypeDef_s { uint32_t _unused_on_pico; } DMA_InitTypeDef;
+// DMA_InitTypeDef is used BY VALUE (not just by pointer) in drivers/bus.h's
+// extDevice_t, so it must be a complete type. Use pico-sdk's own
+// dma_channel_config directly (mirrors betaflight's own platform.h) rather
+// than an opaque placeholder, since bus_spi_pico.c/dma_pico.c assign real
+// dma_channel_config values into these fields.
+#include "hardware/dma.h"
+typedef dma_channel_config DMA_InitTypeDef;
 typedef int32_t IRQn_Type;
 
 // TODO: Chip Unique ID - use pico-sdk's pico_get_unique_board_id() instead of U_ID_x.
