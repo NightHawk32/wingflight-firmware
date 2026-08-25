@@ -82,6 +82,19 @@
 # define IOCFG_IPU            0
 # define IOCFG_IN_FLOATING    0
 
+#elif defined(PICO)
+
+// PICO GPIO config is just direction + pull; IOConfigGPIO() (io_pico.c) currently
+// only distinguishes input (0) vs output (1), see its TODO comment.
+# define IOCFG_OUT_PP         1
+# define IOCFG_OUT_PP_UP      1
+# define IOCFG_OUT_OD         1
+# define IOCFG_AF_PP          1
+# define IOCFG_AF_OD          1
+# define IOCFG_IPD            0
+# define IOCFG_IPU            0
+# define IOCFG_IN_FLOATING    0
+
 #else
 # warning "Unknown TARGET"
 #endif

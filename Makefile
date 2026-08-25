@@ -71,6 +71,7 @@ SRC_DIR         := $(ROOT)/src/main
 OBJECT_DIR      := $(ROOT)/obj/main
 BIN_DIR         := $(ROOT)/obj
 CMSIS_DIR       := $(ROOT)/lib/main/CMSIS
+LIB_MODULES_DIR := $(ROOT)/lib/modules
 INCLUDE_DIRS    := $(SRC_DIR) \
                    $(SRC_DIR)/common \
                    $(ROOT)/src/main/target \
@@ -269,6 +270,7 @@ TEMPORARY_FLAGS :=
 CFLAGS     += $(ARCH_FLAGS) \
               $(addprefix -D,$(OPTIONS)) \
               $(addprefix -I,$(INCLUDE_DIRS)) \
+              $(addprefix -isystem,$(SYS_INCLUDE_DIRS)) \
               $(DEBUG_FLAGS) \
               -std=gnu17 \
               -Wall -Wextra -Werror -Wpedantic -Wunsafe-loop-optimizations -Wdouble-promotion -Wstrict-prototypes \
@@ -292,6 +294,7 @@ ASFLAGS     = $(ARCH_FLAGS) \
               $(DEBUG_FLAGS) \
               -x assembler-with-cpp \
               $(addprefix -I,$(INCLUDE_DIRS)) \
+              $(addprefix -isystem,$(SYS_INCLUDE_DIRS)) \
               -MMD -MP
 
 ifeq ($(LD_FLAGS),)

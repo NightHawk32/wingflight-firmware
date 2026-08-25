@@ -41,6 +41,8 @@ typedef enum I2CDevice {
 #define I2CDEV_COUNT 3
 #elif defined(STM32F7)
 #define I2CDEV_COUNT 4
+#elif defined(PICO)
+// I2CDEV_COUNT is defined per-target in target.h for RP2350/RP2354.
 #else
 #define I2CDEV_COUNT 4
 #endif

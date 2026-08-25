@@ -89,30 +89,63 @@ delete completed items — leave them checked so history is preserved.
 
 ## Phase 1 — Toolchain feasibility spike
 
-- [ ] Confirm `tools/gcc-arm-none-eabi-9-2020-q2-update` builds
-      `-mcpu=cortex-m33 -march=armv8-m.main+fp+dsp` code.
-- [ ] Link a minimal blinky against a pared-down pico-sdk subset outside the
-      main build to prove toolchain viability before investing in driver ports.
+- [x] Confirm `tools/gcc-arm-none-eabi-9-2020-q2-update` builds
+      `-mcpu=cortex-m33 -march=armv8-m.main+fp+dsp` code. **Confirmed
+      2026-08-25**: GCC 9.3.1 (the existing toolchain, no upgrade needed)
+      compiles this cleanly; `readelf -A` on the output object confirms
+      `Tag_CPU_arch: v8-M.mainline`, `Tag_FP_arch: FPv5/FP-D16 for ARMv8`,
+      `Tag_DSP_extension: Allowed`. Since Wingflight uses one shared
+      `arm-none-eabi-gcc` toolchain for every target (root `Makefile` always
+      invokes `$(ARM_SDK_PREFIX)gcc`), no separate/second toolchain is needed
+      for RP2350 — this materially simplifies the port vs. betaflight's
+      multi-toolchain-capable build.
+- [x] Link a minimal blinky against a pared-down pico-sdk subset outside the
+      main build to prove toolchain viability before investing in driver
+      ports. **Superseded 2026-08-25**: went straight to wiring up the real
+      build (Phase 2/3) instead of a separate throwaway blinky, since the
+      toolchain check above already answered the key risk question. See
+      Phase 3 below for the actual first real build attempt.
 
 ## Phase 2 — Build system plumbing
 
-- [ ] Add `.gitmodules` entry for pico-sdk (pin to the commit used by
-      `betaflight/.gitmodules` initially) under `lib/modules/pico-sdk`,
-      matching Betaflight's path convention; tinyusb comes along as
-      `lib/modules/pico-sdk/lib/tinyusb` (submodule-of-submodule, per upstream).
-- [ ] Create `make/mcu/RP2350.mk`, translating `RP2350.mk`'s variables into
-      Wingflight's `ARCH_FLAGS`/`DEVICE_FLAGS`/`MCU_COMMON_SRC`/`VCP_SRC`
-      conventions. Shared by all four variants (variant-specific bits pushed
-      into per-target `target.mk`, e.g. GPIO count for A vs B, flash origin
-      for RP2350x vs RP2354x).
-- [ ] Port linker scripts into `src/link/` for RP2350A/RP2350B (external QSPI
-      flash, ported from betaflight); add new RP2354A/RP2354B memory maps
-      (on-die flash, no external QSPI flash region).
-- [ ] Add `.uf2` post-build step (Wingflight currently only emits hex/bin/elf).
-- [ ] Register `RP2350A`, `RP2350B`, `RP2354A`, `RP2354B` in
-      [make/targets.mk](../make/targets.mk) MCU group logic (all four mapped
-      to `TARGET_MCU_FAMILY := RP2350` for shared build rules, per-target
-      flash/memory/GPIO differences handled in each target.mk/target.h).
+- [x] Add `.gitmodules` entry for pico-sdk under `lib/modules/pico-sdk`
+      (matches Betaflight's path convention). **Done 2026-08-25**: added as a
+      real git submodule (not just a `.gitmodules` stanza) pinned at pico-sdk
+      release tag `2.3.0` (shallow clone; `master` HEAD == the `2.3.0` tag at
+      the time of vendoring). `lib/modules/pico-sdk/lib/tinyusb` initialized
+      as the nested submodule-of-submodule per upstream, commit
+      `86ad6e56c1700e85f1c5678607a762cfe3aa2f47`. `LIB_MODULES_DIR` added to
+      the root `Makefile`.
+- [x] Create `make/mcu/RP2350.mk`. **Done 2026-08-25** — see
+      [make/mcu/RP2350.mk](../make/mcu/RP2350.mk). Translated from
+      betaflight's `RP2350.mk` into Wingflight's flat conventions
+      (`ARCH_FLAGS`/`DEVICE_FLAGS`/`MCU_COMMON_SRC`/`VCP_SRC`/`MSC_SRC`,
+      `MCU_EXCLUDES`). Shared by all four variants; per-variant flash
+      size/defines pushed into `RP2350_UNIFIED/target.mk`.
+- [x] Port linker scripts into `src/link/`. **Done 2026-08-25**: copied
+      verbatim from `betaflight/src/platform/PICO/link/` —
+      `pico_flash_mem_defaults.ld`, `pico_rp2350_memory.ld`,
+      `pico_rp2350_RunFromFLASH.ld`, `pico_rp2350_RunFromHybrid.ld`,
+      `pico_rp2350_RunFromRAM.ld`. These are reused as-is for RP2354A/RP2354B
+      too — RP2354's on-die flash is memory-mapped at the same XIP window
+      (`0x10000000`) as external QSPI flash on RP2350, so the RAM/peripheral
+      memory map does not need a separate `_memory.ld` for RP2354 (only the
+      `PICO_FLASH_*` defines differ, handled in `target.mk`, see the open
+      TODO about on-die flash boot_stage2/QMI defaults below).
+- [ ] Add a real `.uf2` post-build step (Wingflight currently only emits
+      hex/bin/elf via `OBJCOPY`; betaflight's `DEFAULT_OUTPUT := uf2` implies
+      a `picotool`/`elf2uf2`-based step). **Not started** — deferred until a
+      target actually links successfully (see Phase 3 blocker below).
+- [x] Register `RP2350A`, `RP2350B`, `RP2354A`, `RP2354B`. **Done 2026-08-25**
+      — but using Wingflight's existing **unified-target ALT_TARGETS pattern**
+      instead of four separate target folders like betaflight: one folder
+      [src/main/target/RP2350_UNIFIED/](../src/main/target/RP2350_UNIFIED/)
+      with a shared `target.h`/`target.mk`, four empty alt-marker files
+      (`RP2350A.mk`, `RP2350B.mk`, `RP2354A.mk`, `RP2354B.mk`) and a
+      `RP2350_UNIFIED.nomk` marker (mirrors
+      [src/main/target/STM32_UNIFIED/](../src/main/target/STM32_UNIFIED/)
+      exactly). `make/targets.mk` updated with a new `RP2350_TARGETS` group
+      mapping to `TARGET_MCU := RP2350`.
 
 ## Phase 3 — Minimal bring-up target
 
@@ -123,6 +156,182 @@ delete completed items — leave them checked so history is preserved.
       then derive RP2354B and RP2354A (on-die flash variants) once their
       RP2350 counterparts boot cleanly.
 
+### First real build attempt (2026-08-25) — ported files + current blocker
+
+Ran `make TARGET=RP2350B` against the Phase 2 scaffolding. The build system
+wiring itself works end-to-end (target resolves, `TARGET_MCU := RP2350`,
+correct files get compiled with the right optimisation flags) and produced
+real, useful compiler errors rather than Makefile errors — i.e. Phase 2 is
+solid and Phase 3/4 driver work is now the bottleneck, as expected.
+
+**Files ported this session** (verbatim copy from `betaflight/src/platform/PICO/`
+unless noted):
+
+- Drivers → `src/main/drivers/`: `adc_pico.c`, `bus_i2c_pico.c`,
+  `bus_quadspi_pico.c`, `bus_spi_pico.c`, `debug_pico.c`, `debug_pin.c`,
+  `dma_pico.c`, `dshot_bidir_pico.c`, `dshot_pico.c` (+`.h`),
+  `dshot_pio_programs.h`, `dshot.pio`, `exti_pico.c`, `gyro_clkin_pico.c`,
+  `io_pico.c`, `light_ws2811strip_pico.c`, `memfunctions.S`, `multicore.c`,
+  `pwm_beeper_pico.c`, `pwm_motor_pico.c`, `pwm_servo_pico.c`,
+  `serial_usb_vcp_pico.c`, `config_flash.c`, `usbd_msc_mem.h`.
+- `src/main/drivers/uart_pico/`: `serial_uart_pico.c` (+`.h`), `uart_hw.c`,
+  `uart_pio.c`, `uart_rx_program.c`, `uart_tx_program.c` (new subfolder — the
+  only PICO driver group kept as a subfolder rather than flattened, since
+  `startup/` is the only precedent for MCU-specific subfolders in Wingflight).
+- `src/main/drivers/usb_pico/`: `tusb_config.h`, `usb_cdc.c` (+`.h`),
+  `usb_descriptors.c`, `usb_msc_pico.c`.
+- **Renamed to avoid clobbering existing STM32 shared files with the same
+  name** (both already existed in `src/main/drivers/` and are STM32-HAL
+  specific — confirmed by inspection before copying): `system.c` →
+  `system_rp2350.c`, `persistent.c` → `persistent_rp2350.c`. The generic
+  filenames are added to `MCU_EXCLUDES` in `RP2350.mk` so they're never
+  compiled for RP2350 targets, matching the existing
+  `STM32H7.mk`/`MCU_EXCLUDES` precedent.
+- `src/main/drivers/bus_i2c_utils.c` (+`.h`) — copied from
+  `betaflight/src/main/drivers/` (the *common*, not PICO-specific, betaflight
+  tree — this file didn't exist in Wingflight at all, needed by
+  `bus_i2c_pico.c`).
+- `src/main/drivers/rp2350_config/pico/{version.h,config_autogen.h}` — pico-sdk
+  config stub headers (normally CMake-autogenerated; betaflight hand-wrote
+  them for their Make-based build, same approach used here). `version.h`
+  updated to report `2.3.0` (our pinned submodule tag) instead of
+  betaflight's `2.1.0`. Kept in a dedicated `rp2350_config/` include dir so
+  `#include "pico/version.h"` resolves without clashing with Wingflight's own
+  unrelated `src/main/build/version.h`.
+- Excluded entirely (per Phase 0 OSD-drop decision): `betaflight/src/platform/PICO/osd/*`.
+
+**Shared-header changes** (small, isolated additions — existing STM32/other
+family branches left untouched):
+
+- [src/main/common/platform.h](../src/main/common/platform.h): added an
+  `#elif defined(PICO)` branch to the chipset-detection chain (previously
+  fell through to `#error "Invalid chipset specified"` for any
+  non-STM32/non-SIMULATOR/non-UNIT_TEST build). `-DPICO` is defined globally
+  for all four variants in `RP2350.mk`.
+- [src/main/drivers/io.h](../src/main/drivers/io.h): added a `#elif
+  defined(PICO)` branch for the `IOCFG_*` constants (parallel to the existing
+  `UNIT_TEST`/`SIMULATOR_BUILD` stub branch, but with distinct in/out values
+  since `io_pico.c`'s `IOConfigGPIO()` currently only distinguishes
+  input(0)/output(1) — it has its own upstream `TODO` for finer-grained
+  config); and guarded the STM32-only `GPIO_TypeDef* IO_GPIO(IO_t io);`
+  declaration with `#if !defined(PICO)` since `io_pico.c` never implements or
+  calls it (PICO driver code only ever uses `IO_Pin(io)`, a bare GPIO number).
+- [src/main/drivers/bus_i2c.h](../src/main/drivers/bus_i2c.h): the
+  `I2CDEV_COUNT` fallback `#else` branch unconditionally defined the macro
+  (no `#ifndef` guard), clashing with the `I2CDEV_COUNT 2` already set in
+  `RP2350_UNIFIED/target.h`. Added an `#elif defined(PICO)` no-op branch so
+  the per-target value from `target.h` wins; STM32F4/STM32F7/default
+  behavior unchanged.
+
+**Current blocker (open, not yet fixed) — IO tag pin-width vs. RP2350 GPIO
+count**: Wingflight's `ioTag_t` is `uint8_t`
+([src/main/drivers/io_types.h](../src/main/drivers/io_types.h)) packed as
+4 bits port-id + 4 bits pin (`DEFIO_TAG_MAKE` in
+[src/main/drivers/io_def.h](../src/main/drivers/io_def.h)), i.e. max 16 pins
+per "port". `io_pico.c` (as shipped by betaflight) models the whole RP2350 as
+a **single virtual port** and explicitly `#error`s if
+`DEFIO_PORT_USED_COUNT > 1` — this is an upstream betaflight limitation, not
+something Wingflight introduced (confirmed: betaflight's own `io_types.h` also
+uses `uint8_t ioTag_t`, unchanged from Wingflight's). With only 4 pin bits
+available, a single virtual port tops out at 16 assignable GPIO resources,
+which is likely too few for a real flight-controller board (motors, RX,
+telemetry, LEDs, buttons, I2C/SPI bus pins, etc. easily exceed 16). Also still
+outstanding: `io_def_generated.h`'s per-target pin table needs real
+`TARGET_IO_PORTx`-equivalent definitions for RP2350 (currently produces an
+empty/warning-as-error "No pins are defined" build failure since
+`RP2350_UNIFIED/target.h` doesn't yet define any pins).
+
+**Next step options for this blocker** (left as an open design decision for
+the next session, not resolved yet):
+1. Model RP2350's up to 48 GPIOs as **3 virtual 16-pin "ports"**
+   (GPIO 0–15 / 16–31 / 32–47) reusing the existing 8-bit `ioTag_t` scheme
+   unmodified (safest — zero risk to STM32 targets since the tag width
+   doesn't change), which requires extending `io_pico.c`'s pin-decode logic
+   to support `DEFIO_PORT_USED_COUNT > 1` (removing/replacing its current
+   single-port `#error`), plus defining a per-board pin table in
+   `RP2350_UNIFIED/target.h` (or a real per-board target once one is chosen —
+   see the still-open Phase 0 "which board first" item).
+2. Widen `ioTag_t`/`DEFIO_TAG_MAKE` globally — **not recommended**: touches
+   every target (STM32 included) and any persisted/packed config or MSP
+   layout that encodes `ioTag_t`, far higher risk for a change that only
+   RP2350 needs.
+### Second build iteration (2026-08-25, same day) \u2014 shared-header quick fixes + a much bigger discovery
+
+After the fixes above, re-running `make TARGET=RP2350B` surfaced several more
+**quick, safe, isolated** fixes (all applied, all `#elif defined(PICO)`/opaque
+placeholder-type additions with zero effect on other families \u2014 verified by
+rebuilding `STM32F405` clean after each batch):
+
+- `make/mcu/RP2350.mk`: added the missing pico-sdk `pico_platform_common`
+  component (include dir + `common.c` source + `-DLIB_PICO_PLATFORM_COMMON=1`)
+  \u2014 `bus_i2c_pico.c`'s include chain needed `pico/platform/common.h`, which
+  wasn't in `SYS_INCLUDE_DIRS` yet.
+- `make/mcu/RP2350.mk`: pico-sdk's own headers use GNU/pedantic-flagged
+  constructs (`hardware/dma.h`'s `invalid_params_if()` statement-expression
+  macro, `pico/platform.h`'s directive-inside-macro-argument in
+  `busy_wait_at_least_cycles()`) that the root Makefile's global `-Wpedantic
+  -Werror` turns into hard errors (Betaflight's own build never enables
+  `-Wpedantic` at all, so this never came up upstream). Fixed with
+  `EXTRA_FLAGS += -Wno-pedantic` in `RP2350.mk` \u2014 **note**: the Makefile's own
+  `TEMPORARY_FLAGS` hook looks like the obvious place for this but doesn't
+  work, because root `Makefile` does an unconditional `TEMPORARY_FLAGS :=`
+  reset *after* `make/mcu/<FAMILY>.mk` is included; `EXTRA_FLAGS` is the
+  correct hook (appended last in `CFLAGS`, never reset).
+- `make/mcu/RP2350.mk`: removed the ported `drivers/debug_pin.c` from
+  `MCU_COMMON_SRC` \u2014 wingflight already has a generic, always-compiled
+  `src/main/build/debug_pin.c` (gated behind `USE_DEBUG_PIN`, which no target
+  defines by default) that isn't present at all in the vendored betaflight
+  snapshot; having both would define duplicate `dbgPinInit`/`dbgPinHi`/
+  `dbgPinLo` symbols and fail to link. The unused ported copy is still on
+  disk at `src/main/drivers/debug_pin.c` but no longer referenced by the
+  build; can be deleted in a later cleanup pass.
+- `src/main/common/platform.h`: the PICO branch now also declares a small set
+  of **opaque placeholder types** for STM32-shaped fields/signatures used
+  unconditionally in wingflight's shared driver bookkeeping headers
+  (`io_impl.h`, `bus_i2c_impl.h`, `bus.h`, `dma.h`, `adc.h`) that PICO driver
+  code never dereferences: `GPIO_TypeDef`, `I2C_TypeDef`, `ADC_TypeDef`,
+  `DMA_TypeDef`, `SPI_TypeDef` (all `typedef void ...;`, pointer-only usage),
+  `IRQn_Type` (`typedef int32_t ...;`, pico-sdk's own API uses plain ints for
+  IRQ numbers, not CMSIS's enum), and `DMA_InitTypeDef` (a real 1-member
+  placeholder struct, since `drivers/bus.h`'s `extDevice_s` embeds it
+  **by value**, so it can't be an incomplete/opaque type). **Important
+  false start, documented so it isn't retried**: initially tried
+  `#include "RP2350.h"` (the pico-sdk CMSIS device header) to get a real
+  `IRQn_Type` \u2014 this actively **breaks the build**, because `RP2350.h`
+  `#define`s the same peripheral base-address macros (`SIO_BASE`,
+  `PPB_BASE`, `EPPB_BASE`, ...) that pico-sdk's own
+  `hardware/regs/addressmap.h` also defines, and the two conflict
+  (redefinition errors) the moment both end up in one translation unit via
+  `hardware/i2c.h`/etc. Use the plain-int opaque typedef instead; do not
+  include pico-sdk's/CMSIS's device header from `platform.h`.
+- `src/main/drivers/bus_i2c.h`: (already covered above) `I2CDEV_COUNT` guard.
+
+**Bigger discovery**: with the above fixed, the remaining errors are no
+longer shared-header gaps \u2014 they're **missing files**, specifically
+betaflight's newer, more-abstracted per-platform headers that several ported
+`*_pico.c` drivers `#include` directly and which simply don't exist anywhere
+in wingflight:
+
+- `adc_pico.c` \u2192 `#include "platform/dma.h"` (not found)
+- `bus_i2c_pico.c` \u2192 `#include "platform/platform.h"` (not found)
+- `bus_spi_pico.c` \u2192 `#include "drivers/bus_spi_types.h"` (not found)
+
+These are betaflight's `src/platform/<NAME>/include/platform/*.h` files (a
+whole per-platform header layer that doesn't exist in wingflight's older flat
+layout at all \u2014 io_pico.c happens not to need this layer, which is why it
+compiled with only the smaller io.h-family fixes above, but adc_pico.c,
+bus_i2c_pico.c and bus_spi_pico.c depend on it directly). This confirms, with
+concrete file-level evidence, the risk flagged back in Phase 0/"Major
+mismatches" #2: several ported driver files are **not drop-in copies** and
+need either (a) a purpose-built, wingflight-side compatibility header
+providing just the subset of `platform/dma.h` / `platform/platform.h` /
+`drivers/bus_spi_types.h` that these specific files actually use, or (b)
+per-file rewriting against wingflight's existing `dma.h`/`bus.h`/`bus_spi*`
+APIs directly (more invasive, more correct long-term, no shim layer to
+maintain). **Not started** \u2014 needs a deliberate design pass (read what each
+of those three missing headers is expected to provide, by reading betaflight's
+`src/platform/PICO/include/platform/*.h` and comparing field-by-field against
+wingflight's `dma.h`/`bus.h`), not ad-hoc empty-header stubbing.
 ## Phase 4 — Core drivers
 
 - [ ] DMA
@@ -316,3 +525,84 @@ be invisible to STM32F4/F7/G4/H7 builds:
   placement, RP2350-only flags, preserved non-multicore fallback path, no
   changes to scheduler.c/fc/tasks.c/fc/init.c, STM32 clean-build verification
   step). No implementation started yet.
+- 2026-08-25: **Implementation started.** Phase 1 confirmed (GCC 9.3.1 already
+  supports cortex-m33/armv8-m.main+fp+dsp, no toolchain change needed). Phase 2
+  completed: added pico-sdk (+tinyusb) as real git submodules pinned at
+  `2.3.0`, wrote `make/mcu/RP2350.mk`, ported the 5 RP2350 linker scripts into
+  `src/link/`, and registered all four variants (`RP2350A`/`RP2350B`/
+  `RP2354A`/`RP2354B`) via a new `src/main/target/RP2350_UNIFIED/` following
+  Wingflight's existing unified-target ALT_TARGETS pattern (mirrors
+  `STM32_UNIFIED/`) rather than betaflight's four-separate-folders layout.
+  Ported ~30 non-OSD driver files from `betaflight/src/platform/PICO/` into
+  `src/main/drivers/` (renaming the two that collided with existing STM32
+  files: `system.c`→`system_rp2350.c`, `persistent.c`→`persistent_rp2350.c`,
+  excluded via `MCU_EXCLUDES`). Ran a first real `make TARGET=RP2350B` build:
+  fixed three small, isolated shared-header gaps (`platform.h` chipset
+  branch, `io.h` IOCFG_*/GPIO_TypeDef guard, `bus_i2c.h` I2CDEV_COUNT clash),
+  all additive `#elif`/`#if !defined(PICO)` guards with zero change to
+  existing STM32 branches. Hit a real, precisely-identified architectural
+  blocker: Wingflight's 8-bit `ioTag_t` (4-bit port + 4-bit pin, max 16 pins
+  per port) vs. betaflight's `io_pico.c` single-virtual-port assumption caps
+  usable GPIO resources at 16 for RP2350, likely too few for a real board;
+  see Phase 3 for the two solution options identified (favoring the 3x16-pin
+  virtual-port approach, zero risk to STM32 tag width). Not yet resolved -
+  next session should start there.
+- 2026-08-25: Continued iterating on the same build. Fixed several more
+  isolated shared-header/build-flag gaps (missing pico-sdk `pico_platform_common`
+  component, `-Wpedantic` false positives from pico-sdk's own headers via a
+  new `EXTRA_FLAGS` hook in RP2350.mk - noting `TEMPORARY_FLAGS` looks right
+  but doesn't work, since the root Makefile resets it after mcu-file inclusion
+  - a `debug_pin.c` duplicate-symbol landmine (wingflight already has a
+  generic, always-built `build/debug_pin.c` not present upstream in
+  betaflight; removed the ported PICO copy from MCU_COMMON_SRC), and rounded
+  out `platform.h`'s PICO branch with opaque placeholder types
+  (GPIO_TypeDef/I2C_TypeDef/ADC_TypeDef/DMA_TypeDef/SPI_TypeDef/IRQn_Type/
+  DMA_InitTypeDef) for STM32-shaped fields that PICO driver code never
+  dereferences. Documented a false start (including pico-sdk's CMSIS
+  `RP2350.h` device header conflicts with pico-sdk's own
+  `hardware/regs/addressmap.h` - don't do that). Verified STM32F405 still
+  builds and links cleanly (full hex + memory report) after each round of
+  shared-header edits, confirming isolation. With those fixed, hit a bigger,
+  more precise discovery: `adc_pico.c`, `bus_i2c_pico.c`, and `bus_spi_pico.c`
+  each `#include` a betaflight-newer-platform-abstraction header
+  (`platform/dma.h`, `platform/platform.h`, `drivers/bus_spi_types.h`
+  respectively) that doesn't exist anywhere in wingflight - confirms Phase
+  0's "Major mismatch #2" risk with concrete file-level evidence. This
+  (not the IO-tag/pin-width issue) is now the most significant remaining
+  Phase 3/4 blocker and needs a deliberate design pass, not ad-hoc stubbing.
+- 2026-08-25: Solved the `RP2350.h`/`addressmap.h` false-start mystery:
+  betaflight's own `RP2350.mk` routes all pico-sdk/CMSIS include dirs through
+  `-isystem` (not `-I`) specifically to work around
+  [pico-sdk#2451](https://github.com/raspberrypi/pico-sdk/issues/2451) -
+  GCC tolerates benign macro redefinitions in system-header-reached files.
+  Wingflight's root `Makefile` had no `-isystem` plumbing at all; added
+  `$(addprefix -isystem,$(SYS_INCLUDE_DIRS))` to `CFLAGS`/`ASFLAGS` (additive,
+  `SYS_INCLUDE_DIRS` defaults empty elsewhere) and stopped folding
+  `SYS_INCLUDE_DIRS` into plain `INCLUDE_DIRS` in `RP2350.mk`. Then wrote three
+  new compat files to unblock the `platform/*.h` blocker above: 
+  `src/main/drivers/bus_spi_types.h` (verbatim from betaflight, trivial opaque
+  types), `src/main/platform/dma.h` (CH-handler macros only; the actual
+  `DEFINE_DMA_CHANNEL`/`dmaIdentifier_e`/`DMA_FIRST_HANDLER` content was added
+  as a new `#elif defined(PICO)` branch directly in wingflight's existing
+  `src/main/drivers/dma.h`, matching its established per-MCU-family pattern -
+  had to hand-adapt field names since wingflight's older
+  `dmaChannelDescriptor_t` shape differs from betaflight's newer one), and
+  `src/main/platform/platform.h` (thin shim - the real content, including new
+  `I2C_INST()`/`SPI_INST()`/`UART_INST()` macros, was centralized in
+  `src/main/common/platform.h`'s PICO branch since `bus_spi_pico.c` uses
+  `SPI_INST()` without ever including `platform/platform.h` at all). Verified
+  `adc_pico.c`/`bus_i2c_pico.c` compile past this blocker; STM32F405 re-verified
+  clean. This surfaced an even deeper blocker in `bus_spi_pico.c`: it depends
+  on betaflight's newer **segment-based SPI DMA bus driver** (`busSegment_t`
+  transfer chains, `dmaInitTx`/`dmaInitRx` pointer fields, `spiProcessSegmentsDMA`/
+  `spiProcessSegmentsPolled`) which wingflight's shared (non-PICO)
+  `bus_spi.c`/`bus.h`/`bus_spi_impl.h` (Betaflight-4.3-era, no segment
+  chaining) doesn't have. Porting that whole newer architecture in would be
+  an invasive change to shared SPI-bus code used by every STM32 target -
+  conflicts with the project's "stay merge-friendly, avoid invasive
+  refactors" priority. The likely right answer is a new, simpler
+  `bus_spi_pico.c` written directly against wingflight's existing
+  (non-segmented) SPI bus API instead of porting betaflight's file verbatim -
+  flagged for user confirmation before starting, since it's real new driver
+  code rather than a mechanical port.
+
