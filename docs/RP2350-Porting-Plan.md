@@ -170,6 +170,87 @@ framebuffer support dropped from scope per Phase 0 decision).
             init phases 1/2 on core 1 during boot, per `target_RP2350.h`) —
             boot-time only, not a runtime performance factor.
 
+### Core-1 task consumer design (new work, detailed)
+
+Goal: core 0 stays a single-threaded, deterministic flight-control loop
+exactly like the STM32 targets today; core 1 is a best-effort helper that
+never blocks or is blocked on by core 0's control path.
+
+- **Boot/launch**: core 1 is started once during `systemInit()` (same point
+  Betaflight launches it via `multicore_launch_core1`), before the scheduler
+  starts on core 0. Stack size fixed via `PICO_CORE1_STACK_SIZE` (already
+  `0x1000` in `RP2350.mk`'s `DEVICE_FLAGS`). Core 1's `core1_main()` sets up
+  its own ring buffers/queues, then enters an infinite best-effort loop —
+  it never returns except on `MULTICORE_CMD_STOP`.
+- **Two independent transport mechanisms, not one**:
+  1. *Command RPC* — reuse Betaflight's existing `queue_t` pair
+     (`core0_queue`/`core1_queue`) and `multicoreExecute()` /
+     `multicoreExecuteBlocking()` API verbatim, for occasional one-shot calls
+     (e.g. `ENABLE_MULTICORE_INIT`'s init-phase dispatch). `queue_t` has an
+     internal spinlock and can block on a full queue — acceptable only for
+     rare, non-hot-path calls, **never** for per-loop-iteration data.
+  2. *Work buffers* — new, per-consumer **lock-free single-producer /
+     single-consumer ring buffers** (one each for USB-MSC block I/O,
+     blackbox flush chunks, CLI/MSP RX bytes) rather than routing recurring
+     high-frequency data through the shared `queue_t`. Core 0 writes without
+     ever blocking (drops/backpressures if full — never stalls the control
+     loop); core 1 drains them in its round-robin loop. This avoids
+     reintroducing the exact jitter multicore is meant to remove.
+- **Core-1 main loop shape**: a simple non-blocking round-robin, no RTOS and
+  no reuse of [scheduler.c](../src/main/scheduler/scheduler.c) (that
+  scheduler is built around core-0-specific cycle counting and is not
+  meant to run twice) — each pass: (1) service DMA-IRQ-fed data already
+  affinitized to core 1 via `DMA_IRQ_CORE_NUM`, (2) drain one command from
+  the RPC queue if present, (3) pump a bounded chunk of each work-buffer
+  consumer (USB-MSC, blackbox, CLI) so no single item can hog core 1
+  indefinitely, (4) `tight_loop_contents()`/WFE to idle.
+- **ISR-context rule**: any interrupt handler affinitized to core 1 (DMA
+  completion today) must stay short and non-blocking — push data into a
+  ring buffer and return; the actual work (e.g. copying a completed DMA
+  buffer into the blackbox stream) happens in the core-1 main loop, not the
+  ISR, to keep interrupt latency bounded.
+- **Failure isolation**: core 0 must never depend on a core-1 result for
+  flight safety. A simple heartbeat counter incremented by core 1 and
+  checked periodically by a core-0 task can detect a wedged core 1 (e.g. USB
+  host issue) and degrade gracefully (disable MSC/blackbox reporting) without
+  affecting flight control.
+- **Config surface**: gated behind `USE_MULTICORE` (as upstream) plus new
+  Wingflight-specific feature flags for which consumers run on core 1
+  (e.g. enable USB-MSC-on-core1 and blackbox-on-core1 independently), so a
+  target can opt out of the new work-buffer scheme and fall back to
+  Betaflight's plain RPC-only behavior if something regresses.
+
+### Isolation requirement: must not affect existing STM32 (single-core) targets
+
+Hard constraint — multicore work is additive-only for RP2350/RP2354 and must
+be invisible to STM32F4/F7/G4/H7 builds:
+
+- [ ] All new/ported files (`multicore.c`, ring-buffer consumers, core-1 main
+      loop) live only under the RP2350-family driver set, added via
+      `make/mcu/RP2350.mk`'s `MCU_COMMON_SRC` — never added to
+      [make/source.mk](../make/source.mk)'s `COMMON_SRC`, which is compiled
+      for every target including STM32. Same pattern already used for
+      MCU-specific files like `adc_stm32h7xx.c`.
+- [ ] `USE_MULTICORE` (and any new Wingflight offload flags) is defined only
+      in RP2350/RP2354 `target.h` files, never in shared headers
+      (`common_pre.h`, `common_defaults_post.h`) or STM32 target files.
+- [ ] `multicoreExecute()`/`multicoreExecuteBlocking()` keep Betaflight's
+      existing `#else` fallback (direct synchronous function call when
+      `USE_MULTICORE` is undefined) — if any shared (non-driver) code ever
+      calls these, STM32 builds must execute identically to today, just
+      without the dispatch.
+- [ ] **No changes to** [scheduler.c](../src/main/scheduler/scheduler.c),
+      [fc/tasks.c](../src/main/fc/tasks.c), or [fc/init.c](../src/main/fc/init.c)
+      to add cross-core awareness — the scheduler stays core-0/single-core
+      semantics everywhere. Core-1 offload is implemented as an alternate
+      *driver-level* transport under blackbox/CLI/MSC (e.g. swapping which
+      function flushes a buffer), not as branching added to the shared logic
+      files those subsystems already use on STM32.
+- [ ] Verification: after implementing, do a clean build of at least one
+      existing STM32 target (e.g. `STM32F405`) and confirm it builds
+      successfully with no changes in generated object list, to catch any
+      accidental coupling into shared code paths.
+
 ### Multicore vs. STM32F405/STM32F722 performance (reference notes, 2026-08-25)
 
 | | Core | Clock (official) | Pipeline | FPU |
@@ -225,3 +306,13 @@ framebuffer support dropped from scope per Phase 0 decision).
   build a real core-1 task consumer for USB-MSC/blackbox/CLI offload) and
   added performance-comparison notes vs. STM32F405/F722 to Phase 5. No
   implementation started yet.
+- 2026-08-25: Expanded the core-1 task consumer into a full design (boot
+  sequence, dual transport: RPC queue for one-shot calls + new lock-free
+  per-consumer ring buffers for recurring data, non-blocking round-robin
+  main loop, ISR-context rule, heartbeat-based failure isolation, per-target
+  config flags). No implementation started yet.
+- 2026-08-25: Added an explicit isolation requirement: multicore work must be
+  additive-only and invisible to existing STM32 targets (MCU_COMMON_SRC-only
+  placement, RP2350-only flags, preserved non-multicore fallback path, no
+  changes to scheduler.c/fc/tasks.c/fc/init.c, STM32 clean-build verification
+  step). No implementation started yet.
