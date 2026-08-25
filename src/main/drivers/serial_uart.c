@@ -57,6 +57,9 @@
 #elif defined(STM32F4)
 #define UART_TX_BUFFER_ATTRIBUTE                    // NONE
 #define UART_RX_BUFFER_ATTRIBUTE                    // NONE
+#elif defined(PICO)
+#define UART_TX_BUFFER_ATTRIBUTE                    // NONE
+#define UART_RX_BUFFER_ATTRIBUTE                    // NONE
 #else
 #error Undefined UART_{TX,RX}_BUFFER_ATTRIBUTE for this MCU
 #endif
@@ -283,7 +286,9 @@ static void uartWrite(serialPort_t *instance, uint8_t ch)
     } else
 #endif
     {
-#ifdef USE_HAL_DRIVER
+#if defined(PICO)
+        uartEnableTxInterrupt(uartPort);
+#elif defined(USE_HAL_DRIVER)
         __HAL_UART_ENABLE_IT(&uartPort->Handle, UART_IT_TXE);
 #else
         USART_ITConfig(uartPort->USARTx, USART_IT_TXE, ENABLE);
@@ -307,6 +312,13 @@ const struct serialPortVTable uartVTable[] = {
         .endWrite = NULL,
     }
 };
+
+// The functions below are STM32-specific (CMSIS NVIC-style IRQ vector names,
+// STM32-only DMA channel/resource-map fields in uartHardware_t). RP2350/RP2354
+// use drivers/serial_uart_pico.c instead, which registers its own pico-sdk
+// IRQ handlers directly (irq_set_exclusive_handler) rather than relying on
+// USARTn_IRQHandler-named vectors, and has no UART-DMA support (yet).
+#if !defined(PICO)
 
 #ifdef USE_DMA
 void uartConfigureDma(uartDevice_t *uartdev)
@@ -408,5 +420,7 @@ UART_IRQHandler(UART, 8, 8)  // UART8 Rx/Tx IRQ Handler
 #ifdef USE_UART9
 UART_IRQHandler(LPUART, 1, 9) // UART9 (implemented with LPUART1) Rx/Tx IRQ Handler
 #endif
+
+#endif // !PICO
 
 #endif // USE_UART

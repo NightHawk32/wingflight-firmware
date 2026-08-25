@@ -31,11 +31,18 @@
 
 #include "drivers/io.h"
 #include "drivers/light_led.h"
+#include "drivers/motor.h"
+#include "drivers/persistent.h"
 #include "drivers/sound_beeper.h"
+
+#include "flight/servos.h"
+#include "flight/motors.h"
 
 #include "platform/multicore.h"
 
 #include "hardware/clocks.h"
+#include "hardware/regs/m33.h"
+#include "hardware/structs/m33.h"
 #include "hardware/timer.h"
 #include "hardware/watchdog.h"
 #include "pico/bootrom.h"
@@ -61,9 +68,9 @@ void __attribute__((constructor)) SystemInit (void)
 
 ////////////////////////////////////////////////////
 
-void systemReset(void)
+void systemResetHard(void)
 {
-    bprintf("*** PICO systemReset ***");
+    bprintf("*** PICO systemResetHard ***");
     //TODO: check
 
 #if 1
@@ -77,6 +84,24 @@ void systemReset(void)
     __disable_irq();
     NVIC_SystemReset();
 #endif
+}
+
+// Generic systemReset(int reason) (drivers/system.c's version is excluded
+// from the PICO build - see make/mcu/RP2350.mk MCU_EXCLUDES - because it
+// pulls in drivers/timer.h, which has no PICO branch and isn't needed here).
+void systemReset(int reason)
+{
+#ifdef USE_PERSISTENT_OBJECTS
+    persistentObjectWrite(PERSISTENT_OBJECT_RESET_REASON, reason);
+#else
+    UNUSED(reason);
+#endif
+
+    motorStop();
+    motorShutdown();
+    servoShutdown();
+
+    systemResetHard();
 }
 
 uint32_t systemUniqueId[3] = { 0 };

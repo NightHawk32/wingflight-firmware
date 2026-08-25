@@ -159,8 +159,8 @@ SPI_IO_CS_HIGH_CFG (as defined)
         bprintf("Warning: not redefining gpio function type from %d to SIO\n", currentFunction);
     }
 
-    gpio_set_dir(ioPin, (cfg & 0x01)); // 0 = in, 1 = out
-    gpio_set_pulls(ioPin, (cfg >> 5) & GPIO_PULLUP, (cfg >> 5) & GPIO_PULLDOWN);
+    gpio_set_dir(ioPin, cfg & 0x01); // 0 = in, 1 = out
+    gpio_set_pulls(ioPin, (cfg >> 1) & 0x01, (cfg >> 2) & 0x01); // up, down (see IO_CONFIG() in io.h)
 }
 
 IO_t IOGetByTag(ioTag_t tag)
