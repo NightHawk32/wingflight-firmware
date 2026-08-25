@@ -329,8 +329,23 @@ void spiInitBusDMA(void)
 
 void spiInternalResetStream(dmaChannelDescriptor_t *descriptor)
 {
-    //TODO: implement
-    UNUSED(descriptor);
+    // Disable/abort the channel and clear any pending IRQ status, matching the
+    // "ensure streams are disabled" role this plays in the shared bus_spi.c.
+    if (dma_channel_is_busy(descriptor->channel)) {
+        dma_channel_abort(descriptor->channel);
+    }
+    dma_channel_acknowledge_irq0(descriptor->channel);
+    dma_channel_acknowledge_irq1(descriptor->channel);
+}
+
+void spiInternalResetDescriptors(busDevice_t *bus)
+{
+    // Unlike the STM32 drivers, spiInternalInitStream() below computes a
+    // complete dma_channel_config from scratch on every call (pico-sdk's
+    // config objects are small, cheap-to-build value types with no persistent
+    // "constant fields set up once" portion worth caching), so there is
+    // nothing to pre-populate here.
+    UNUSED(bus);
 }
 
 bool spiInternalReadWriteBufPolled(spiResource_t *instance, const uint8_t *txData, uint8_t *rxData, int len)
@@ -357,16 +372,19 @@ bool spiInternalReadWriteBufPolled(spiResource_t *instance, const uint8_t *txDat
     return bytesProcessed == len;
 }
 
-void spiInternalInitStream(const extDevice_t *dev, volatile busSegment_t *segment)
+void spiInternalInitStream(const extDevice_t *dev, bool preInit)
 {
 #ifndef USE_DMA
     UNUSED(dev);
-    UNUSED(segment);
+    UNUSED(preInit);
 #else
+    UNUSED(preInit); // pico-sdk config objects are cheap to (re)build - no benefit to caching by preInit phase
+
     busDevice_t *bus = dev->bus;
     spi_inst_t *spi = SPI_INST(bus->busType_u.spi.instance);
+    volatile busSegment_t *segment = bus->curSegment;
 
-    // Prepare config, store in dmaInitTx/Rx, to be used in the following spiInternalStartDMA.
+    // Prepare config, store in initTx/initRx, to be used in the following spiInternalStartDMA.
     // To keep everything uniform (always both TX and RX channels active, callback always on RX completion), if there is
     // no TX or RX buffer to read from / write to, treat as a single dummy byte with no increment.
     // (cf. same idea on other platform implementations)
@@ -378,14 +396,14 @@ void spiInternalInitStream(const extDevice_t *dev, volatile busSegment_t *segmen
     channel_config_set_read_increment(&config, isTX);
     channel_config_set_write_increment(&config, false);
     channel_config_set_dreq(&config, spi_get_dreq(spi, true));
-    *(bus->dmaInitTx) = config;
+    *(bus->initTx) = config;
 
     config = dma_channel_get_default_config(bus->dmaRx->channel);
     channel_config_set_transfer_data_size(&config, DMA_SIZE_8);
     channel_config_set_read_increment(&config, false);
     channel_config_set_write_increment(&config, isRX);
     channel_config_set_dreq(&config, spi_get_dreq(spi, false));
-    *(bus->dmaInitRx) = config;
+    *(bus->initRx) = config;
 
 #endif
 }
@@ -410,8 +428,8 @@ void spiInternalStartDMA(const extDevice_t *dev)
 
     // Configure channels using the config that was created in spiInternalInitStream
     io_rw_32 *dr_ptr = &spi_get_hw(spi)->dr;
-    dma_channel_configure(bus->dmaTx->channel, bus->dmaInitTx, dr_ptr, txBuffer ? txBuffer : &dummyTxByte, xferLen, false);
-    dma_channel_configure(bus->dmaRx->channel, bus->dmaInitRx, rxBuffer ? rxBuffer : &dummyRxByte, dr_ptr, xferLen, false);
+    dma_channel_configure(bus->dmaTx->channel, bus->initTx, dr_ptr, txBuffer ? txBuffer : &dummyTxByte, xferLen, false);
+    dma_channel_configure(bus->dmaRx->channel, bus->initRx, rxBuffer ? rxBuffer : &dummyRxByte, dr_ptr, xferLen, false);
 
     uint32_t channelMask = (1 << bus->dmaTx->channel) | (1 << bus->dmaRx->channel);
     dma_start_channel_mask(channelMask);
@@ -467,9 +485,73 @@ void spiSequenceStart(const extDevice_t *dev)
     if (bus->useDMA && dmaSafe && ((segmentCount > 1) ||
                                    (xferLen >= SPI_DMA_THRESHOLD) ||
                                    !bus->curSegment[segmentCount].negateCS)) {
-        spiProcessSegmentsDMA(dev);
+        // Initialise the init structures for the first transfer
+        spiInternalInitStream(dev, false);
+
+        // Assert Chip Select
+        IOLo(dev->busType_u.spi.csnPin);
+
+        // Start the transfer - completion/continuation across further segments is
+        // handled asynchronously by spiRxIrqHandler()/spiIrqHandler() (shared bus_spi.c)
+        spiInternalStartDMA(dev);
     } else {
-        spiProcessSegmentsPolled(dev);
+        busSegment_t *lastSegment = NULL;
+        bool segmentComplete;
+
+        // Manually work through the segment list performing a transfer for each
+        while (bus->curSegment->len) {
+            if (!lastSegment || lastSegment->negateCS) {
+                // Assert Chip Select if necessary - it's costly so only do so if necessary
+                IOLo(dev->busType_u.spi.csnPin);
+            }
+
+            spiInternalReadWriteBufPolled(
+                    bus->busType_u.spi.instance,
+                    bus->curSegment->u.buffers.txData,
+                    bus->curSegment->u.buffers.rxData,
+                    bus->curSegment->len);
+
+            if (bus->curSegment->negateCS) {
+                // Negate Chip Select
+                IOHi(dev->busType_u.spi.csnPin);
+            }
+
+            segmentComplete = true;
+            if (bus->curSegment->callback) {
+                switch (bus->curSegment->callback(dev->callbackArg)) {
+                case BUS_BUSY:
+                    // Repeat the last segment
+                    segmentComplete = false;
+                    break;
+
+                case BUS_ABORT:
+                    bus->curSegment = (busSegment_t *)BUS_SPI_FREE;
+                    return;
+
+                case BUS_READY:
+                default:
+                    // Advance to the next segment
+                    break;
+                }
+            }
+            if (segmentComplete) {
+                lastSegment = (busSegment_t *)bus->curSegment;
+                bus->curSegment++;
+            }
+        }
+
+        // If a following transaction has been linked, start it
+        if (bus->curSegment->u.link.dev) {
+            const extDevice_t *nextDev = bus->curSegment->u.link.dev;
+            busSegment_t *nextSegments = (busSegment_t *)bus->curSegment->u.link.segments;
+            busSegment_t *endSegment = (busSegment_t *)bus->curSegment;
+            bus->curSegment = nextSegments;
+            endSegment->u.link.dev = NULL;
+            spiSequenceStart(nextDev);
+        } else {
+            // The end of the segment list has been reached, so mark transactions as complete
+            bus->curSegment = (busSegment_t *)BUS_SPI_FREE;
+        }
     }
 }
 

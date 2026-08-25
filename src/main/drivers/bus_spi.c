@@ -541,6 +541,12 @@ bool spiSetBusInstance(extDevice_t *dev, uint32_t device)
 
 void spiInitBusDMA(void)
 {
+#if defined(PICO)
+    // PICO has its own spiInitBusDMA() in bus_spi_pico.c: pico-sdk DMA
+    // channels are freely assignable to any peripheral (no fixed
+    // per-pin DMAMUX request-map like the STM32 dmaGetChannelSpecByPeripheral()
+    // logic below), so this generic STM32-oriented implementation doesn't apply.
+#else
     uint32_t device;
 #if defined(STM32F4) && defined(USE_DSHOT_BITBANG)
     /* Check https://www.st.com/resource/en/errata_sheet/dm00037591-stm32f405407xx-and-stm32f415417xx-device-limitations-stmicroelectronics.pdf
@@ -664,6 +670,7 @@ void spiInitBusDMA(void)
             bus->dmaTx = (dmaChannelDescriptor_t *)NULL;
         }
     }
+#endif // !PICO
 }
 
 void spiSetClkDivisor(const extDevice_t *dev, uint16_t divisor)
