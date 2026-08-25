@@ -605,4 +605,44 @@ be invisible to STM32F4/F7/G4/H7 builds:
   (non-segmented) SPI bus API instead of porting betaflight's file verbatim -
   flagged for user confirmation before starting, since it's real new driver
   code rather than a mechanical port.
+- 2026-08-25: User confirmed the "write it against Wingflight's own SPI bus
+  API" direction. Closer inspection showed Wingflight's `bus_spi.c`/`bus.h`
+  actually ALREADY has a segment-chained DMA architecture very close in shape
+  to betaflight's (just different field/function names and no separate
+  "process segments" helper - that logic is inlined in `spiSequenceStart`),
+  so the real fix was a surgical adaptation rather than a from-scratch
+  rewrite. Using `bus_spi_ll.c` (STM32 LL) as the exact reference template:
+  - Guarded the shared/generic `spiInitBusDMA` (and its now-unused
+    `spiRxIrqHandler`/`spiTxIrqHandler` helpers) in `bus_spi.c` with
+    `#if !defined(PICO)`, since it's built around STM32-only DMAMUX
+    resource-map APIs and a `.stream` struct field that doesn't exist for
+    PICO - `bus_spi_pico.c`'s own PICO-specific `spiInitBusDMA` is now the
+    sole definition for PICO builds.
+  - Made `common/platform.h`'s `DMA_InitTypeDef` a real alias for pico-sdk's
+    `dma_channel_config` (was a dummy placeholder struct), matching
+    betaflight's own approach - fixed a follow-on `MIN`/`MAX` redefinition
+    clash this exposed (pico-sdk's headers define these too) by guarding
+    Wingflight's own `common/maths.h` `MIN`/`MAX` macros with `#ifndef`
+    (betaflight's fork already has this guard; Wingflight's had dropped it).
+  - Rewrote `bus_spi_pico.c`'s DMA/segment internals to match Wingflight's
+    real API: `initTx`/`initRx` field names (not `dmaInitTx`/`dmaInitRx`),
+    `spiInternalInitStream(dev, bool preInit)` signature, inlined
+    `spiSequenceStart`'s DMA/polled dispatch directly (removing calls to
+    betaflight-only `spiProcessSegmentsDMA`/`spiProcessSegmentsPolled`),
+    implemented `spiInternalResetDescriptors`/`spiInternalResetStream` for
+    real, and exported `spiIrqHandler` (was `static` and had no header
+    declaration) so `bus_spi_pico.c` can hand off DMA-completion handling to
+    it, matching how betaflight's architecture does this.
+  - Fixed several betaflight-vs-Wingflight naming mismatches in
+    `bus_spi_pico.c`: `spiDevice_e`→`SPIDevice`, `OWNER_SPI_SDO`/`SDI`→
+    `OWNER_SPI_MOSI`/`MISO`.
+  - Added `src/main/drivers/pico_trace.h` (copied verbatim from betaflight) -
+    the `bprintf(...)` debug-trace macro used across ~80 call sites in the
+    ported `*_pico.c` files had no equivalent in Wingflight; it's a no-op
+    unless `PICO_TRACE` is defined, so this is zero-cost by default.
+  - Result: `bus_spi_pico.c`/`bus_spi.c` now compile with no errors of their
+    own - the SPI-bus architecture blocker is fully resolved. The only
+    remaining errors touching these files are cascades from the still-open
+    IO-tag/pin-definition blocker (Phase 3, see above). STM32F405 re-verified
+    clean/isolated after every change in this round.
 

@@ -91,6 +91,11 @@ uint16_t IO_Pin(IO_t io)
     return ioRec->pin;
 }
 
+// PICO doesn't use these STM32-specific GPIO-register-block-based
+// implementations - drivers/io_pico.c provides its own versions (pico-sdk
+// addresses GPIOs via a flat 0..47 number, not a GPIOx-base + bit-index pair).
+#if !defined(PICO)
+
 // port index, GPIOA == 0
 int IO_GPIOPortIdx(IO_t io)
 {
@@ -242,6 +247,8 @@ void IOToggle(IO_t io)
 #endif
 }
 
+#endif // !defined(PICO)
+
 // claim IO pin, set owner and resources
 void IOInit(IO_t io, resourceOwner_e owner, uint8_t index)
 {
@@ -379,10 +386,10 @@ void IOConfigGPIOAF(IO_t io, ioConfig_t cfg, uint8_t af)
 }
 #endif
 
-#if DEFIO_PORT_USED_COUNT > 0
+#if DEFIO_PORT_USED_COUNT > 0 && !defined(PICO)
 static const uint16_t ioDefUsedMask[DEFIO_PORT_USED_COUNT] = { DEFIO_PORT_USED_LIST };
 static const uint8_t ioDefUsedOffset[DEFIO_PORT_USED_COUNT] = { DEFIO_PORT_OFFSET_LIST };
-#else
+#elif !defined(PICO)
 // Avoid -Wpedantic warning
 static const uint16_t ioDefUsedMask[1] = {0};
 static const uint8_t ioDefUsedOffset[1] = {0};
@@ -393,6 +400,11 @@ ioRec_t ioRecs[DEFIO_IO_USED_COUNT];
 // Avoid -Wpedantic warning
 ioRec_t ioRecs[1];
 #endif
+
+// PICO doesn't use this STM32-specific GPIOx-base-address-derived population -
+// drivers/io_pico.c provides its own IOInitGlobal()/IOGetByTag() (pico-sdk
+// addresses GPIOs via a flat 0..47 number, not a GPIOx-base + bitmask pair).
+#if !defined(PICO)
 
 // initialize all ioRec_t structures from ROM
 // currently only bitmask is used, this may change in future
@@ -429,6 +441,8 @@ IO_t IOGetByTag(ioTag_t tag)
     offset += ioDefUsedOffset[portIdx];
     return ioRecs + offset;
 }
+
+#endif // !defined(PICO)
 
 void IOTraversePins(IOTraverseFuncPtr_t fnPtr)
 {

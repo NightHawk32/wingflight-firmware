@@ -58,7 +58,12 @@ typedef enum {
 
 typedef enum SPIDevice {
     SPIINVALID = -1,
+#if defined(USE_SPI_DEVICE_0)
+    SPIDEV_0   = 0,
+    SPIDEV_1,
+#else
     SPIDEV_1   = 0,
+#endif
     SPIDEV_2,
     SPIDEV_3,
     SPIDEV_4,
@@ -72,6 +77,8 @@ typedef enum SPIDevice {
 #define SPIDEV_COUNT 4
 #elif defined(STM32H7)
 #define SPIDEV_COUNT 6
+#elif defined(PICO)
+// defined by RP2350_UNIFIED/target.h (2 pico-sdk SPI peripherals: spi0/spi1)
 #else
 #define SPIDEV_COUNT 4
 #endif

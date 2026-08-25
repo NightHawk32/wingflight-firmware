@@ -378,7 +378,7 @@ uint32_t spiCalculateClock(uint16_t spiClkDivisor)
 }
 
 // Interrupt handler for SPI receive DMA completion
-static void spiIrqHandler(const extDevice_t *dev)
+void spiIrqHandler(const extDevice_t *dev)
 {
     busDevice_t *bus = dev->bus;
     busSegment_t *nextSegment;
@@ -445,6 +445,7 @@ static void spiIrqHandler(const extDevice_t *dev)
     }
 }
 
+#if !defined(PICO)
 // Interrupt handler for SPI receive DMA completion
 static void spiRxIrqHandler(dmaChannelDescriptor_t* descriptor)
 {
@@ -480,8 +481,9 @@ static void spiRxIrqHandler(dmaChannelDescriptor_t* descriptor)
 
     spiIrqHandler(dev);
 }
+#endif // !PICO
 
-#if !defined(STM32G4) && !defined(STM32H7)
+#if !defined(PICO) && !defined(STM32G4) && !defined(STM32H7)
 // Interrupt handler for SPI transmit DMA completion
 static void spiTxIrqHandler(dmaChannelDescriptor_t* descriptor)
 {

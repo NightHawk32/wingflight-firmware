@@ -397,9 +397,18 @@ MCU_COMMON_SRC = \
             drivers/io_pico.c
 
 # Files replaced by the RP2350-specific equivalents above.
+# timer.c/timer_common.c/dma_reqmap.c are the STM32 hardware-timer and
+# DMAMUX-request-map abstractions (TIM_TypeDef-based) - RP2350_UNIFIED's
+# target.h already #undefs USE_TIMER/USE_DMA_SPEC/USE_TIMER_MGMT (PICO uses
+# PIO-based dshot/PWM/UART instead), so every caller of dma_reqmap's API is
+# already compiled out for PICO; excluding these 3 files avoids them pulling
+# in drivers/timer.h (which has no PICO branch and isn't needed here).
 MCU_EXCLUDES = \
             drivers/persistent.c \
-            drivers/system.c
+            drivers/system.c \
+            drivers/timer.c \
+            drivers/timer_common.c \
+            drivers/dma_reqmap.c
 
 MSC_SRC = \
             drivers/usb_msc_common.c \
