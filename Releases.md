@@ -1,3 +1,8 @@
+# 0.0.15
+
+Add support for Spektrum SRXL2 ESC (throttle and telemetry over a single bidirectional bus).
+Support Spektrum full-size receivers (e.g. AR6610T) by sending an early SRXL2 handshake at boot.
+
 # 0.0.14
 
 Add debounce for servo trim adjustments to prevent snapping on RX link reacquisition.
