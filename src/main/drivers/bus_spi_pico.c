@@ -64,7 +64,7 @@
 const spiHardware_t spiHardware[] = {
     {
         .device = SPIDEV_0,
-        .reg = (spiResource_t *)SPI0,
+        .reg = (SPI_TypeDef *)SPI0,
         .sckPins = {
             { DEFIO_TAG_E(PA2) },
             { DEFIO_TAG_E(PA6) },
@@ -98,7 +98,7 @@ const spiHardware_t spiHardware[] = {
     },
     {
         .device = SPIDEV_1,
-        .reg = (spiResource_t *)SPI1,
+        .reg = (SPI_TypeDef *)SPI1,
         .sckPins = {
             { DEFIO_TAG_E(PA10) },
             { DEFIO_TAG_E(PA14) },
@@ -143,7 +143,7 @@ void spiPinConfigure(const struct spiPinConfig_s *pConfig)
             continue;
         }
 
-        const spiDevice_e device = hw->device;
+        const SPIDevice device = hw->device;
         spiDevice_t *pDev = &spiDevice[device];
 
         for (int pindex = 0 ; pindex < MAX_SPI_PIN_SEL ; pindex++) {
@@ -215,7 +215,7 @@ Must be SPI_MSB_FIRST, no other values supported on the PL022
 
 
 */
-void spiInitDevice(spiDevice_e device)
+void spiInitDevice(SPIDevice device)
 {
     bprintf("pico spiInitDevice %d",device);
     const spiDevice_t *spi = &spiDevice[device];
@@ -226,8 +226,8 @@ void spiInitDevice(spiDevice_e device)
 
     // Set owners
     IOInit(IOGetByTag(spi->sck),  OWNER_SPI_SCK,  RESOURCE_INDEX(device));
-    IOInit(IOGetByTag(spi->miso), OWNER_SPI_SDI, RESOURCE_INDEX(device));
-    IOInit(IOGetByTag(spi->mosi), OWNER_SPI_SDO, RESOURCE_INDEX(device));
+    IOInit(IOGetByTag(spi->miso), OWNER_SPI_MISO, RESOURCE_INDEX(device));
+    IOInit(IOGetByTag(spi->mosi), OWNER_SPI_MOSI, RESOURCE_INDEX(device));
 
     spi_init(SPI_INST(spi->dev), SPI_SPEED_20MHZ);
 
@@ -304,8 +304,8 @@ void spiInitBusDMA(void)
             return;
         }
 
-        if (!dmaAllocate(DMA_CHANNEL_TO_IDENTIFIER(channel_tx), OWNER_SPI_SDO, device + 1) ||
-            !dmaAllocate(DMA_CHANNEL_TO_IDENTIFIER(channel_rx), OWNER_SPI_SDI, device + 1)) {
+        if (!dmaAllocate(DMA_CHANNEL_TO_IDENTIFIER(channel_tx), OWNER_SPI_MOSI, device + 1) ||
+            !dmaAllocate(DMA_CHANNEL_TO_IDENTIFIER(channel_rx), OWNER_SPI_MISO, device + 1)) {
             // This should never happen if all allocated channels are claimed
             dma_channel_unclaim(channel_tx);
             dma_channel_unclaim(channel_rx);
@@ -348,7 +348,7 @@ void spiInternalResetDescriptors(busDevice_t *bus)
     UNUSED(bus);
 }
 
-bool spiInternalReadWriteBufPolled(spiResource_t *instance, const uint8_t *txData, uint8_t *rxData, int len)
+bool spiInternalReadWriteBufPolled(SPI_TypeDef *instance, const uint8_t *txData, uint8_t *rxData, int len)
 {
     // TODO optimise with 16-bit transfers as per stm bus_spi_ll code
     int bytesProcessed = 0;
@@ -440,7 +440,7 @@ void spiInternalStartDMA(const extDevice_t *dev)
 void spiSequenceStart(const extDevice_t *dev)
 {
     busDevice_t *bus = dev->bus;
-    spiResource_t *instance = bus->busType_u.spi.instance;
+    SPI_TypeDef *instance = bus->busType_u.spi.instance;
     spiDevice_t *spi = &spiDevice[spiDeviceByInstance(instance)];
     bool dmaSafe = dev->useDMA;
 #if TESTING_NO_DMA

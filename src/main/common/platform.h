@@ -135,6 +135,14 @@ typedef void I2C_TypeDef;
 typedef void ADC_TypeDef;
 typedef void DMA_TypeDef;
 typedef void SPI_TypeDef;
+// TIM_TypeDef/FunctionalState: RP2350_UNIFIED's target.h #undefs USE_TIMER (PICO
+// uses PIO-based dshot/PWM, not hardware timers), but drivers/timer.h and
+// drivers/dma_reqmap.h are still transitively included by widely-used shared
+// headers (pg/adc.h, pg/bus_spi.h) and must still parse; these placeholders
+// let their (unused-for-PICO) declarations compile unmodified.
+typedef void TIM_TypeDef;
+typedef void TIM_OCInitTypeDef;
+typedef enum { DISABLE = 0, ENABLE = !DISABLE } FunctionalState;
 // DMA_InitTypeDef is used BY VALUE (not just by pointer) in drivers/bus.h's
 // extDevice_t, so it must be a complete type. Use pico-sdk's own
 // dma_channel_config directly (mirrors betaflight's own platform.h) rather
@@ -158,6 +166,23 @@ typedef int32_t IRQn_Type;
 #define I2C_INST(i2c)  ((i2c_inst_t *)(i2c))
 #define SPI_INST(spi)  ((spi_inst_t *)(spi))
 #define UART_INST(uart) ((uart_inst_t *)(uart))
+// Uppercase SPI0/SPI1 aliases for pico-sdk's own lowercase spi0/spi1 globals -
+// betaflight's ported *_pico.c driver files reference SPI0/SPI1 (matching the
+// CMSIS RP2350.h device header, which we deliberately don't include, see above).
+#define SPI0 spi0
+#define SPI1 spi1
+
+// bprintf()/tprintf() debug-trace macros used pervasively across betaflight's
+// ported *_pico.c driver files. No-ops unless PICO_TRACE is defined (mirrors
+// betaflight's own platform/platform.h, which includes this unconditionally).
+#include "drivers/pico_trace.h"
+
+// pico-sdk addresses all GPIOs via one flat 0..47 numbering rather than
+// STM32-style lettered ports of 16 pins each, so ioTag_t's port/pin split
+// (drivers/io_def.h) is widened to a single 64-pin-wide virtual port
+// (see drivers/io_def_generated.h's PICO branch and drivers/io_pico.c).
+// Must be defined before drivers/io_def.h is included anywhere in the build.
+#define DEFIO_PORT_PINS 64
 
 #elif defined(SIMULATOR_BUILD)
 

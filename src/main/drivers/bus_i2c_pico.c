@@ -59,13 +59,13 @@ const i2cHardware_t i2cHardware[I2CDEV_COUNT] = {
 #ifdef USE_I2C_DEVICE_0
 {
         .device = I2CDEV_0,
-        .reg = (i2cResource_t *)i2c0,
+        .reg = (I2C_TypeDef *)i2c0,
     },
 #endif
 #ifdef USE_I2C_DEVICE_1
     {
         .device = I2CDEV_1,
-        .reg = (i2cResource_t *)i2c1,
+        .reg = (I2C_TypeDef *)i2c1,
     },
 #endif
 };

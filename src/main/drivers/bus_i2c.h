@@ -31,7 +31,12 @@
 
 typedef enum I2CDevice {
     I2CINVALID = -1,
+#if defined(USE_I2C_DEVICE_0)
+    I2CDEV_0   = 0,
+    I2CDEV_1,
+#else
     I2CDEV_1   = 0,
+#endif
     I2CDEV_2,
     I2CDEV_3,
     I2CDEV_4,

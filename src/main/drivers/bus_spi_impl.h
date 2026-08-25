@@ -28,6 +28,8 @@
 #define MAX_SPI_PIN_SEL 4
 #elif defined(STM32H7)
 #define MAX_SPI_PIN_SEL 5
+#elif defined(PICO)
+// defined by RP2350_UNIFIED/target.h
 #else
 #error Unknown MCU family
 #endif
@@ -90,4 +92,5 @@ void spiInternalStopDMA (const extDevice_t *dev);
 void spiInternalResetStream(dmaChannelDescriptor_t *descriptor);
 void spiInternalResetDescriptors(busDevice_t *bus);
 void spiSequenceStart(const extDevice_t *dev);
+void spiIrqHandler(const extDevice_t *dev);
 
