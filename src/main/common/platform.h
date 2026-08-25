@@ -135,6 +135,11 @@ typedef void I2C_TypeDef;
 typedef void ADC_TypeDef;
 typedef void DMA_TypeDef;
 typedef void SPI_TypeDef;
+// USART_TypeDef: uartHardware_t/uartPort_t (drivers/serial_uart.h,
+// serial_uart_impl.h) store a pico-sdk uart_inst_t* here, cast back via
+// UART_INST() (see below) before calling into pico-sdk - never dereferenced
+// as a real register block, same rationale as the other opaque types above.
+typedef void USART_TypeDef;
 // TIM_TypeDef/FunctionalState: RP2350_UNIFIED's target.h #undefs USE_TIMER (PICO
 // uses PIO-based dshot/PWM, not hardware timers), but drivers/timer.h and
 // drivers/dma_reqmap.h are still transitively included by widely-used shared
@@ -190,6 +195,11 @@ typedef int32_t IRQn_Type;
 // (see drivers/io_def_generated.h's PICO branch and drivers/io_pico.c).
 // Must be defined before drivers/io_def.h is included anywhere in the build.
 #define DEFIO_PORT_PINS 64
+
+// Defined (and updated from clock_get_hz(clk_sys)) in drivers/system_rp2350.c.
+// STM32 targets get this from their CMSIS system_stm32*.h startup headers;
+// PICO has no equivalent startup header, so declare it here instead.
+extern uint32_t SystemCoreClock;
 
 #elif defined(SIMULATOR_BUILD)
 

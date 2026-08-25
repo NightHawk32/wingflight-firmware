@@ -25,7 +25,9 @@
 
 #include "platform.h"
 
-#ifdef USE_PWM_OUTPUT
+// Uses STM32 timer/TIM_TypeDef APIs directly; RP2350/RP2354 use pwm_motor_pico.c instead,
+// which drives the pico-sdk PWM slices and provides its own pwmGetMotors()/pwmEnableMotors()/pwmIsMotorEnabled().
+#if defined(USE_PWM_OUTPUT) && !defined(PICO)
 
 #include "common/maths.h"
 
@@ -314,4 +316,4 @@ pwmOutputPort_t *pwmGetMotors(void)
     return motors;
 }
 
-#endif // USE_PWM_OUTPUT
+#endif // USE_PWM_OUTPUT && !PICO

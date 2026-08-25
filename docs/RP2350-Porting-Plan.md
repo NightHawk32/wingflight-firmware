@@ -646,3 +646,127 @@ be invisible to STM32F4/F7/G4/H7 builds:
     IO-tag/pin-definition blocker (Phase 3, see above). STM32F405 re-verified
     clean/isolated after every change in this round.
 
+### Fifth build iteration — remaining core drivers (config storage, motor PWM,
+    multicore, misc) fixed; error count driven from 7 down to 4, new UART
+    architecture blocker found
+
+- Fixed (all build-verified, error count dropped each round: 7 -> 1 -> 4 -> 1
+  -> 0-for-these-files -> 4 new ones in the UART subsystem):
+  - `adc_pico.c`: renamed its private DMA ring-buffer array `adcValues` ->
+    `picoAdcValues` (4 occurrences) - it collided with `adc_impl.h`'s shared
+    `extern adcValues[ADC_CHANNEL_COUNT]`.
+  - `bus_i2c_pico.c`: added missing `#include "hardware/gpio.h"` (every other
+    ported `*_pico.c` file already had it).
+  - `common/utils.h`: added `popcount`/`popcount32`/`popcount64` (ported
+    verbatim from betaflight, 3-line `__builtin_popcount(ll)` wrappers) -
+    Wingflight's frozen utils.h never had these; `adc_pico.c` calls `popcount`.
+  - Config storage (`config_flash.c`'s betaflight-newer
+    `configWriteWord()`/`config_streamer_buffer_type_t` API does not exist in
+    Wingflight - Wingflight inlines all per-MCU-family flash erase/program
+    logic directly in `config_streamer.c`'s own `write_word()` via
+    `#elif defined(STM32Hx)/...` branches, with the buffer-align typedef named
+    `config_streamer_buffer_align_type_t`). Fix: removed `config_flash.c` from
+    `make/mcu/RP2350.mk`'s `MCU_COMMON_SRC` entirely (file left on disk,
+    unused) and instead added a new `#elif defined(CONFIG_IN_FLASH) &&
+    defined(PICO)` branch directly inside `config_streamer.c`'s `write_word()`
+    (flash_range_erase/flash_range_program logic, adapted from the removed
+    file), plus PICO no-op branches for the unlock/clear-flags/lock steps and
+    an `|| defined(PICO)` addition to skip the STM32-only
+    `getFLASHSectorForEEPROM()` helper entirely. Also fixed a **latent, always-
+    dead bug** in `RP2350_UNIFIED/target.h`: `FLASH_CONFIG_STREAMER_BUFFER_SIZE`
+    referenced pico-sdk's `FLASH_PAGE_SIZE` macro before `hardware/flash.h` was
+    ever included at that point in target.h's parse - replaced with the
+    literal `256`. Wired this macro into `config_streamer.h`'s buffer-size
+    `#if` chain via a new top-priority `#if defined(FLASH_CONFIG_STREAMER_BUFFER_SIZE)`
+    branch (so PICO gets a 256-byte, page-aligned config-write buffer instead
+    of falling through to the generic 4-byte default).
+  - `dma.h`/`dma_pico.c`: `DMA_IRQ_0_IRQn`/`DMA_IRQ_1_IRQn` (CMSIS-style,
+    don't exist since Wingflight excludes RP2350.h) -> pico-sdk's own plain
+    numeric `DMA_IRQ_0`/`DMA_IRQ_1` macros. Added missing
+    `DMA_OUTPUT_INDEX`/`DMA_OUTPUT_STRING`/`DMA_INPUT_STRING` macros to
+    `dma.h`'s existing PICO branch (used by `dmaGetDisplayString()`, matches
+    betaflight's own PICO values).
+  - **Motor PWM (`pwm_motor_pico.c`) - full rewrite**, same class of problem
+    as bus_spi_pico.c/config storage: betaflight's ported file targets a
+    newer motor-device API Wingflight doesn't have (`motorPwmDevInit(motorDevice_t*,
+    const motorDevConfig_t*, uint16_t idlePulse) -> bool`, a `pwmMotors[]`
+    global, `motorConfig->motorProtocol`/`MOTOR_PROTOCOL_*`/
+    `useContinuousUpdate`/`motorOutputReordering[]`, and extra `motorVTable_t`
+    fields Wingflight's `motor.h` doesn't have:
+    convertExternalToMotor/convertMotorToExternal/decodeTelemetry/
+    requestTelemetry/isMotorIdle/getMotorIO). Rewrote the whole file against
+    Wingflight's real API (`motorPwmDevInit(const motorDevConfig_t*, uint8_t
+    motorCount) -> motorDevice_t*`, global `motors[]` (not `pwmMotors[]`,
+    matches `pwm_output.h`'s existing `extern` decl), `motorDevConfig->
+    motorPwmProtocol`/`PWM_TYPE_ONESHOT125|ONESHOT42|MULTISHOT|STANDARD`/
+    `useUnsyncedPwm`, direct `motorIndex` (no reordering field exists), a
+    `write(uint8_t index, uint8_t mode, float value)` vtable signature with a
+    `pwmConvertToInternal()` helper adapted from STM32 `pwm_output.c`, and
+    locally-defined `pwmEnableMotors`/`pwmIsMotorEnabled`/`pwmGetMotors` since
+    the STM32 versions in `pwm_output.c` are now excluded for PICO). All PICO
+    PWM-slice hardware logic (clkdiv/wrap calc, `pwmShutdownPulsesForAllMotors`,
+    one-shot `pwmCompleteOneshotMotorUpdate` latch-on-stop) preserved from the
+    original port. Needed a new small shim `src/main/platform/pwm.h`
+    (`picoPwmOutput_t` struct, ported verbatim from betaflight's
+    `platform/PICO/include/platform/pwm.h`).
+  - `pwm_output.c` (the STM32 motor PWM driver): guarded its entire body with
+    `#if defined(USE_PWM_OUTPUT) && !defined(PICO)` (was just `#ifdef
+    USE_PWM_OUTPUT`) so it doesn't duplicate-symbol-conflict with the
+    rewritten `pwm_motor_pico.c`'s definitions of `motors[]`/
+    `pwmEnableMotors`/`pwmIsMotorEnabled`/`motorPwmDevInit`/`pwmGetMotors` for
+    PICO builds. Mirrors the `io.c`/`adc.c` PICO-exclusion pattern from
+    earlier rounds.
+  - `pwm_servo_pico.c` **removed from the build (architecturally
+    incompatible, not fixable by renaming)**: it implements betaflight's
+    newer `servoDevInit`/`servoWrite`/`servoDevConfig_t` API, which - unlike
+    every other mismatch found so far - **does not exist ANYWHERE in
+    Wingflight's actual source tree** (confirmed via exhaustive grep).
+    Wingflight's real servo output is a completely different mechanism:
+    `flight/servos.c` drives PWM directly via the STM32-timer `pwmOutConfig()`/
+    `timerChannel_t`/`*ccr` API (the *same* low-level function motors use on
+    STM32), with no separate device-driver abstraction at all. Removed
+    `drivers/pwm_servo_pico.c` from `make/mcu/RP2350.mk`'s `MCU_COMMON_SRC`
+    (file left on disk, unused). **Follow-up task, not started**: PICO servo
+    PWM output needs a `#if defined(PICO)` branch written directly inside
+    `flight/servos.c` itself (reusing `picoPwmOutput_t`/PWM-slice concepts
+    from the now-rewritten `pwm_motor_pico.c`), not a drop-in servo device
+    driver file.
+  - `src/main/platform/multicore.h` (new shim, ported verbatim from
+    betaflight's `platform/PICO/include/platform/multicore.h`): was missing
+    entirely - `drivers/multicore.c` (already ported/present in Wingflight
+    from an earlier round) and `drivers/system_rp2350.c` both
+    `#include "platform/multicore.h"`.
+  - `SystemCoreClock`: declared but never had an `extern` visible outside
+    `system_rp2350.c` (which defines the real global and updates it from
+    `clock_get_hz(clk_sys)`) - STM32 targets get this declaration
+    transitively via their CMSIS `system_stm32*.h` startup headers, which
+    PICO has no equivalent of. Added `extern uint32_t SystemCoreClock;` to
+    `common/platform.h`'s PICO branch (needed by `pwm_motor_pico.c`'s clkdiv
+    calculation, and already silently relied upon un-declared by
+    `pwm_beeper_pico.c`).
+  - STM32F405 re-verified clean (0 errors, full hex + memory report) after
+    all of the above - isolation holds.
+- **NEW BLOCKER FOUND (next up, not yet started)**: the UART subsystem
+  (`drivers/uart_pico/serial_uart_pico.c` + siblings `uart_hw.c`, `uart_pio.c`,
+  `uart_rx_program.c`, `uart_tx_program.c`, `serial_uart_pico.h`) is written
+  against a betaflight-newer, PICO-specific **PIO-software-UART** architecture
+  that doesn't exist in Wingflight at all:
+  - `#include "drivers/serial_impl.h"` - a genuinely new, platform-agnostic
+    shared header betaflight added (declares helpers like
+    `serialOwnerTxRx()`/`serialOwnerIndex()`/`serialOptions_pull()`/
+    `serialOptions_pushPull()`) - does not exist anywhere in Wingflight.
+  - `#include "drivers/serial_uart_impl.h"` - also does not exist.
+  - `serial_uart.h`'s `uartPort_t.USARTx` field is typed `USART_TypeDef *`,
+    which (like `GPIO_TypeDef`/`SPI_TypeDef`/etc in earlier rounds) has no
+    PICO placeholder typedef yet in `common/platform.h`.
+  - The file also assumes a `SERIALTYPE_PIOUART` port type and a whole
+    `_hw`/`_pio` dual-backend split (`uartPinConfigure_hw`/`_pio`,
+    `uartSelectFunction_hw`/`_pio`) - i.e. some UARTs are real hardware UARTs
+    and others are bit-banged via PIO state machines, doubling the usable
+    serial port count on RP2350. This is a substantial, genuinely new
+    subsystem port (not a naming-drift fix) - needs its own scoped design
+    pass (read `serial_impl.h`/`serial_uart_impl.h`/`uartDevice_t` in
+    betaflight fully, decide whether PIO-UART is in scope for first bring-up
+    or can be deferred/stubbed to hardware-UART-only initially) before
+    editing starts. **Not investigated further yet.**
+

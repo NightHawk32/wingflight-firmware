@@ -381,19 +381,17 @@ MCU_COMMON_SRC = \
             drivers/exti_pico.c \
             drivers/persistent_rp2350.c \
             drivers/pwm_motor_pico.c \
-            drivers/pwm_servo_pico.c \
             drivers/pwm_beeper_pico.c \
             drivers/gyro_clkin_pico.c \
             drivers/system_rp2350.c \
-            drivers/uart_pico/serial_uart_pico.c \
-            drivers/uart_pico/uart_hw.c \
-            drivers/uart_pico/uart_pio.c \
-            drivers/uart_pico/uart_rx_program.c \
-            drivers/uart_pico/uart_tx_program.c \
+            drivers/serial_uart_pico.c \
             drivers/usb_pico/usb_msc_pico.c \
             drivers/multicore.c \
-            drivers/light_ws2811strip_pico.c \
             drivers/io_pico.c
+
+# light_ws2811strip_pico.c intentionally not built - USE_LED_STRIP is
+# undefined for this target (see RP2350_UNIFIED/target.h). File left on disk,
+# unused, as a starting point for a future PICO LED-strip rewrite.
 
 # Files replaced by the RP2350-specific equivalents above.
 # timer.c/timer_common.c/dma_reqmap.c are the STM32 hardware-timer and

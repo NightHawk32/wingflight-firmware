@@ -84,16 +84,23 @@
 
 #elif defined(PICO)
 
-// PICO GPIO config is just direction + pull; IOConfigGPIO() (io_pico.c) currently
-// only distinguishes input (0) vs output (1), see its TODO comment.
-# define IOCFG_OUT_PP         1
-# define IOCFG_OUT_PP_UP      1
-# define IOCFG_OUT_OD         1
-# define IOCFG_AF_PP          1
-# define IOCFG_AF_OD          1
-# define IOCFG_IPD            0
-# define IOCFG_IPU            0
-# define IOCFG_IN_FLOATING    0
+// PICO GPIO config is direction (bit 0) + pull state (bits 1-2): pico-sdk has
+// no register-level pull-up/down "mode" constants to reuse (unlike
+// STM32's GPIO_PuPd_*/GPIO_PULLUP - it just takes two plain bools via
+// gpio_set_pulls()), so IOConfigGPIO() (io_pico.c) decodes this directly.
+#define IO_CONFIG(dir, pullup, pulldown) ((dir) | ((pullup) << 1) | ((pulldown) << 2))
+
+# define IOCFG_OUT_PP         IO_CONFIG(1, 0, 0)
+# define IOCFG_OUT_PP_UP      IO_CONFIG(1, 1, 0)
+# define IOCFG_OUT_OD         IO_CONFIG(1, 0, 0)
+# define IOCFG_AF_PP          IO_CONFIG(1, 0, 0)
+# define IOCFG_AF_PP_UP       IO_CONFIG(1, 1, 0)
+# define IOCFG_AF_PP_PD       IO_CONFIG(1, 0, 1)
+# define IOCFG_AF_OD          IO_CONFIG(1, 0, 0)
+# define IOCFG_AF_OD_UP       IO_CONFIG(1, 1, 0)
+# define IOCFG_IPD            IO_CONFIG(0, 0, 1)
+# define IOCFG_IPU            IO_CONFIG(0, 1, 0)
+# define IOCFG_IN_FLOATING    IO_CONFIG(0, 0, 0)
 
 #else
 # warning "Unknown TARGET"

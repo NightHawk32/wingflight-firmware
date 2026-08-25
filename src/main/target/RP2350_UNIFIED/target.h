@@ -62,11 +62,14 @@
 //#define USE_MULTICORE
 //#define ENABLE_MULTICORE_INIT
 
-#define USE_UART0
+// Hardware UARTs only for the first RP2350/RP2354 bring-up (RP2350 has 2 real
+// hardware UART peripherals: uart0/uart1, mapped here to wingflight's 1-based
+// UARTDevice_e naming as UARTDEV_1/UARTDEV_2, matching STM32 targets'
+// convention). PIO-based bit-banged "extra" UARTs (betaflight's
+// USE_PIOUART0/1) are a follow-up, not yet implemented - see
+// docs/RP2350-Porting-Plan.md.
 #define USE_UART1
-#define USE_PIOUART0
-#define USE_PIOUART1
-#define UART_TRAIT_AF_PORT 1
+#define USE_UART2
 
 #define USE_SPI
 #define SPIDEV_COUNT 2
@@ -137,6 +140,18 @@
 #undef USE_OSD
 #undef USE_FRSKYOSD
 #undef USE_MSP_DISPLAYPORT
+
+// LED strip: wingflight's shared drivers/light_ws2811strip.c bakes in the
+// STM32 timer-DMA bit-pattern-buffer approach (ledStripDMABuffer,
+// updateLEDDMABuffer()) directly rather than calling out to a portable
+// per-family hook, so it is not compatible as-is with betaflight's
+// PIO+DMA-based light_ws2811strip_pico.c (which expects a completely
+// different API: ws2811LedStripInit(ioTag, format)/
+// ws2811LedStripUpdateTransferBuffer(), neither of which exist in
+// wingflight's header). Deferred - needs a PICO-specific rewrite of
+// light_ws2811strip.c's core update loop, not just the hardware driver.
+// See docs/RP2350-Porting-Plan.md.
+#undef USE_LED_STRIP
 
 // Various untested or unsupported elements are undefined below
 
