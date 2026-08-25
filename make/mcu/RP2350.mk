@@ -374,7 +374,6 @@ MCU_COMMON_SRC = \
             drivers/bus_i2c_pico.c \
             drivers/bus_spi_pico.c \
             drivers/bus_quadspi_pico.c \
-            drivers/config_flash.c \
             drivers/debug_pico.c \
             drivers/dma_pico.c \
             drivers/dshot_bidir_pico.c \

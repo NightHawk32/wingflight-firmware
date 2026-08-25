@@ -133,7 +133,7 @@ void dmaSetHandler(dmaIdentifier_e identifier, dmaCallbackHandlerFuncPtr callbac
 
     if (!dma_irqN_handler_registered[core]) {
         // Register the DMA IRQ handler if needed
-        dmaDescriptors[index].irqN = core ? DMA_IRQ_1_IRQn : DMA_IRQ_0_IRQn;
+        dmaDescriptors[index].irqN = core ? DMA_IRQ_1 : DMA_IRQ_0;
         irq_handler_t irq_handler = core ? dma_irq1_handler : dma_irq0_handler;
 
         bprintf("dmaSetHandler on id %d, going to set exclusive handler [%d] for %p", identifier, dmaDescriptors[index].irqN, irq_handler);

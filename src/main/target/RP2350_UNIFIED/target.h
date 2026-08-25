@@ -98,8 +98,9 @@
 // Assume on-board flash (see linker files)
 #define CONFIG_IN_FLASH
 
-// Pico flash writes are all aligned and in batches of FLASH_PAGE_SIZE (256)
-#define FLASH_CONFIG_STREAMER_BUFFER_SIZE   FLASH_PAGE_SIZE
+// Pico flash writes are all aligned and in batches of pico-sdk's FLASH_PAGE_SIZE (256 bytes program granularity).
+// Use a literal here (not pico-sdk's FLASH_PAGE_SIZE macro) since hardware/flash.h is not included at this point.
+#define FLASH_CONFIG_STREAMER_BUFFER_SIZE   256
 #define FLASH_CONFIG_BUFFER_TYPE            uint8_t
 
 /* DMA Settings */

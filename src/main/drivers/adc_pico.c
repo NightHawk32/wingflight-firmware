@@ -33,6 +33,7 @@
 #include "drivers/io.h"
 #include "drivers/sensor.h"
 #include "drivers/adc.h"
+#include "drivers/adc_impl.h"
 #include "drivers/dma.h"
 #include "platform/dma.h"
 
@@ -62,21 +63,19 @@
 #warning "PICO: Internal temp/Vref are used for ADC padding for DMA only - not intended for actual use"
 #endif
 
-#if ADC_SOURCE_COUNT > PICO_ADC_MAX_CHANNELS
+#if ADC_CHANNEL_COUNT > PICO_ADC_MAX_CHANNELS
 #warning "PICO currently only supports maximum of 4 ADC channels"
 #endif
 
-typedef struct adcOperatingConfig_s {
-    ioTag_t tag;
-    uint8_t channel;  // hardware channel number for this input.
-    uint8_t dmaIndex;    // location in ADC values for this input.
-    bool enabled;
-} adcOperatingConfig_t;
-
-static adcOperatingConfig_t adcOperatingConfig[PICO_ADC_MAX_CHANNELS];
+// adcOperatingConfig[] (size ADC_CHANNEL_COUNT) is the shared/generic array
+// defined in drivers/adc.c and consumed by adcIsEnabled()/blackbox/voltage/
+// current sensors; reuse it here (instead of a PICO-local one) so those
+// callers see PICO's real ADC state. Only the first 4 slots (indices
+// ADC_BATTERY/ADC_CURRENT/ADC_RSSI/ADC_VBEC = 0..3) are ever populated below,
+// matching this driver's 4-channel round-robin/DMA design (see PICO_ADC_MAX_CHANNELS).
 // NOTE the ring buffer is not using the last two positions, and wrapping to
 // a position up to two sizes before set write address. Hence the padding.
-static volatile uint16_t adcValues[PICO_ADC_MAX_CHANNELS] __attribute__((aligned(PICO_ADC_MAX_CHANNELS * sizeof(uint16_t))));
+static volatile uint16_t picoAdcValues[PICO_ADC_MAX_CHANNELS] __attribute__((aligned(PICO_ADC_MAX_CHANNELS * sizeof(uint16_t))));
 
 static int adcChannelByPin(const int pin)
 {
@@ -115,8 +114,13 @@ void adcInit(const adcConfig_t *config)
         adcOperatingConfig[ADC_RSSI].tag = config->rssi.ioTag;
     }
 
-    if (config->external1.enabled) {
-        adcOperatingConfig[ADC_EXTERNAL1].tag = config->external1.ioTag;
+    // Note: wingflight has no vbat/current/rssi/external1-only 4-channel ADC
+    // config (betaflight's newer generalized layout); map betaflight's PICO
+    // "external1" slot onto wingflight's ADC_VBEC (the only one of
+    // vbec/vbus/vext whose AdcChannel enum value, 3, fits within the 4-slot
+    // adcOperatingConfig[] array used by this round-robin PICO ADC driver).
+    if (config->vbec.enabled) {
+        adcOperatingConfig[ADC_VBEC].tag = config->vbec.ioTag;
     }
 
     if (config->current.enabled) {
@@ -139,7 +143,7 @@ void adcInit(const adcConfig_t *config)
             continue;
         }
 
-        adcOperatingConfig[i].channel = channel;
+        adcOperatingConfig[i].adcChannel = channel;
         adcOperatingConfig[i].enabled = true;
         // dmaIndex will be assigned later based on channel rank within 'mask' (which may differ from enum order)
 
@@ -174,7 +178,7 @@ void adcInit(const adcConfig_t *config)
         if (!adcOperatingConfig[i].enabled) {
             continue;
         }
-        const uint8_t channel = adcOperatingConfig[i].channel;
+        const uint8_t channel = adcOperatingConfig[i].adcChannel;
         const unsigned rank = popcount(mask & ((1u << channel) - 1u)); // number of lower channels set
         adcOperatingConfig[i].dmaIndex = (uint8_t)(rank);
     }
@@ -211,7 +215,7 @@ void adcInit(const adcConfig_t *config)
     // Configure DMA to read from the ADC FIFO and write to our buffer.
     channel_config_set_transfer_data_size(&cfg, DMA_SIZE_16);
     channel_config_set_read_increment(&cfg, false); // Read from the same address (ADC FIFO)
-    channel_config_set_write_increment(&cfg, true); // Write to sequential addresses into adcValues
+    channel_config_set_write_increment(&cfg, true); // Write to sequential addresses into picoAdcValues
     channel_config_set_dreq(&cfg, DREQ_ADC);
 
     /*
@@ -239,20 +243,20 @@ void adcInit(const adcConfig_t *config)
 
     // Set the DMA into free running mode and start
     // -1 for transfer count is endless mode
-    dma_channel_configure(dmaChannel, &cfg, adcValues, &adc_hw->fifo, -1, true);
+    dma_channel_configure(dmaChannel, &cfg, picoAdcValues, &adc_hw->fifo, -1, true);
 
     /* ADC start, in round robin - continuous */
     adc_run(true);
 }
 
-uint16_t adcGetValue(adcSource_e source)
+uint16_t adcGetChannel(uint8_t channel)
 {
-    if ((unsigned)source >= ARRAYLEN(adcOperatingConfig) || !adcOperatingConfig[source].enabled) {
+    if ((unsigned)channel >= ARRAYLEN(adcOperatingConfig) || !adcOperatingConfig[channel].enabled) {
         return 0;
     }
 
-    const uint8_t dmaIndex = adcOperatingConfig[source].dmaIndex;
-    return dmaIndex < ARRAYLEN(adcValues) ? adcValues[dmaIndex] : 0;
+    const uint8_t dmaIndex = adcOperatingConfig[channel].dmaIndex;
+    return dmaIndex < ARRAYLEN(picoAdcValues) ? picoAdcValues[dmaIndex] : 0;
 }
 
 #ifdef USE_ADC_INTERNAL

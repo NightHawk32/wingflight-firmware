@@ -27,6 +27,11 @@
 
 #include "config/config_streamer.h"
 
+#if defined(PICO)
+#include "hardware/flash.h"
+#include "hardware/sync.h"
+#endif
+
 #if !defined(CONFIG_IN_FLASH)
 #if defined(CONFIG_IN_RAM) && defined(PERSISTENT)
 PERSISTENT uint8_t eepromData[EEPROM_SIZE];
@@ -72,6 +77,9 @@ uint8_t eepromData[EEPROM_SIZE];
 // SIMULATOR
 # elif defined(SIMULATOR_BUILD)
 #  define FLASH_PAGE_SIZE                 (0x400)
+// PICO (RP2350/RP2354)
+# elif defined(PICO)
+#  define FLASH_PAGE_SIZE                 ((uint32_t)0x1000) // 4K erase sector (pico-sdk FLASH_SECTOR_SIZE)
 # else
 #  error "Flash page size not defined for target."
 # endif
@@ -90,6 +98,8 @@ void config_streamer_start(config_streamer_t *c, uintptr_t base, int size)
     if (!c->unlocked) {
 #if defined(CONFIG_IN_RAM) || defined(CONFIG_IN_EXTERNAL_FLASH) || defined(CONFIG_IN_SDCARD)
         // NOP
+#elif defined(PICO)
+        // NOP - pico-sdk flash_range_erase()/flash_range_program() require no unlock step.
 #elif defined(CONFIG_IN_FLASH) || defined(CONFIG_IN_FILE)
 #if defined(STM32F7) || defined(STM32H7) || defined(STM32G4)
         HAL_FLASH_Unlock();
@@ -101,6 +111,8 @@ void config_streamer_start(config_streamer_t *c, uintptr_t base, int size)
     }
 
 #if defined(CONFIG_IN_RAM) || defined(CONFIG_IN_FILE) || defined(CONFIG_IN_EXTERNAL_FLASH)
+    // NOP
+#elif defined(PICO)
     // NOP
 #elif defined(CONFIG_IN_FLASH)
 #if defined(STM32F4)
@@ -120,7 +132,7 @@ void config_streamer_start(config_streamer_t *c, uintptr_t base, int size)
     c->err = 0;
 }
 
-#if defined(CONFIG_IN_RAM) || defined(CONFIG_IN_EXTERNAL_FLASH) || defined(CONFIG_IN_SDCARD)
+#if defined(CONFIG_IN_RAM) || defined(CONFIG_IN_EXTERNAL_FLASH) || defined(CONFIG_IN_SDCARD) || defined(PICO)
 // No flash sector method required.
 #elif defined(CONFIG_IN_FLASH)
 #if defined(STM32F745xx) || defined(STM32F746xx) || defined(STM32F765xx)
@@ -427,6 +439,21 @@ static int write_word(config_streamer_t *c, config_streamer_buffer_align_type_t 
         return -2;
     }
 
+#elif defined(CONFIG_IN_FLASH) && defined(PICO)
+
+    // TODO: synchronise second core, see e.g. pico-examples flash_program (uses flash_safe_execute).
+    const uint32_t flashOffset = (uint32_t)c->address - XIP_BASE;
+
+    const uint32_t interrupts = save_and_disable_interrupts();
+
+    if ((flashOffset % FLASH_SECTOR_SIZE) == 0) {
+        flash_range_erase(flashOffset, FLASH_SECTOR_SIZE);
+    }
+
+    flash_range_program(flashOffset, (const uint8_t *)buffer, CONFIG_STREAMER_BUFFER_SIZE);
+
+    restore_interrupts(interrupts);
+
 #elif defined(CONFIG_IN_FLASH)
 
 #if defined(STM32H7)
@@ -550,6 +577,8 @@ int config_streamer_finish(config_streamer_t *c)
         // NOP
 #elif defined(CONFIG_IN_FILE)
         FLASH_Lock();
+#elif defined(CONFIG_IN_FLASH) && defined(PICO)
+        // NOP - pico-sdk flash_range_erase()/flash_range_program() require no lock step.
 #elif defined(CONFIG_IN_FLASH)
 #if defined(STM32F7) || defined(STM32H7) || defined(STM32G4)
         HAL_FLASH_Lock();
