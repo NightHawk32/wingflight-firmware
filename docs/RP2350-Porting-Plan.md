@@ -151,6 +151,11 @@ delete completed items — leave them checked so history is preserved.
 
 - [ ] Clock init, GPIO, UART console, LED only.
 - [ ] Validate boot / flash-via-uf2 before wiring in the full driver set.
+- [x] Produce a first linked RP2350B image. **Done 2026-08-25**: after
+      resolving build-system/source-list drift and adding PICO-safe guards for
+      several shared STM32 assumptions, `make TARGET=RP2350B` now compiles and
+      links `obj/wingflight_4.6.0_RP2350B.hex`. Hardware boot and UF2 output are
+      still pending.
 - [ ] Bring-up order: RP2350B first (straight port path, matches betaflight's
       primary variant), then RP2350A (same port path, smaller GPIO count),
       then derive RP2354B and RP2354A (on-die flash variants) once their
@@ -357,7 +362,10 @@ framebuffer support dropped from scope per Phase 0 decision).
 - [ ] Port USB-MSC support (`PICO/usb/usb_msc_pico.c`,
       `drivers/usb_msc_common.c`, `msc/usbd_storage*.c`, `msc/emfat*.c`) so the
       flight controller can expose config/blackbox storage as a mass-storage
-      device over USB.
+      device over USB. **Deferred 2026-08-25**: temporarily disabled for the
+      first RP2350B link because Wingflight's existing `msc/usbd_storage*.c`
+      pulls STM32 USB-device headers (`usbd_msc_core.h` -> `usbd_conf.h`) rather
+      than TinyUSB-native types. Needs a deliberate TinyUSB storage adapter.
 - [ ] Port multicore support in two parts:
       1. **Straight port** (low risk): `platform/multicore.h`, `multicore.c`
          (queue-based `multicoreExecute()`/`multicoreExecuteBlocking()` RPC to
@@ -642,9 +650,9 @@ be invisible to STM32F4/F7/G4/H7 builds:
     unless `PICO_TRACE` is defined, so this is zero-cost by default.
   - Result: `bus_spi_pico.c`/`bus_spi.c` now compile with no errors of their
     own - the SPI-bus architecture blocker is fully resolved. The only
-    remaining errors touching these files are cascades from the still-open
-    IO-tag/pin-definition blocker (Phase 3, see above). STM32F405 re-verified
-    clean/isolated after every change in this round.
+     remaining errors touching these files are cascades from the still-open
+     IO-tag/pin-definition blocker (Phase 3, see above). STM32F405 re-verified
+     clean/isolated after every change in this round.
 
 ### Fifth build iteration — remaining core drivers (config storage, motor PWM,
     multicore, misc) fixed; error count driven from 7 down to 4, new UART
@@ -770,3 +778,37 @@ be invisible to STM32F4/F7/G4/H7 builds:
     or can be deferred/stubbed to hardware-UART-only initially) before
     editing starts. **Not investigated further yet.**
 
+### Sixth build iteration — first RP2350B linked image
+
+- Initialized the `lib/modules/pico-sdk` submodule recursively in this checkout;
+  the source tree previously had only the gitlink, so `hardware/*.h` includes
+  could not resolve locally.
+- Fixed RP2350-only build drift against pico-sdk 2.3.0: removed stale
+  `rp2_common/pico_stdio_usb/reset_interface.c`,
+  `common/pico_util/datetime.c`, and the incompatible pico-sdk
+  `pico_clib_interface/newlib_interface.c` shim from `PICO_LIB_SRC`; added the
+  missing `hardware_dcp/include` include directory; and changed
+  `pico_flash_mem_defaults.ld` comments from `#` to linker-script comments so
+  the current flat build can pass it directly to `ld`.
+- Added PICO-safe compatibility in shared code: BASEPRI intrinsics in
+  `build/atomic.h`, PICO `U_ID_0/1/2` aliases backed by `systemUniqueId`, PICO
+  no-op ITM printf init, guarded generic UART DMA byte-counting, guarded
+  generic SPI clock/divider and duplicate SPI DMA/pinconfig functions, and
+  fixed `system_rp2350.c` reset calls to pass Wingflight reset reasons.
+- Tightened RP2350 target bring-up flags: serial count is now USB VCP + two
+  hardware UARTs, I2C defaults use `I2C_FULL_RECONFIGURABILITY`, unsupported
+  STM32-timer features are disabled for now (`USE_PPM`, `USE_PWM`, camera
+  control, serial passthrough), and USB-MSC is temporarily deferred as noted in
+  Phase 5.
+- Added PICO-safe build fallbacks for optional/no-backend paths:
+  `adcinternal.c` returns `0` for core temperature when internal ADC support is
+  off, ACC/GYRO detection consume unused probe parameters when no sensor driver
+  is enabled, LED adjustment consumes its unused value without LED strip, and
+  `pg/servos.c` initializes servo IO tags to `IO_TAG_NONE` instead of querying
+  STM32 timer mappings while `flight/servos.c` skips the STM32 timer-output path.
+- Verification 2026-08-25: `make TARGET=RP2350B` now succeeds and produces
+  `obj/wingflight_4.6.0_RP2350B.hex`; `make TARGET=STM32F405` also succeeds,
+  confirming the shared-code guards did not break an existing STM32 target.
+- Remaining high-priority follow-ups: implement real PICO servo PWM output in
+  `flight/servos.c`, restore TinyUSB MSC with a PICO-native storage adapter,
+  add a `.uf2` post-build step, and validate RP2350B boot/USB/UART on hardware.

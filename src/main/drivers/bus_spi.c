@@ -102,6 +102,16 @@ bool spiInit(SPIDevice device)
     case SPIINVALID:
         return false;
 
+#if defined(PICO)
+    case SPIDEV_0:
+#ifdef USE_SPI_DEVICE_0
+        spiInitDevice(device);
+        return true;
+#else
+        break;
+#endif
+#endif
+
     case SPIDEV_1:
 #ifdef USE_SPI_DEVICE_1
         spiInitDevice(device);
@@ -345,6 +355,7 @@ uint8_t spiReadRegMsk(const extDevice_t *dev, uint8_t reg)
     return spiReadReg(dev, reg | 0x80);
 }
 
+#if !defined(PICO)
 uint16_t spiCalculateDivider(uint32_t freq)
 {
 #if defined(STM32F4) || defined(STM32G4) || defined(STM32F7)
@@ -376,6 +387,7 @@ uint32_t spiCalculateClock(uint16_t spiClkDivisor)
 
     return spiClk / spiClkDivisor;
 }
+#endif
 
 // Interrupt handler for SPI receive DMA completion
 void spiIrqHandler(const extDevice_t *dev)
@@ -541,14 +553,9 @@ bool spiSetBusInstance(extDevice_t *dev, uint32_t device)
     return true;
 }
 
+#if !defined(PICO)
 void spiInitBusDMA(void)
 {
-#if defined(PICO)
-    // PICO has its own spiInitBusDMA() in bus_spi_pico.c: pico-sdk DMA
-    // channels are freely assignable to any peripheral (no fixed
-    // per-pin DMAMUX request-map like the STM32 dmaGetChannelSpecByPeripheral()
-    // logic below), so this generic STM32-oriented implementation doesn't apply.
-#else
     uint32_t device;
 #if defined(STM32F4) && defined(USE_DSHOT_BITBANG)
     /* Check https://www.st.com/resource/en/errata_sheet/dm00037591-stm32f405407xx-and-stm32f415417xx-device-limitations-stmicroelectronics.pdf
@@ -672,8 +679,8 @@ void spiInitBusDMA(void)
             bus->dmaTx = (dmaChannelDescriptor_t *)NULL;
         }
     }
-#endif // !PICO
 }
+#endif
 
 void spiSetClkDivisor(const extDevice_t *dev, uint16_t divisor)
 {

@@ -112,6 +112,8 @@ void accResetRollAndPitchTrims(void)
 
 bool accDetect(accDev_t *dev, accelerationSensor_e accHardwareToUse)
 {
+    UNUSED(dev);
+
     accelerationSensor_e accHardware = ACC_NONE;
 
 #ifdef USE_ACC_ADXL345

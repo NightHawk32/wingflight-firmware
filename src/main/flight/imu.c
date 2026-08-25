@@ -96,7 +96,9 @@ static imuRuntimeConfig_t imuRuntimeConfig;
 
 float rMat[3][3];
 
+#ifdef USE_ACC
 STATIC_UNIT_TESTED bool attitudeIsEstablished = false;
+#endif
 
 // quaternion of sensor frame relative to earth frame
 STATIC_UNIT_TESTED quaternion q = QUATERNION_INITIALIZE;

@@ -35,9 +35,15 @@ PG_REGISTER_WITH_RESET_FN(servoConfig_t, servoConfig, PG_SERVO_CONFIG, 1);
 
 void pgResetFn_servoConfig(servoConfig_t *servoConfig)
 {
+#if defined(PICO)
+    for (unsigned i = 0; i < MAX_SUPPORTED_SERVOS; i++) {
+        servoConfig->ioTags[i] = IO_TAG_NONE;
+    }
+#else
     for (unsigned i = 0; i < MAX_SUPPORTED_SERVOS; i++) {
         servoConfig->ioTags[i] = timerioTagGetByUsage(TIM_USE_SERVO, i);
     }
+#endif
 }
 
 PG_REGISTER_ARRAY_WITH_RESET_FN(servoParam_t, MAX_SUPPORTED_SERVOS, servoParams, PG_SERVO_PARAMS, 1);

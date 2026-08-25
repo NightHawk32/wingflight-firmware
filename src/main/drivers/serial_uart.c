@@ -164,7 +164,7 @@ static uint32_t uartTotalRxBytesWaiting(const serialPort_t *instance)
 {
     const uartPort_t *uartPort = (const uartPort_t*)instance;
 
-#ifdef USE_DMA
+#if defined(USE_DMA) && !defined(PICO)
     if (uartPort->rxDMAResource) {
         // XXX Could be consolidated
 #ifdef USE_HAL_DRIVER
@@ -202,7 +202,7 @@ static uint32_t uartTotalTxBytesFree(const serialPort_t *instance)
         bytesUsed = uartPort->port.txBufferSize + uartPort->port.txBufferHead - uartPort->port.txBufferTail;
     }
 
-#ifdef USE_DMA
+#if defined(USE_DMA) && !defined(PICO)
     if (uartPort->txDMAResource) {
         /*
          * When we queue up a DMA request, we advance the Tx buffer tail before the transfer finishes, so we must add

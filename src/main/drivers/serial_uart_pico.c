@@ -314,4 +314,9 @@ void uartEnableTxInterrupt(uartPort_t *uartPort)
     hw_set_bits(&(uartHw->imsc), UART_UARTIMSC_TXIM_BITS);
 }
 
+void uartTryStartTxDMA(uartPort_t *s)
+{
+    UNUSED(s);
+}
+
 #endif // USE_UART

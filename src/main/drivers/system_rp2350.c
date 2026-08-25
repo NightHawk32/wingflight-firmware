@@ -156,7 +156,7 @@ void systemResetToBootloader(bootloaderRequestType_e requestType)
         break;
     case BOOTLOADER_REQUEST_FLASH:
     default:
-        systemReset();
+        systemReset(RESET_BOOTLOADER_REQUEST_FLASH);
     }
 }
 
@@ -262,7 +262,7 @@ void failureMode(failureMode_e mode)
     indicateFailure(mode, 10);
 
 #ifdef DEBUG
-    systemReset();
+    systemReset(RESET_BOOTLOADER_REQUEST_ROM);
 #else
     systemResetToBootloader(BOOTLOADER_REQUEST_ROM);
 #endif
@@ -279,4 +279,3 @@ void unusedPinsInit(void)
 {
     IOTraversePins(unusedPinInit);
 }
-

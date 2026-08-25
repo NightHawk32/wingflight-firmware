@@ -250,6 +250,8 @@ void gyroInitSensor(gyroSensor_t *gyroSensor, const gyroDeviceConfig_t *config)
 
 STATIC_UNIT_TESTED gyroHardware_e gyroDetect(gyroDev_t *dev)
 {
+    UNUSED(dev);
+
     gyroHardware_e gyroHardware = GYRO_DEFAULT;
 
     switch (gyroHardware) {

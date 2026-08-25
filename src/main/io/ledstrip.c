@@ -1334,4 +1334,3 @@ void set_ADJUSTMENT_LED_PROFILE(int value)
     UNUSED(value);
 #endif
 }
-
