@@ -217,16 +217,24 @@ void validateAndFixServoConfig(void)
 
 void servoInit(void)
 {
-    const ioTag_t *ioTags = servoConfig()->ioTags;
-    const timerHardware_t *timer[MAX_SUPPORTED_SERVOS];
-    uint32_t rates[MAX_SUPPORTED_SERVOS];
-    uint8_t index, jndex;
+    uint8_t index;
 
     for (index = 0; index < MAX_SUPPORTED_SERVOS; index++)
     {
         servoOutput[index] = servoParams(index)->mid;
         servoOverride[index] = SERVO_OVERRIDE_OFF;
     }
+
+#if defined(PICO)
+    // PICO servo PWM output needs a dedicated implementation; the STM32 timer
+    // path below relies on timerHardware_t alternate-function/timer fields.
+    servoCount = 0;
+    return;
+#else
+    const ioTag_t *ioTags = servoConfig()->ioTags;
+    const timerHardware_t *timer[MAX_SUPPORTED_SERVOS];
+    uint32_t rates[MAX_SUPPORTED_SERVOS];
+    uint8_t jndex;
 
     for (index = 0; index < MAX_SUPPORTED_SERVOS && ioTags[index]; index++)
     {
@@ -296,6 +304,7 @@ void servoInit(void)
 
         pwmOutConfig(&servoChannel[index], timer[index], timebase, timebase / update_rate, 0, 0);
     }
+#endif
 }
 
 void servoShutdown(void)

@@ -22,6 +22,29 @@
 
 #include <stdint.h>
 
+#if defined(PICO)
+#ifndef __ASM
+#define __ASM __asm
+#endif
+
+static inline uint32_t __get_BASEPRI(void)
+{
+    uint32_t basePri;
+    __ASM volatile ("\tMRS %0, basepri\n" : "=r" (basePri));
+    return basePri;
+}
+
+static inline void __set_BASEPRI(uint32_t basePri)
+{
+    __ASM volatile ("\tMSR basepri, %0\n" : : "r" (basePri) : "memory");
+}
+
+static inline void __set_BASEPRI_MAX(uint32_t basePri)
+{
+    __ASM volatile ("\tMSR basepri_max, %0\n" : : "r" (basePri) : "memory");
+}
+#endif
+
 #if !defined(UNIT_TEST)
 // BASEPRI manipulation functions
 // only set_BASEPRI is implemented in device library. It does always create memory barrier

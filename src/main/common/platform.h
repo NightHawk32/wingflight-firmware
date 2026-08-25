@@ -201,6 +201,13 @@ typedef int32_t IRQn_Type;
 // PICO has no equivalent startup header, so declare it here instead.
 extern uint32_t SystemCoreClock;
 
+// drivers/system_rp2350.c fills this from pico_get_unique_board_id(). Keep the
+// legacy U_ID_x macros used by CLI/MSP/radio code without including RP2350.h.
+extern uint32_t systemUniqueId[3];
+#define U_ID_0 systemUniqueId[0]
+#define U_ID_1 systemUniqueId[1]
+#define U_ID_2 systemUniqueId[2]
+
 #elif defined(SIMULATOR_BUILD)
 
 // Nop

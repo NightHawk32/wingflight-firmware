@@ -37,7 +37,7 @@
 
 #include "platform/multicore.h"
 
-#include "usb/usb_cdc.h"
+#include "drivers/usb_pico/usb_cdc.h"
 
 static vcpPort_t vcpPort = { 0 };
 

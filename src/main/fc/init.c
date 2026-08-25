@@ -240,6 +240,9 @@ static void sdCardAndFSInit(void)
 
 static void swdPinsInit(void)
 {
+#if defined(PICO)
+    return;
+#else
     IO_t io = IOGetByTag(DEFIO_TAG_E(PA13)); // SWDIO
     if (IOGetOwner(io) == OWNER_FREE) {
         IOInit(io, OWNER_SWD, 0);
@@ -252,6 +255,7 @@ static void swdPinsInit(void)
     if (IOGetOwner(io) == OWNER_FREE) {
         IOInit(io, OWNER_SWD, 0);
     }
+#endif
 }
 
 void init(void)

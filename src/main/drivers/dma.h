@@ -140,6 +140,8 @@ typedef enum {
 
 #define DMA_FIRST_HANDLER 1
 
+#include "platform/dma.h"
+
 #define DMA_DEVICE_NO(x)    (0)
 #define DMA_DEVICE_INDEX(x) ((x)-1)
 

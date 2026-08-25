@@ -70,6 +70,7 @@
 // docs/RP2350-Porting-Plan.md.
 #define USE_UART1
 #define USE_UART2
+#define SERIAL_PORT_COUNT 3 // USB VCP + 2 hardware UARTs
 
 #define USE_SPI
 #define SPIDEV_COUNT 2
@@ -80,15 +81,18 @@
 #define QUADSPIDEV_COUNT 1
 
 #define USE_I2C
+#define I2C_FULL_RECONFIGURABILITY
 #define I2CDEV_COUNT 2
 #define USE_I2C_DEVICE_0
 #define USE_I2C_DEVICE_1
 
 #define USE_ADC
 
+#define USE_ACC
+
 #define USE_VCP
 
-#define USE_USB_MSC
+#undef USE_USB_MSC
 
 #define USE_SERIALRX_SBUS
 
@@ -156,11 +160,19 @@
 // Various untested or unsupported elements are undefined below
 
 #undef USE_RX_SPI
+#undef USE_BARO
+#undef USE_COMPASS
+#undef USE_GYRO_REGISTER_DUMP
+#undef USE_GPS_RESCUE
+#undef USE_GPS_NAV
+#undef USE_PPM
+#undef USE_PWM
 #undef USE_RX_PWM
 #undef USE_RX_PPM
 #undef USE_RX_CC2500
 #undef USE_RX_EXPRESSLRS
 #undef USE_RX_SX1280
+#undef USE_SERIALRX_CRSF
 #undef USE_SERIALRX_GHST
 #undef USE_SERIALRX_IBUS
 #undef USE_SERIALRX_JETIEXBUS
@@ -180,10 +192,16 @@
 #undef USE_TELEMETRY_MAVLINK
 #undef USE_TELEMETRY_SMARTPORT
 #undef USE_TELEMETRY_SRXL
+#undef USE_TELEMETRY_CRSF
+#undef USE_TELEMETRY_SBUS2
+#undef USE_TELEMETRY_CASTLE
+#undef USE_SPORT_MASTER
+#undef USE_BLACKBOX
 
 #undef USE_SERIAL_4WAY_BLHELI_INTERFACE
 #undef USE_SERIAL_4WAY_BLHELI_BOOTLOADER
 #undef USE_SERIAL_4WAY_SK_BOOTLOADER
+#undef USE_SERIAL_PASSTHROUGH
 #undef USE_MULTI_GYRO
 
 #undef USE_RANGEFINDER_HCSR04
@@ -193,6 +211,6 @@
 #undef USE_SPEKTRUM
 #undef USE_SPEKTRUM_BIND
 
-#undef USE_SERIAL_PASSTHROUGH
+#undef USE_CAMERA_CONTROL
 
 #undef USE_RPM_LIMIT

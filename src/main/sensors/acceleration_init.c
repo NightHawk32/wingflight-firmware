@@ -112,6 +112,8 @@ void accResetRollAndPitchTrims(void)
 
 bool accDetect(accDev_t *dev, accelerationSensor_e accHardwareToUse)
 {
+    UNUSED(dev);
+
     accelerationSensor_e accHardware = ACC_NONE;
 
 #ifdef USE_ACC_ADXL345
@@ -380,7 +382,11 @@ bool accInit(uint16_t accSampleRateHz)
     acc.sampleRateHz = accSampleRateHz;
 
     // Valid key can't be 0 or 1
+#if defined(PICO)
+    accelerationRuntime.calibrationKey = (crc16_ccitt_update(0, (void *)systemUniqueId, sizeof(systemUniqueId)) % 65521) + 2;
+#else
     accelerationRuntime.calibrationKey = (crc16_ccitt_update(0, (void *)UID_BASE, 12) % 65521) + 2;
+#endif
 
     accInitFilters();
 

@@ -85,7 +85,6 @@ PICO_LIB_SRC = \
             rp2_common/hardware_xosc/xosc.c \
             common/pico_sync/sem.c \
             common/pico_time/timeout_helper.c \
-            common/pico_util/datetime.c \
             common/pico_util/pheap.c \
             common/pico_util/queue.c \
             rp2350/pico_platform/platform.c \
@@ -98,13 +97,11 @@ PICO_LIB_SRC = \
             rp2_common/hardware_vreg/vreg.c \
             rp2_common/hardware_xip_cache/xip_cache.c \
             rp2_common/pico_standard_binary_info/standard_binary_info.c \
-            rp2_common/pico_clib_interface/newlib_interface.c \
             rp2_common/pico_malloc/malloc.c \
             rp2_common/pico_stdlib/stdlib.c \
             rp2_common/pico_bit_ops/bit_ops_aeabi.S \
             rp2_common/pico_stdio/stdio.c \
             rp2_common/pico_printf/printf.c \
-            rp2_common/pico_stdio_usb/reset_interface.c \
             rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.c \
             rp2_common/pico_float/float_common_m33.S \
             rp2_common/pico_float/float_conv32_vfp.S \
@@ -163,6 +160,9 @@ PICO_MEM_LD_FLAGS = $(foreach fn, $(PICO_MEM_WRAP_FNS), -Wl,--wrap=$(fn))
 EXTRA_LD_FLAGS += $(PICO_STDIO_LD_FLAGS) $(PICO_FLOAT_LD_FLAGS) $(PICO_DOUBLE_LD_FLAGS) $(PICO_BIT_OPS_LD_FLAGS) $(PICO_MEM_LD_FLAGS)
 
 INCLUDE_DIRS += \
+            $(ROOT)/src/main/drivers \
+            $(ROOT)/lib/main/STM32_USB_Device_Library/Core/inc \
+            $(ROOT)/lib/main/STM32_USB_Device_Library/Class/msc/inc \
             $(ROOT)/src/main/drivers/rp2350_config
 
 SYS_INCLUDE_DIRS = \
@@ -192,6 +192,7 @@ SYS_INCLUDE_DIRS = \
             $(SDK_DIR)/rp2_common/hardware_pio/include \
             $(SDK_DIR)/rp2_common/pico_platform_compiler/include \
             $(SDK_DIR)/rp2_common/hardware_divider/include \
+            $(SDK_DIR)/rp2_common/hardware_dcp/include \
             $(SDK_DIR)/rp2_common/pico_bootsel_via_double_reset/include \
             $(SDK_DIR)/rp2_common/hardware_powman/include \
             $(SDK_DIR)/rp2_common/hardware_flash/include \
@@ -385,7 +386,6 @@ MCU_COMMON_SRC = \
             drivers/gyro_clkin_pico.c \
             drivers/system_rp2350.c \
             drivers/serial_uart_pico.c \
-            drivers/usb_pico/usb_msc_pico.c \
             drivers/multicore.c \
             drivers/io_pico.c
 
@@ -403,16 +403,14 @@ MCU_COMMON_SRC = \
 MCU_EXCLUDES = \
             drivers/persistent.c \
             drivers/system.c \
+            drivers/exti.c \
+            drivers/rcc.c \
+            drivers/rx/rx_pwm.c \
             drivers/timer.c \
             drivers/timer_common.c \
             drivers/dma_reqmap.c
 
-MSC_SRC = \
-            drivers/usb_msc_common.c \
-            msc/usbd_storage.c \
-            msc/usbd_storage_emfat.c \
-            msc/emfat.c \
-            msc/emfat_file.c
+MSC_SRC :=
 
 DEVICE_STDPERIPH_SRC := \
             $(PICO_LIB_SRC) \

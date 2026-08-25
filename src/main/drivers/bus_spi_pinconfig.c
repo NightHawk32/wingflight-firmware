@@ -37,6 +37,7 @@
 
 #include "pg/bus_spi.h"
 
+#if !defined(PICO)
 const spiHardware_t spiHardware[] = {
 #ifdef STM32F4
     {
@@ -343,7 +344,9 @@ const spiHardware_t spiHardware[] = {
     },
 #endif
 };
+#endif
 
+#if !defined(PICO)
 void spiPinConfigure(const spiPinConfig_t *pConfig)
 {
     for (size_t hwindex = 0 ; hwindex < ARRAYLEN(spiHardware) ; hwindex++) {
@@ -390,4 +393,5 @@ void spiPinConfigure(const spiPinConfig_t *pConfig)
         }
     }
 }
+#endif
 #endif

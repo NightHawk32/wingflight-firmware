@@ -200,16 +200,23 @@ void printfSerialInit(serialPortIdentifier_e port, uint32_t baudRate, portOption
     stdout_putf = serial_putc;
 }
 
+#if !defined(PICO)
 static void itm_putc(void *p, char c)
 {
     UNUSED(p);
     ITM_SendChar(c);
 }
+#endif
 
 void printfITMInit(void)
 {
+#if !defined(PICO)
     stdout_putp = ITM;
     stdout_putf = itm_putc;
+#else
+    stdout_putp = NULL;
+    stdout_putf = NULL;
+#endif
 }
 
 int tfp_printf(const char *fmt, ...)
@@ -225,4 +232,3 @@ int tfp_printf(const char *fmt, ...)
 
     return written;
 }
-
