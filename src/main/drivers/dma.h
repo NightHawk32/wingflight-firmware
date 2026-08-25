@@ -128,6 +128,36 @@ typedef enum {
 #define DMA_IT_DMEIF        ((uint32_t)0x00000004)
 #define DMA_IT_FEIF         ((uint32_t)0x00000001)
 
+#elif defined(PICO)
+
+// RP2350/RP2354: pico-sdk's DMA channels are flat-numbered (no stream/device
+// split like STM32), so dmaIdentifier_e only needs DMA_NONE - the actual
+// per-channel constants (DMA_CH0_HANDLER..DMA_CH15_HANDLER) are defined in
+// platform/dma.h from DMA_FIRST_HANDLER, mirroring betaflight's PICO port.
+typedef enum {
+    DMA_NONE = 0,
+} dmaIdentifier_e;
+
+#define DMA_FIRST_HANDLER 1
+
+#define DMA_DEVICE_NO(x)    (0)
+#define DMA_DEVICE_INDEX(x) ((x)-1)
+
+#define DEFINE_DMA_CHANNEL(c) { \
+    .dma = NULL, \
+    .ref = NULL, \
+    .channel = (c)-1, \
+    .irqHandlerCallback = NULL, \
+    .flagsShift = 0, \
+    .irqN = 0, \
+    .userParam = 0, \
+    .owner.owner = 0, \
+    .owner.resourceIndex = 0 \
+    }
+
+#define DMA_CLEAR_FLAG(d, flag) do { (void)(d); (void)(flag); } while (0)
+#define DMA_GET_FLAG_STATUS(d, flag) ((void)(d), (void)(flag), 0)
+
 #else
 
 #if defined(STM32G4)

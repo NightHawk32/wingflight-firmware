@@ -108,6 +108,53 @@
 #define STM32F4
 #endif
 
+#elif defined(PICO)
+
+#include <stdint.h>
+
+// RP2350/RP2354 (Raspberry Pi Pico 2 family). Individual pico-sdk headers
+// (hardware/gpio.h, pico/stdlib.h, ...) are included directly by the *_pico.c
+// driver files that need them, rather than centrally here.
+//
+// NOTE: deliberately NOT including the CMSIS device header (RP2350.h) here -
+// it `#define`s the same peripheral base-address macros (SIO_BASE, PPB_BASE,
+// ...) that pico-sdk's own hardware/regs/addressmap.h also defines, and the
+// two conflict (redefinition errors) when both end up in the same
+// translation unit. pico-sdk's own driver API (hardware/irq.h etc.) uses
+// plain ints for IRQ numbers, not CMSIS's IRQn_Type enum, so it isn't needed.
+
+// Wingflight's shared driver bookkeeping structs (io_impl.h's ioRec_t,
+// bus_i2c_impl.h's i2cDevice_t, adc.h/dma.h) use STM32-style register-block
+// pointer types and the CMSIS IRQn_Type enum purely for bookkeeping
+// fields/signatures that the PICO drivers (io_pico.c, bus_i2c_pico.c, ...)
+// never dereference - pico-sdk uses flat GPIO/peripheral-instance numbers and
+// plain-int IRQ numbers instead. Declare these as opaque/placeholder types so
+// the shared structs/declarations still compile unmodified for PICO.
+typedef void GPIO_TypeDef;
+typedef void I2C_TypeDef;
+typedef void ADC_TypeDef;
+typedef void DMA_TypeDef;
+typedef void SPI_TypeDef;
+// used by-value (not just by pointer) in drivers/bus.h, so it must be a
+// complete type, unlike the opaque `void` placeholders above.
+typedef struct DMA_InitTypeDef_s { uint32_t _unused_on_pico; } DMA_InitTypeDef;
+typedef int32_t IRQn_Type;
+
+// TODO: Chip Unique ID - use pico-sdk's pico_get_unique_board_id() instead of U_ID_x.
+
+// Ported *_pico.c driver files store their pico-sdk peripheral pointers in
+// the shared, platform-agnostic bookkeeping structs as opaque
+// i2cResource_t*/spiResource_t*/DMA_TypeDef* fields, then cast back to the
+// real pico-sdk instance type (i2c_inst_t*/spi_inst_t*/uart_inst_t*) via
+// these macros before calling into pico-sdk. Mirrors betaflight's own
+// PICO platform/platform.h macros of the same name.
+#include "hardware/i2c.h"
+#include "hardware/spi.h"
+#include "hardware/uart.h"
+#define I2C_INST(i2c)  ((i2c_inst_t *)(i2c))
+#define SPI_INST(spi)  ((spi_inst_t *)(spi))
+#define UART_INST(uart) ((uart_inst_t *)(uart))
+
 #elif defined(SIMULATOR_BUILD)
 
 // Nop
