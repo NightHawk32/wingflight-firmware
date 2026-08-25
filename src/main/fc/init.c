@@ -148,6 +148,7 @@
 
 #include "rx/rx.h"
 #include "rx/spektrum.h"
+#include "rx/srxl2.h"
 
 #include "scheduler/scheduler.h"
 
@@ -529,6 +530,10 @@ void init(void)
 
 #ifdef USE_SERIAL_PRINTF
     printfSerialInit(PRINTF_SERIAL_PORT, PRINTF_SERIAL_SPEED, PRINTF_SERIAL_OPTIONS);
+#endif
+
+#ifdef USE_SERIALRX_SRXL2
+    srxl2RxEarlyInit(rxConfig());
 #endif
 
     mixerInit();
