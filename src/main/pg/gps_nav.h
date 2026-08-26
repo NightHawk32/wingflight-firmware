@@ -15,20 +15,27 @@
  * along with this software. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#pragma once
+
 #include "types.h"
 #include "platform.h"
 
-#ifdef USE_OSD
+#include "pg/pg.h"
 
-#include "pg/pg_ids.h"
-#include "pg/osd.h"
+typedef enum {
+    NAV_LOITER_CW = 0,
+    NAV_LOITER_CCW,
+} navLoiterDirection_e;
 
-extern void pgResetFn_osdConfig(osdConfig_t *osdConfig);
+typedef struct {
+    uint16_t    loiterRadiusM;      // meters
+    uint8_t     loiterDirection;    // navLoiterDirection_e
+    uint16_t    rthAltitudeM;       // meters, above the altitude recorded at arm
+    uint8_t     minSats;
+    uint8_t     maxBankAngleDeg;
+    uint8_t     maxPitchAngleDeg;
+    uint16_t    bearingKp;          // centidegrees of bank per degree of bearing error
+    uint16_t    altitudeKp;         // centidegrees of pitch per meter of altitude error
+} gpsNavConfig_t;
 
-PG_REGISTER_WITH_RESET_FN(osdConfig_t, osdConfig, PG_OSD_CONFIG, 9);
-
-extern void pgResetFn_osdElementConfig(osdElementConfig_t *osdElementConfig);
-
-PG_REGISTER_WITH_RESET_FN(osdElementConfig_t, osdElementConfig, PG_OSD_ELEMENT_CONFIG, 0);
-
-#endif
+PG_DECLARE(gpsNavConfig_t, gpsNavConfig);
