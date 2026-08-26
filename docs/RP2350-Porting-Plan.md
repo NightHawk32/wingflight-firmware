@@ -873,3 +873,49 @@ be invisible to STM32F4/F7/G4/H7 builds:
 - Not done: no on-hardware BOOTSEL flash test yet (no hardware available in
   this environment) — the UF2 has not been drag-and-drop verified against a
   real RP2350/RP2354 board, only structurally validated.
+
+### Ninth iteration (2026-08-26) — CI coverage + IOConfigGPIO open-drain
+
+- Added `RP2350A`/`RP2350B`/`RP2354A`/`RP2354B` to `.github/workflows/pr.yml`
+  and `push.yml` (recursive submodule checkout added so `pico-sdk` is
+  present, plus a dedicated `make TARGET=RP2350B uf2` step and updated
+  artifact glob/upload paths). This is exactly the check that would have
+  caught the RP2354 ADC/I2C/SPI/UART pin-macro build break fixed in the
+  seventh iteration - verified locally by running the same invocations CI
+  uses (`make RP2350A RP2350B RP2354A RP2354B FLASH_CONFIG_ERASE=yes`, etc.)
+  before committing the workflow changes.
+- Fixed `IOConfigGPIO()` in `io_pico.c`, which had a stale header comment
+  claiming pull-up/pull-down were unimplemented (they were actually already
+  wired via `gpio_set_pulls()`) but which genuinely never implemented
+  open-drain: `IOCFG_OUT_OD`/`IOCFG_AF_OD` were bit-identical to their
+  push-pull counterparts, so RP2 GPIO would always be configured push-pull
+  regardless of the caller's request. This matters for real correctness, not
+  just style: `drivers/bus_i2c_utils.c`'s `i2cUnstick()` (shared I2C bus
+  recovery routine, used whenever an I2C peripheral needs to bit-bang its way
+  out of a stuck bus) explicitly reconfigures SCL/SDA as `IOCFG_OUT_OD` and
+  relies on `IORead()` seeing a peer's clock-stretching hold-low - which is
+  impossible if the pin is actually driven push-pull.
+  - Added a 4th open-drain bit to PICO's `IO_CONFIG()` encoding in
+    `drivers/io.h` (RP2 has no native open-drain output mode, unlike STM32's
+    `GPIO_OType_OD`), and implemented emulation in `io_pico.c` via direction
+    toggling: "high"/released now switches the pin to input (floats up via
+    pull-up), "low" drives output with the value pre-set to 0 before enabling
+    the output driver (glitch-free). Tracked per-pin in a new static
+    `pinOpenDrain[]` array indexed by raw GPIO number.
+  - Also fixed a related bug in the same function: `IOConfigGPIO()` only
+    forced GPIO_FUNC_SIO when the pin's current function was `GPIO_FUNC_NULL`
+    (never-yet-initialized); if a pin was already routed to a peripheral
+    function (e.g. `GPIO_FUNC_I2C`, exactly the case `i2cUnstick()` hits when
+    reclaiming SCL/SDA from the hardware I2C block), it only printed a
+    warning and left the peripheral function in place, silently making the
+    subsequent `gpio_put()`/`gpio_set_dir()` calls no-ops on the actual pin.
+    Now unconditionally switches to `GPIO_FUNC_SIO`, matching
+    `IOConfigGPIO()`'s contract on every other platform (STM32's version
+    unconditionally reclaims the pin from AF too).
+- Verification 2026-08-26: clean rebuilds of all four RP2350/RP2354 targets
+  and `STM32F405` (to confirm the shared `io.h` change doesn't affect
+  non-PICO platforms, which use a different `IO_CONFIG()` overload) all
+  succeed. Not hardware-tested (no board available) - the open-drain
+  emulation logic was verified by inspection against pico-sdk's
+  `gpio_set_dir`/`gpio_put`/`gpio_get` semantics and against `i2cUnstick()`'s
+  actual usage pattern, not on a scope.

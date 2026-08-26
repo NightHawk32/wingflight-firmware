@@ -84,23 +84,25 @@
 
 #elif defined(PICO)
 
-// PICO GPIO config is direction (bit 0) + pull state (bits 1-2): pico-sdk has
-// no register-level pull-up/down "mode" constants to reuse (unlike
-// STM32's GPIO_PuPd_*/GPIO_PULLUP - it just takes two plain bools via
-// gpio_set_pulls()), so IOConfigGPIO() (io_pico.c) decodes this directly.
-#define IO_CONFIG(dir, pullup, pulldown) ((dir) | ((pullup) << 1) | ((pulldown) << 2))
+// PICO GPIO config is direction (bit 0) + pull state (bits 1-2) + open-drain
+// (bit 3): pico-sdk has no register-level pull-up/down or open-drain "mode"
+// constants to reuse (unlike STM32's GPIO_PuPd_*/GPIO_OType_OD - it just
+// takes two plain bools via gpio_set_pulls(), and has no open-drain output
+// mode at all), so IOConfigGPIO() (io_pico.c) decodes this directly and
+// emulates open-drain by toggling direction (see IOHi/IOLo/IOWrite there).
+#define IO_CONFIG(dir, pullup, pulldown, opendrain) ((dir) | ((pullup) << 1) | ((pulldown) << 2) | ((opendrain) << 3))
 
-# define IOCFG_OUT_PP         IO_CONFIG(1, 0, 0)
-# define IOCFG_OUT_PP_UP      IO_CONFIG(1, 1, 0)
-# define IOCFG_OUT_OD         IO_CONFIG(1, 0, 0)
-# define IOCFG_AF_PP          IO_CONFIG(1, 0, 0)
-# define IOCFG_AF_PP_UP       IO_CONFIG(1, 1, 0)
-# define IOCFG_AF_PP_PD       IO_CONFIG(1, 0, 1)
-# define IOCFG_AF_OD          IO_CONFIG(1, 0, 0)
-# define IOCFG_AF_OD_UP       IO_CONFIG(1, 1, 0)
-# define IOCFG_IPD            IO_CONFIG(0, 0, 1)
-# define IOCFG_IPU            IO_CONFIG(0, 1, 0)
-# define IOCFG_IN_FLOATING    IO_CONFIG(0, 0, 0)
+# define IOCFG_OUT_PP         IO_CONFIG(1, 0, 0, 0)
+# define IOCFG_OUT_PP_UP      IO_CONFIG(1, 1, 0, 0)
+# define IOCFG_OUT_OD         IO_CONFIG(1, 0, 0, 1)
+# define IOCFG_AF_PP          IO_CONFIG(1, 0, 0, 0)
+# define IOCFG_AF_PP_UP       IO_CONFIG(1, 1, 0, 0)
+# define IOCFG_AF_PP_PD       IO_CONFIG(1, 0, 1, 0)
+# define IOCFG_AF_OD          IO_CONFIG(1, 0, 0, 1)
+# define IOCFG_AF_OD_UP       IO_CONFIG(1, 1, 0, 1)
+# define IOCFG_IPD            IO_CONFIG(0, 0, 1, 0)
+# define IOCFG_IPU            IO_CONFIG(0, 1, 0, 0)
+# define IOCFG_IN_FLOATING    IO_CONFIG(0, 0, 0, 0)
 
 #else
 # warning "Unknown TARGET"
