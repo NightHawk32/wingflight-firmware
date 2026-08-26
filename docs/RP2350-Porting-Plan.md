@@ -1434,3 +1434,81 @@ this branch.
    - RAM watch: RP2350B is now at 78.6% RAM (412KB/512KB) with everything
      enabled (sensors, MSC+emfat, blackbox, LED strip, 4way). Still
      headroom, but the next big feature should check this first.
+
+### Seventeenth iteration (2026-08-26) — core-1 task consumer + PIO UARTs (as soft serial)
+
+Both remaining deferred items landed. Verified by clean builds of all four
+RP2350/RP2354 targets and all four STM32 families (byte-identical STM32
+`.elf` sizes), plus a clean `USE_MULTICORE` configuration build. Not
+hardware-tested, as with everything on this branch.
+
+**Multicore task consumer (drivers/multicore.c, platform/multicore.h,
+drivers/multicore_ringbuffer.h, drivers/dma_pico.c):**
+- Found and fixed a genuine bug in the existing `DMA_IRQ_CORE_NUM 1`
+  affinity feature: each Cortex-M33 core has its own independent NVIC, but
+  `dmaSetHandler()` called `irq_set_enabled(DMA_IRQ_1, ...)` from whatever
+  core ran peripheral init (core 0) - which unmasks the IRQ on *core 0's*
+  NVIC, so DMA completions would never have been serviced on core 1 at all.
+  `dmaSetHandler()` now only self-enables when target core == calling core,
+  and core 1 unmasks DMA_IRQ_1 for itself once at startup via a new
+  `dmaCore1IrqInit()` called from `core1_main()`. With this, the
+  already-designed "DMA ISRs off core 0" offload actually works.
+- Implemented the design section's consumer machinery: a generic lock-free
+  SPSC byte ring buffer (`drivers/multicore_ringbuffer.h`, head
+  producer-owned / tail consumer-owned, atomic 16-bit loads on M33,
+  power-of-two capacity), `multicoreRegisterConsumer(drainFn, ctx)` (up to
+  4 consumers), a round-robin pump in `core1_main()` (one bounded drain
+  call per consumer per pass, so nothing starves the RPC queue), and a
+  `multicoreGetHeartbeat()` counter for core-0-side wedged-core-1
+  detection. Non-multicore builds get inert fallbacks (register returns
+  false, heartbeat 0). No consumer is registered yet - wiring the first
+  real producer (blackbox flush or MSC block I/O) is the next increment and
+  touches shared subsystem code, so it is deliberately a separate step.
+
+**PIO extra UARTs, implemented as PICO's soft serial
+(drivers/serial_softserial_pico.c):**
+- Key architecture decision that dissolved the "extend the shared serial
+  identifier system across ~10 files" problem: PIO UARTs fill the existing
+  SOFTSERIAL1/SOFTSERIAL2 slots instead of being a new port class. All the
+  shared machinery - `SERIAL_PORT_SOFTSERIAL1/2` identifiers,
+  `resource SERIAL_TX/RX 11|12 <pin>` CLI mapping
+  (serialPinConfig()->ioTagTx/Rx[RESOURCE_SOFT_OFFSET+n]), MSP port
+  reporting, io/serial.c's openSoftSerial() dispatch - already exists and
+  is exercised daily on STM32. Semantically honest too: soft serial *means*
+  "extra bit-banged serial port", which is exactly what a PIO UART is,
+  except clocked by PIO hardware (8 cycles/bit at clk_sys, so unlike STM32
+  soft serial it is not limited to low baud rates).
+- The driver reuses pico-examples' uart_tx.pio/uart_rx.pio programs (the
+  canonical 4-instruction TX with optional side-set for start/stop bits,
+  9-instruction RX with mid-bit sampling and stop-bit check; encodings
+  re-derived and verified against pioasm's side-set bit layout). One TX +
+  one RX program loaded once on the PIO_UART_INDEX block (pio1), shared by
+  both ports' state machines (2 ports x TX+RX = 4 SMs max = the whole
+  block).
+- Interrupt model mirrors a hardware UART driver so serial-RX providers
+  that need the per-byte rxCallback from interrupt context (SBUS etc.)
+  work unchanged: the block's IRQ0 services RX-FIFO-not-empty per active
+  RX SM (drain to ring buffer or rxCallback; RX bytes arrive in bits 31:24
+  after the shift-right-8 program, read via >>24), and TX-FIFO-not-full is
+  toggled like a classic TXE interrupt (unmasked by serialWrite() when the
+  ring holds data, masked again by the ISR once drained - it's
+  level-triggered, so it must not stay enabled while idle).
+- `SERIAL_INVERTED` is supported for free via RP2350's pad-level
+  input/output override inverters (gpio_set_inover()/gpio_set_outover()),
+  with the RX pull resistor biased to the *physical* idle level (pull-down
+  when inverted, since the inverter sits after the pad). `SERIAL_BIDIR`
+  (single-wire half-duplex, e.g. SmartAudio) is NOT supported -
+  openSoftSerial() refuses it explicitly rather than misbehaving; needs
+  TX/RX SM direction-handover on one pin, future work.
+- Wiring: `USE_SOFTSERIAL1/2` defined in RP2350_UNIFIED/target.h
+  (SERIAL_PORT_COUNT 3 -> 5), `drivers/serial_softserial.c` (the STM32
+  timer-based implementation, which needs timerAllocate()) excluded via
+  MCU_EXCLUDES, the PICO file added to MCU_COMMON_SRC. Framing errors
+  flagged by the RX program (`irq nowait 4 rel`) are cleared and otherwise
+  ignored. 8N1 only, matching the PIO programs.
+- RAM after this iteration: RP2350B 79.4% (416KB/512KB) - the watch from
+  the sixteenth iteration stands; the next feature should budget-check
+  first.
+- The PIO_UART_INDEX comment in target.h still said "NOT implemented" -
+  superseded by this iteration (pio1 is now genuinely the soft-serial
+  block).

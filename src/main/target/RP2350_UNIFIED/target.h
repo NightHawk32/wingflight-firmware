@@ -70,7 +70,14 @@
 // docs/RP2350-Porting-Plan.md.
 #define USE_UART1
 #define USE_UART2
-#define SERIAL_PORT_COUNT 3 // USB VCP + 2 hardware UARTs
+// "Soft serial" on PICO = extra UARTs bit-banged by PIO state machines
+// (drivers/serial_softserial_pico.c) on the PIO_UART_INDEX block - not
+// timer-interrupt bit-banging like STM32, so they are not limited to low
+// baud rates. Pins via the standard CLI resources (resource SERIAL_TX/RX
+// 11 and 12).
+#define USE_SOFTSERIAL1
+#define USE_SOFTSERIAL2
+#define SERIAL_PORT_COUNT 5 // USB VCP + 2 hardware UARTs + 2 PIO soft serial
 
 #define USE_SPI
 #define SPIDEV_COUNT 2
@@ -176,8 +183,6 @@
 
 #define USE_SERIALRX_SBUS
 
-#undef USE_SOFTSERIAL1
-#undef USE_SOFTSERIAL2
 #undef USE_TRANSPONDER
 #undef USE_TIMER
 #undef USE_RCC
@@ -209,11 +214,8 @@
 #define PIO_DSHOT_INDEX    0
 #endif
 
-// Reserved for PIO-based extra UARTs - NOT implemented: serial is hardware
-// uart0/uart1 only (serial_uart_pico.c). The earlier PIO-UART port was
-// abandoned (upstream's ~1200-line uart/ subsystem is built on Betaflight's
-// newer uartDevice_t serial architecture); see docs/RP2350-Porting-Plan.md
-// for the deliberate deferral rationale.
+// PIO block hosting the soft-serial UARTs (SOFTSERIAL1/2, up to 4 state
+// machines: 2 ports x TX+RX) - see drivers/serial_softserial_pico.c.
 #ifndef PIO_UART_INDEX
 #define PIO_UART_INDEX     1
 #endif
