@@ -2111,11 +2111,15 @@ static bool mspProcessOutCommand(int16_t cmdMSP, sbuf_t *dst)
         // gets selected -- see fbusXactTrackServo()/xactAdvanceReadField() in fbus_xact.c), so
         // Channel is usually already available here without the GUI needing to select a servo
         // first.
-        // Response format: count, then count * (phyID, appIdOffset, conflict, ready, channel)
+        // Response format: count, then count * (phyID, appIdOffset, conflict, duplicateAppId,
+        //                  ready, channel)
         // appIdOffset/channel read as 0 until ready is 1 -- see
         // fbusXactRequestParamsRead()/fbusXactIsServoParamsReady() in fbus_xact.h.
         // conflict is 1 if this Physical ID has answered with more than one App ID, meaning
         // two servos most likely share it and are colliding on the bus (see fbus_xact.h).
+        // duplicateAppId is 1 if another discovered servo (a different Physical ID) shares
+        // this one's App ID -- writes to either are refused until this is resolved, see
+        // fbusXactHasDuplicateAppId() in fbus_xact.h.
         {
             const uint8_t count = fbusMasterIsEnabled() ? fbusXactGetDiscoveredServoCount() : 0;
             sbufWriteU8(dst, count);
@@ -2127,6 +2131,7 @@ static bool mspProcessOutCommand(int16_t cmdMSP, sbuf_t *dst)
                 sbufWriteU8(dst, phyID);
                 sbufWriteU8(dst, params.appIdOffset);
                 sbufWriteU8(dst, fbusXactHasServoConflict(phyID) ? 1 : 0);
+                sbufWriteU8(dst, fbusXactHasDuplicateAppId(phyID) ? 1 : 0);
                 sbufWriteU8(dst, fbusXactIsServoParamsReady(phyID) ? 1 : 0);
                 sbufWriteU8(dst, params.channel);
             }
@@ -2251,20 +2256,26 @@ static mspResult_e mspFcProcessOutCommandWithArg(mspDescriptor_t srcDesc, int16_
         // completed yet, so the caller should keep polling this until "ready" comes back 1.
         // Field set mirrors FrSky's own "XAct" ETHOS Device Config Lua script.
         // Request format: phyID
-        // Response format: ready, conflict, phyID, appIdOffset, firmwareVersion, dataRate,
-        //                  range, direction, pulseType, channel, center(signed), holdingStrength,
-        //                  operationSmoothing, deadband, hasExtendedParams, workingMode, maxAngle
+        // Response format: ready, conflict, duplicateAppId, phyID, appIdOffset, firmwareVersion,
+        //                  dataRate, range, direction, pulseType, channel, center(signed),
+        //                  holdingStrength, operationSmoothing, deadband, hasExtendedParams,
+        //                  workingMode, maxAngle
+        // duplicateAppId is 1 if another discovered servo shares this one's App ID -- see
+        // fbusXactHasDuplicateAppId() in fbus_xact.h. Saving is refused while this is true,
+        // unless the save is itself changing App ID to something now-unique.
         {
             xactServoParams_t params;
             memset(&params, 0, sizeof(params));
             bool ready = false;
             bool conflict = false;
+            bool duplicateAppId = false;
 
             if (fbusMasterIsEnabled() && sbufBytesRemaining(src) >= 1) {
                 const uint8_t phyID = sbufReadU8(src);
                 if (fbusXactGetServoParams(phyID, &params)) {
                     ready = fbusXactIsServoParamsReady(phyID);
                     conflict = fbusXactHasServoConflict(phyID);
+                    duplicateAppId = fbusXactHasDuplicateAppId(phyID);
                     if (!ready) {
                         fbusXactRequestParamsRead(phyID);
                     }
@@ -2273,6 +2284,7 @@ static mspResult_e mspFcProcessOutCommandWithArg(mspDescriptor_t srcDesc, int16_
 
             sbufWriteU8(dst, ready ? 1 : 0);
             sbufWriteU8(dst, conflict ? 1 : 0);
+            sbufWriteU8(dst, duplicateAppId ? 1 : 0);
             sbufWriteU8(dst, params.physicalId);          // 0x00
             sbufWriteU8(dst, params.appIdOffset);         // 0x01
             sbufWriteU8(dst, params.firmwareVersion);     // 0xFE, read-only

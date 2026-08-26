@@ -146,10 +146,18 @@ bool fbusXactRequestParamsRead(uint8_t phyID);
 // colliding on the bus, rather than there being one servo at this address.
 bool fbusXactHasServoConflict(uint8_t phyID);
 
+// Check whether another discovered servo (a different Physical ID) shares this one's App ID.
+// XACT write/read commands are addressed by App ID, not exclusively by Physical ID -- real
+// hardware testing confirmed that two servos sharing an App ID BOTH act on a command meant for
+// just one of them, regardless of their (different) Physical IDs. fbusXactCompareAndWriteParams
+// refuses to write while this is true, rather than silently reprogramming the wrong servo(s).
+bool fbusXactHasDuplicateAppId(uint8_t phyID);
+
 // Set a specific servo parameter field
 bool fbusXactSetServoParam(uint8_t phyID, uint8_t fieldId, uint16_t appId, uint16_t data);
 
-// Compare and write all parameters if different from cache
+// Compare and write all parameters if different from cache. Returns false (no writes sent)
+// without changing anything if fbusXactHasDuplicateAppId(phyID) is true.
 bool fbusXactCompareAndWriteParams(uint8_t phyID, uint16_t appId, const xactServoParams_t *newParams);
 
 // Check if XACT module is initialized

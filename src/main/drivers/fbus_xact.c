@@ -424,6 +424,34 @@ bool fbusXactHasServoConflict(uint8_t phyID)
     return false;
 }
 
+// Check whether another discovered servo (different Physical ID) shares this one's App ID
+// (see fbus_xact.h for why this matters)
+bool fbusXactHasDuplicateAppId(uint8_t phyID)
+{
+    uint16_t appId = 0;
+    bool found = false;
+
+    for (uint8_t i = 0; i < xactServoCount; i++) {
+        if (xactServos[i].phyID == phyID) {
+            appId = xactServos[i].appId;
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        return false;
+    }
+
+    for (uint8_t i = 0; i < xactServoCount; i++) {
+        if (xactServos[i].phyID != phyID && xactServos[i].appId == appId) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 // (Re)start a full parameter read for an already-discovered servo
 bool fbusXactRequestParamsRead(uint8_t phyID)
 {
@@ -549,6 +577,26 @@ bool fbusXactCompareAndWriteParams(uint8_t phyID, uint16_t appId, const xactServ
 
     // Get cached parameters
     xactServoParams_t *cachedParams = &xactServoParams[servoIndex];
+
+    // XACT write commands are addressed by App ID, not exclusively by Physical ID -- real
+    // hardware testing confirmed that two servos sharing an App ID BOTH act on a write meant
+    // for just one of them, regardless of their (different) Physical IDs. Refuse to touch
+    // anything until this is resolved, unless this write is itself changing App ID to
+    // something that's actually unique among the servos currently tracked.
+    if (fbusXactHasDuplicateAppId(phyID)) {
+        const bool changingAppId = cachedParams->appIdOffset != newParams->appIdOffset;
+        if (!changingAppId) {
+            return false;
+        }
+
+        const uint16_t prospectiveAppId = FBUS_SERVO_DATA_BASE + newParams->appIdOffset;
+        for (uint8_t i = 0; i < xactServoCount; i++) {
+            if (xactServos[i].phyID != phyID && xactServos[i].appId == prospectiveAppId) {
+                return false;  // still not unique -- refuse
+            }
+        }
+    }
+
     bool hasChanges = false;
 
     // Track current phyID and appId - these may be updated if PHYSICAL_ID or APP_ID_BASE change
