@@ -369,16 +369,6 @@ bool fbusMasterIsEnabled(void)
     return fbusMasterPort != NULL;
 }
 
-uint8_t fbusMasterGetTelemetryState(void)
-{
-    return (uint8_t)fbusMasterTelemetryState;
-}
-
-uint8_t fbusMasterGetPhysIdsFoundCount(void)
-{
-    return physIdsfound;
-}
-
 void fbusMasterInit(void)
 {
     const serialPortConfig_t *portConfig =

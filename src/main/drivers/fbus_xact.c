@@ -116,18 +116,33 @@ static uint8_t xactReadFieldIdAt(uint8_t index)
 }
 
 // Move past the current field (whether it was actually answered or timed out) and either start
-// reading the next one or mark the whole read complete. Shared by the success path
-// (fbusXactNotifyResponse) and the per-field timeout path in fbusXactProcessQueue.
+// reading the next one, jump to another discovered servo that hasn't been read yet, or mark
+// idle. Shared by the success path (fbusXactNotifyResponse) and the per-field timeout path in
+// fbusXactProcessQueue.
 static void xactAdvanceReadField(void)
 {
     xactReadParamIndex++;
 
-    if (xactReadParamIndex >= xactReadTotalParamCount(xactReadServoIndex)) {
-        xactReadState = XACT_READ_STATE_COMPLETE;
-        xactServos[xactReadServoIndex].paramsReady = true;
-    } else {
+    if (xactReadParamIndex < xactReadTotalParamCount(xactReadServoIndex)) {
         xactReadState = XACT_READ_STATE_READING;
+        return;
     }
+
+    xactServos[xactReadServoIndex].paramsReady = true;
+
+    // Keep going: read any other discovered servo that hasn't been read yet, so the servo
+    // list can show identifying details (e.g. Channel) for every servo found, not just
+    // whichever one happens to be selected.
+    for (uint8_t i = 0; i < xactServoCount; i++) {
+        if (!xactServos[i].paramsReady) {
+            xactReadServoIndex = i;
+            xactReadParamIndex = 0;
+            xactReadState = XACT_READ_STATE_READING;
+            return;
+        }
+    }
+
+    xactReadState = XACT_READ_STATE_COMPLETE;
 }
 
 // Helper function to fill physical ID check bits
@@ -188,14 +203,17 @@ void fbusXactTrackServo(uint8_t phyID, uint16_t appId, timeUs_t currentTimeUs)
         xactServos[xactServoCount].lastSeenUs = currentTimeUs;
         xactServos[xactServoCount].paramsReady = false;
         xactServos[xactServoCount].appIdConflict = false;
+        const uint8_t newServoIndex = xactServoCount;
         xactServoCount++;
 
-        // Start reading parameters for the first servo. Any additional servos discovered
-        // on the same bus are only read on demand, via fbusXactRequestParamsRead() -- see
-        // its header comment for why.
-        if (xactServoCount == 1 && xactReadState == XACT_READ_STATE_IDLE) {
+        // Opportunistically read every discovered servo's parameters in the background (not
+        // just whichever one gets selected) so the GUI's servo list can show identifying
+        // details like Channel for all of them. Only start immediately if the read pipeline
+        // is free -- if it's already busy reading a different servo, xactAdvanceReadField()
+        // picks this one up as soon as that one finishes.
+        if (xactReadState == XACT_READ_STATE_IDLE || xactReadState == XACT_READ_STATE_COMPLETE) {
             xactReadState = XACT_READ_STATE_READING;
-            xactReadServoIndex = 0;
+            xactReadServoIndex = newServoIndex;
             xactReadParamIndex = 0;
         }
     }

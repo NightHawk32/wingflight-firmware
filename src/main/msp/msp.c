@@ -2106,39 +2106,29 @@ static bool mspProcessOutCommand(int16_t cmdMSP, sbuf_t *dst)
 
 #ifdef USE_FBUS_MASTER
     case MSP_XACT_SERVO_LIST:
-        // List every XACT servo discovered since the last MSP_SET_XACT_SCAN.
-        // Response format: masterEnabled, xactInitialized, telemetryState, physIdsFound,
-        //                  count, then count * (phyID, appIdOffset, conflict)
-        // The first four fields are temporary diagnostics for tracking down why a scan finds
-        // nothing despite the general FBUS/S.Port Sensors page seeing the servo -- remove once
-        // that's understood:
-        //   masterEnabled    - fbusMasterIsEnabled(): is a port actually open with the
-        //                      FBUS Master function?
-        //   xactInitialized  - fbusXactIsInitialized(): did fbusXactInit() run at boot?
-        //   telemetryState   - fbusMasterGetTelemetryState(): 0 = still sweeping every Physical
-        //                      ID, 1 = polling the ones already found
-        //   physIdsFound     - fbusMasterGetPhysIdsFoundCount(): how many Physical IDs the
-        //                      master's own sweep has found (separate from the XACT-specific
-        //                      count below)
-        // appIdOffset reads as 0 for a servo whose parameters haven't been read yet --
-        // see fbusXactRequestParamsRead()/fbusXactIsServoParamsReady() in fbus_xact.h.
+        // List every XACT servo discovered since the last MSP_SET_XACT_SCAN. The firmware
+        // reads every discovered servo's parameters in the background (not just whichever one
+        // gets selected -- see fbusXactTrackServo()/xactAdvanceReadField() in fbus_xact.c), so
+        // Channel is usually already available here without the GUI needing to select a servo
+        // first.
+        // Response format: count, then count * (phyID, appIdOffset, conflict, ready, channel)
+        // appIdOffset/channel read as 0 until ready is 1 -- see
+        // fbusXactRequestParamsRead()/fbusXactIsServoParamsReady() in fbus_xact.h.
         // conflict is 1 if this Physical ID has answered with more than one App ID, meaning
         // two servos most likely share it and are colliding on the bus (see fbus_xact.h).
         {
-            sbufWriteU8(dst, fbusMasterIsEnabled() ? 1 : 0);
-            sbufWriteU8(dst, fbusXactIsInitialized() ? 1 : 0);
-            sbufWriteU8(dst, fbusMasterGetTelemetryState());
-            sbufWriteU8(dst, fbusMasterGetPhysIdsFoundCount());
-
             const uint8_t count = fbusMasterIsEnabled() ? fbusXactGetDiscoveredServoCount() : 0;
             sbufWriteU8(dst, count);
             for (uint8_t i = 0; i < count; i++) {
                 const uint8_t phyID = fbusXactGetDiscoveredServoPhyID(i);
                 xactServoParams_t params;
-                const uint8_t appIdOffset = fbusXactGetServoParams(phyID, &params) ? params.appIdOffset : 0;
+                memset(&params, 0, sizeof(params));
+                fbusXactGetServoParams(phyID, &params);
                 sbufWriteU8(dst, phyID);
-                sbufWriteU8(dst, appIdOffset);
+                sbufWriteU8(dst, params.appIdOffset);
                 sbufWriteU8(dst, fbusXactHasServoConflict(phyID) ? 1 : 0);
+                sbufWriteU8(dst, fbusXactIsServoParamsReady(phyID) ? 1 : 0);
+                sbufWriteU8(dst, params.channel);
             }
         }
 
