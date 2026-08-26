@@ -1223,3 +1223,31 @@ be invisible to STM32F4/F7/G4/H7 builds:
   solving them. Implementation should reuse Wingflight's existing
   `flashVTable_t`/`sdcard_spi.c` abstractions against a real PICO SPI bus,
   not a new PICO-specific storage type - not started this iteration.
+
+### Fourteenth iteration (2026-08-26) — bus_spi_pico.c 16-bit transfer optimisation
+
+- Resolved the `// TODO optimise with 16-bit transfers as per stm bus_spi_ll
+  code` in `spiInternalReadWriteBufPolled()`. The PL022 SPI block (used by
+  both RP2350 and STM32's own SPI peripherals) supports 4..16 data bits per
+  transfer; the STM32 LL driver already exploits this by clocking 16 bits at
+  a time for the bulk of a polled transfer, only falling back to 8-bit mode
+  for a trailing odd byte - halving the number of TX/RX-FIFO polling
+  round-trips for even-length transfers. Ported the same idea to
+  `bus_spi_pico.c` using pico-sdk's `spi_write16_read16_blocking()`/
+  `spi_write16_blocking()`/`spi_read16_blocking()` (word-count-based
+  siblings of the existing byte-based calls).
+- The one PICO-specific wrinkle: toggling data width requires
+  `spi_set_format(spi, bits, cpol, cpha, order)`, which also takes CPOL/CPHA
+  - but this function doesn't otherwise know how the bus was configured.
+  Rather than threading that state through, it reads the current CPOL/CPHA
+  directly off the PL022's CR0 register (`SPI_SSPCR0_SPO_BITS`/
+  `_SPH_BITS`) before switching to 16-bit and restores them unchanged
+  afterwards; `spi_set_format()` itself is cheap (a masked CR0 write while
+  briefly clearing/restoring the SPI-enable bit, no FIFO flush), so this
+  format toggle doesn't undermine the point of the optimisation.
+- Verification 2026-08-26: all four RP2350/RP2354 targets build cleanly.
+  This file is PICO-only (not shared with STM32), so no cross-platform
+  regression risk. Not exercised on real hardware/a logic analyzer - this
+  changes low-level SPI bus timing for every PICO SPI peripheral (gyro,
+  external flash, SD card, once wired up), so it's worth confirming with a
+  scope on a real bus before relying on it, same caveat as the DSHOT work.

@@ -350,22 +350,71 @@ void spiInternalResetDescriptors(busDevice_t *bus)
 
 bool spiInternalReadWriteBufPolled(SPI_TypeDef *instance, const uint8_t *txData, uint8_t *rxData, int len)
 {
-    // TODO optimise with 16-bit transfers as per stm bus_spi_ll code
+    spi_inst_t *spi = SPI_INST(instance);
     int bytesProcessed = 0;
-    if (txData && rxData) {
-        bytesProcessed = spi_write_read_blocking(SPI_INST(instance), txData, rxData, len);
-    } else if (txData) {
-        bytesProcessed = spi_write_blocking(SPI_INST(instance), txData, len);
-    } else if (rxData) {
-        // NB tx data: "Generally this can be 0, but some devices require a specific value here, e.g. SD cards expect 0xff" (pico-sdk spi.c).
-        uint8_t repeated_tx_data = 0xff; // cf. dummyTxByte in stm bus_spi_ll.c and for DMA here
-        bytesProcessed = spi_read_blocking(SPI_INST(instance), repeated_tx_data, rxData, len);
-    } else {
-        // Just force dummy cycles
-        uint8_t repeated_tx_data = 0xff; // cf. dummyTxByte in stm bus_spi_ll.c and for DMA here
-        uint8_t dropped_rx_data;
-        for (int i = 0; i < len; i++) {
-            bytesProcessed += spi_read_blocking(SPI_INST(instance), repeated_tx_data, &dropped_rx_data, 1);
+
+    // Transfer whole pairs of bytes as 16-bit words where possible: halves
+    // the number of TX/RX FIFO polling round-trips versus one byte-wide
+    // spi_*_blocking() call per byte (same idea as bus_spi_ll.c's identical
+    // 16-bit-then-trailing-8-bit pattern for STM32). The PL022 SPI block
+    // supports 4..16 data bits per transfer (see spi_set_format() below),
+    // and toggling data width mid-transfer is cheap - a masked CR0 write
+    // while briefly disabling/re-enabling the SPI enable bit, no FIFO
+    // flush - so read back the current CPOL/CPHA and restore them exactly
+    // rather than needing this function to know how the caller configured
+    // the bus.
+    const int wordLen = len / 2;
+    if (wordLen > 0) {
+        const uint32_t cr0 = spi_get_hw(spi)->cr0;
+        const spi_cpol_t cpol = (cr0 & SPI_SSPCR0_SPO_BITS) ? SPI_CPOL_1 : SPI_CPOL_0;
+        const spi_cpha_t cpha = (cr0 & SPI_SSPCR0_SPH_BITS) ? SPI_CPHA_1 : SPI_CPHA_0;
+
+        spi_set_format(spi, 16, cpol, cpha, SPI_MSB_FIRST);
+
+        int wordsProcessed;
+        if (txData && rxData) {
+            wordsProcessed = spi_write16_read16_blocking(spi, (const uint16_t *)txData, (uint16_t *)rxData, wordLen);
+        } else if (txData) {
+            wordsProcessed = spi_write16_blocking(spi, (const uint16_t *)txData, wordLen);
+        } else if (rxData) {
+            // NB tx data: "Generally this can be 0, but some devices require a specific value here, e.g. SD cards expect 0xff" (pico-sdk spi.c).
+            wordsProcessed = spi_read16_blocking(spi, 0xffff, (uint16_t *)rxData, wordLen);
+        } else {
+            // Just force dummy cycles
+            uint16_t dropped_rx_data;
+            wordsProcessed = 0;
+            for (int i = 0; i < wordLen; i++) {
+                wordsProcessed += spi_read16_blocking(spi, 0xffff, &dropped_rx_data, 1);
+            }
+        }
+        bytesProcessed = wordsProcessed * 2;
+
+        spi_set_format(spi, SPI_DATAWIDTH, cpol, cpha, SPI_MSB_FIRST);
+
+        if (txData) {
+            txData += bytesProcessed;
+        }
+        if (rxData) {
+            rxData += bytesProcessed;
+        }
+    }
+
+    // Trailing odd byte (or the whole transfer, if len < 2)
+    const int remaining = len - bytesProcessed;
+    if (remaining > 0) {
+        if (txData && rxData) {
+            bytesProcessed += spi_write_read_blocking(spi, txData, rxData, remaining);
+        } else if (txData) {
+            bytesProcessed += spi_write_blocking(spi, txData, remaining);
+        } else if (rxData) {
+            uint8_t repeated_tx_data = 0xff; // cf. dummyTxByte in stm bus_spi_ll.c and for DMA here
+            bytesProcessed += spi_read_blocking(spi, repeated_tx_data, rxData, remaining);
+        } else {
+            uint8_t repeated_tx_data = 0xff; // cf. dummyTxByte in stm bus_spi_ll.c and for DMA here
+            uint8_t dropped_rx_data;
+            for (int i = 0; i < remaining; i++) {
+                bytesProcessed += spi_read_blocking(spi, repeated_tx_data, &dropped_rx_data, 1);
+            }
         }
     }
 
