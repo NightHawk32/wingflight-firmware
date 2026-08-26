@@ -70,7 +70,7 @@ const spiHardware_t spiHardware[] = {
             { DEFIO_TAG_E(PA6) },
             { DEFIO_TAG_E(PA18) },
             { DEFIO_TAG_E(PA22) },
-#ifdef RP2350B
+#if defined(RP2350B) || defined(RP2354B)
             { DEFIO_TAG_E(PA34) },
             { DEFIO_TAG_E(PA38) },
 #endif
@@ -80,7 +80,7 @@ const spiHardware_t spiHardware[] = {
             { DEFIO_TAG_E(PA4) },
             { DEFIO_TAG_E(PA16) },
             { DEFIO_TAG_E(PA20) },
-#ifdef RP2350B
+#if defined(RP2350B) || defined(RP2354B)
             { DEFIO_TAG_E(PA32) },
             { DEFIO_TAG_E(PA36) },
 #endif
@@ -90,7 +90,7 @@ const spiHardware_t spiHardware[] = {
             { DEFIO_TAG_E(PA7) },
             { DEFIO_TAG_E(PA19) },
             { DEFIO_TAG_E(PA23) },
-#ifdef RP2350B
+#if defined(RP2350B) || defined(RP2354B)
             { DEFIO_TAG_E(PA35) },
             { DEFIO_TAG_E(PA39) },
 #endif
@@ -103,7 +103,7 @@ const spiHardware_t spiHardware[] = {
             { DEFIO_TAG_E(PA10) },
             { DEFIO_TAG_E(PA14) },
             { DEFIO_TAG_E(PA26) },
-#ifdef RP2350B
+#if defined(RP2350B) || defined(RP2354B)
             { DEFIO_TAG_E(PA30) },
             { DEFIO_TAG_E(PA42) },
             { DEFIO_TAG_E(PA46) },
@@ -114,7 +114,7 @@ const spiHardware_t spiHardware[] = {
             { DEFIO_TAG_E(PA12) },
             { DEFIO_TAG_E(PA24) },
             { DEFIO_TAG_E(PA28) },
-#ifdef RP2350B
+#if defined(RP2350B) || defined(RP2354B)
             { DEFIO_TAG_E(PA40) },
             { DEFIO_TAG_E(PA44) },
 #endif
@@ -123,7 +123,7 @@ const spiHardware_t spiHardware[] = {
             { DEFIO_TAG_E(PA11) },
             { DEFIO_TAG_E(PA15) },
             { DEFIO_TAG_E(PA27) },
-#ifdef RP2350B
+#if defined(RP2350B) || defined(RP2354B)
             { DEFIO_TAG_E(PA31) },
             { DEFIO_TAG_E(PA43) },
             { DEFIO_TAG_E(PA47) },

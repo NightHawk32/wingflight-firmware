@@ -812,3 +812,64 @@ be invisible to STM32F4/F7/G4/H7 builds:
 - Remaining high-priority follow-ups: implement real PICO servo PWM output in
   `flight/servos.c`, restore TinyUSB MSC with a PICO-native storage adapter,
   add a `.uf2` post-build step, and validate RP2350B boot/USB/UART on hardware.
+
+### Seventh iteration (2026-08-26) — RP2354A/RP2354B build break fix + cleanup
+
+- Found that `RP2354A`/`RP2354B` did not compile at all: `adc_pico.c` branched
+  on `#if defined(RP2350A) / #elif defined(RP2350B) / #else #error`, with no
+  RP2354 case, even though `target.mk` defines `RP2354A`/`RP2354B` and
+  `io_def_generated.h` already handles them correctly. Since RP2354A/B are
+  pin-identical to RP2350A/B (same package, only the flash is on-die), fixed
+  by adding `|| defined(RP2354A)` / `|| defined(RP2354B)` to the ADC
+  channel-count/internal-temp-channel macros and the pin-to-channel mapping.
+- Grepped for the same pattern elsewhere and found three more spots that
+  compiled fine for RP2354 but would have silently used the wrong (30/40-pin
+  A-package) pin list instead of the correct 48-pin B-package one:
+  `bus_i2c_pico.c` (`numPins` for SDA/SCL validation), `bus_spi_pico.c` (extra
+  SCK/MISO/MOSI pins on SPI0/SPI1), and `serial_uart_pico.c` (extra RX/TX pins
+  on UART0/UART1). All changed from `#ifdef RP2350B` to
+  `#if defined(RP2350B) || defined(RP2354B)` to match the existing convention
+  already used in `io_def_generated.h`.
+- Verification 2026-08-26: clean `make clean` + build of all four targets
+  (`RP2350A`, `RP2350B`, `RP2354A`, `RP2354B`) succeeds with 0 errors.
+- Cleanup: deleted the dead/unreferenced `src/main/drivers/uart_pico/`
+  directory (superseded by the top-level `serial_uart_pico.c` in the UART
+  refactor but left on disk, duplicating a filename and risking edits to the
+  wrong file), removed the stray committed `build_rp2350b.log` artifact, and
+  dropped the stale `MSC` entry from `FEATURES` in `target.mk` (USB-MSC is
+  `#undef`'d in `target.h` and `MSC_SRC` is empty, so the feature flag was
+  misleading dead weight).
+- Still not addressed by this pass (see follow-ups above and Phase 5/6):
+  RP2354 boot_stage2/QMI on-die-flash defaults are still unverified against
+  real hardware, no target has been flash-tested, and there is still no CI
+  coverage for any RP2350/RP2354 target.
+
+### Eighth iteration (2026-08-26) — UF2 post-build step
+
+- Added the `.uf2` post-build step flagged as "not started" earlier in this
+  doc (Phase 5, line ~136). Since pico-sdk 2.x no longer vendors a standalone
+  `elf2uf2` tool (it was folded into the separate `picotool` repo, not present
+  in this tree, and pulling it in would mean a whole extra CMake/libusb C++
+  project just to reimplement a small binary format), wrote a small
+  self-contained `src/utils/bin2uf2.py` instead, following the same pattern
+  as the existing `dfuse-pack.py` (.hex → .dfu) Python post-processing step.
+  It reads the already-produced flat `.bin`, pads to 256-byte chunks, and
+  emits standard 512-byte UF2 blocks per pico-sdk's `boot/uf2.h` layout, using
+  family ID `0xe48bff59` (`RP2350_ARM_S_FAMILY_ID`) and base address
+  `0x10000000` (`FLASH_ORIGIN` from `pico_rp2350_memory.ld`, also the lowest
+  LMA of the linked ELF, which is what `objcopy -O binary` uses as byte 0).
+- Wired into `Makefile`: new `TARGET_UF2`/`BIN2UF2` vars, a
+  `$(TARGET_UF2): $(TARGET_BIN)` rule mirroring the DFU rule, a `uf2:`
+  convenience target, and `.DEFAULT_GOAL` now resolves to `uf2` when
+  `TARGET_MCU == RP2350` (STM32/other targets keep defaulting to `hex`,
+  unaffected). `UF2_FAMILY_ID`/`UF2_BASE_ADDR` are defined in
+  `make/mcu/RP2350.mk` so the Makefile rule itself stays MCU-agnostic.
+- Verification 2026-08-26: clean builds of all four targets now produce a
+  valid `.uf2` by default (819 blocks each, matching the ~205 KB `.bin`);
+  manually parsed the UF2 block headers of the RP2350B output and confirmed
+  correct magic numbers, sequential `target_addr` starting at `0x10000000`,
+  and the RP2350 ARM-Secure family ID. `make TARGET=STM32F405` was re-verified
+  to still default to `hex` only, with no `.uf2` produced.
+- Not done: no on-hardware BOOTSEL flash test yet (no hardware available in
+  this environment) — the UF2 has not been drag-and-drop verified against a
+  real RP2350/RP2354 board, only structurally validated.

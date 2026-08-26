@@ -202,7 +202,11 @@ endif
 TARGET_DIR     = $(ROOT)/src/main/target/$(BASE_TARGET)
 TARGET_DIR_SRC = $(notdir $(wildcard $(TARGET_DIR)/*.c))
 
+ifeq ($(TARGET_MCU),RP2350)
+.DEFAULT_GOAL := uf2
+else
 .DEFAULT_GOAL := hex
+endif
 
 ifeq ($(CUSTOM_DEFAULTS_EXTENDED),yes)
 TARGET_FLAGS += -DUSE_CUSTOM_DEFAULTS=
@@ -252,6 +256,7 @@ OBJDUMP     := $(ARM_SDK_PREFIX)objdump
 READELF     := $(ARM_SDK_PREFIX)readelf
 SIZE        := $(ARM_SDK_PREFIX)size
 DFUSE-PACK  := src/utils/dfuse-pack.py
+BIN2UF2     := src/utils/bin2uf2.py
 
 #
 # Tool options.
@@ -335,6 +340,7 @@ TARGET_BASENAME = $(BIN_DIR)/$(FORKNAME)_$(FC_VER)_$(TARGET)
 TARGET_BIN      = $(TARGET_BASENAME).bin
 TARGET_HEX      = $(TARGET_BASENAME).hex
 TARGET_DFU      = $(TARGET_BASENAME).dfu
+TARGET_UF2      = $(TARGET_BASENAME).uf2
 TARGET_ELF      = $(OBJECT_DIR)/$(FORKNAME)_$(TARGET).elf
 TARGET_EXST_ELF = $(OBJECT_DIR)/$(FORKNAME)_$(TARGET)_EXST.elf
 TARGET_UNPATCHED_BIN = $(OBJECT_DIR)/$(FORKNAME)_$(TARGET)_UNPATCHED.bin
@@ -350,6 +356,7 @@ CLEAN_ARTIFACTS += $(TARGET_HEX)
 CLEAN_ARTIFACTS += $(TARGET_ELF) $(TARGET_OBJS) $(TARGET_MAP)
 CLEAN_ARTIFACTS += $(TARGET_LST)
 CLEAN_ARTIFACTS += $(TARGET_DFU)
+CLEAN_ARTIFACTS += $(TARGET_UF2)
 
 # Make sure build date and revision is updated on every incremental build
 $(OBJECT_DIR)/$(TARGET)/build/version.o : $(SRC)
@@ -373,6 +380,10 @@ $(TARGET_HEX): $(TARGET_ELF)
 $(TARGET_DFU): $(TARGET_HEX)
 	@echo "Creating DFU $(TARGET_DFU)" "$(STDOUT)"
 	$(V1) $(PYTHON) $(DFUSE-PACK) -i $< $@
+
+$(TARGET_UF2): $(TARGET_BIN)
+	@echo "Creating UF2 $(TARGET_UF2)" "$(STDOUT)"
+	$(V1) $(PYTHON) $(BIN2UF2) -i $< -o $@ --base-addr $(UF2_BASE_ADDR) --family $(UF2_FAMILY_ID)
 
 else
 
@@ -583,6 +594,10 @@ binary:
 
 hex:
 	$(V0) $(MAKE) $(JFLAG) $(TARGET_HEX)
+
+## uf2               : build UF2 image for BOOTSEL drag-and-drop flashing (RP2350/RP2354 targets)
+uf2:
+	$(V0) $(MAKE) $(JFLAG) $(TARGET_UF2)
 
 unbrick_$(TARGET): $(TARGET_HEX)
 	$(V0) stty -F $(SERIAL_DEVICE) raw speed 115200 -crtscts cs8 -parenb -cstopb -ixon

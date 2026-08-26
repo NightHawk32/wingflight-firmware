@@ -15,7 +15,7 @@ PICO_FLASH_DEFINES = \
                    -DPICO_FLASH_SPI_CLKDIV=2 \
                    -DPICO_FLASH_SIZE_BYTES=8388608 \
                    -DPICO_BOOT_STAGE2_CHOOSE_W25Q080=1
-FEATURES        += VCP MSC
+FEATURES        += VCP
 endif
 
 ifneq ($(findstring RP2350B,$(TARGET)),)
@@ -28,7 +28,7 @@ PICO_FLASH_DEFINES = \
                    -DPICO_FLASH_SPI_CLKDIV=2 \
                    -DPICO_FLASH_SIZE_BYTES=8388608 \
                    -DPICO_BOOT_STAGE2_CHOOSE_W25Q080=1
-FEATURES        += VCP MSC
+FEATURES        += VCP
 endif
 
 ifneq ($(findstring RP2354A,$(TARGET)),)
@@ -39,7 +39,7 @@ DEVICE_FLAGS    += -DPICO_RP2350A=1
 MCU_FLASH_SIZE  := 2048
 PICO_FLASH_DEFINES = \
                    -DPICO_FLASH_SIZE_BYTES=2097152
-FEATURES        += VCP MSC
+FEATURES        += VCP
 endif
 
 ifneq ($(findstring RP2354B,$(TARGET)),)
@@ -50,7 +50,7 @@ DEVICE_FLAGS    += -DPICO_RP2350A=0
 MCU_FLASH_SIZE  := 2048
 PICO_FLASH_DEFINES = \
                    -DPICO_FLASH_SIZE_BYTES=2097152
-FEATURES        += VCP MSC
+FEATURES        += VCP
 endif
 
 DEVICE_FLAGS    += $(PICO_FLASH_DEFINES)

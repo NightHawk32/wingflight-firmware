@@ -30,6 +30,13 @@ ifeq ($(RUN_FROM_RAM),)
 RUN_FROM_RAM = 1
 endif
 
+# UF2 output (for BOOTSEL drag-and-drop / picotool flashing). Family ID is
+# RP2350_ARM_S_FAMILY_ID from pico-sdk's boot/uf2.h (secure ARM image); base
+# address matches FLASH_ORIGIN in src/link/pico_rp2350_memory.ld, which is
+# also where the flat .bin's lowest LMA starts.
+UF2_FAMILY_ID   := 0xe48bff59
+UF2_BASE_ADDR   := 0x10000000
+
 PICO_LIB_OPTIMISATION := -O2 -fuse-linker-plugin -ffast-math -fmerge-all-constants
 
 SDK_DIR         = $(LIB_MODULES_DIR)/pico-sdk/src
