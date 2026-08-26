@@ -39,6 +39,13 @@
 #define SPI_IO_AF_SCK_CFG_LOW   IO_CONFIG(GPIO_MODE_AF_PP, GPIO_SPEED_FREQ_VERY_HIGH, GPIO_PULLDOWN)
 #define SPI_IO_AF_MISO_CFG      IO_CONFIG(GPIO_MODE_AF_PP, GPIO_SPEED_FREQ_VERY_HIGH, GPIO_PULLUP)
 #define SPI_IO_CS_CFG           IO_CONFIG(GPIO_MODE_OUTPUT_PP, GPIO_SPEED_FREQ_VERY_HIGH, GPIO_NOPULL)
+#elif defined(PICO)
+// PICO's bus_spi_pico.c configures SCK/MISO/MOSI directly via
+// gpio_set_function(..., GPIO_FUNC_SPI) (see spiInitDevice()), not via
+// IOConfigGPIO()/an AF config value, so only SPI_IO_CS_CFG is needed here -
+// generic code (accgyro_mpu.c, flash.c, sdcard_spi.c) uses it to configure a
+// device's own chip-select pin as a plain push-pull GPIO output.
+#define SPI_IO_CS_CFG           IOCFG_OUT_PP
 #endif
 
 // De facto standard mode

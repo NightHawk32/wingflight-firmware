@@ -38,6 +38,10 @@
 #include "drivers/bus_i2c_busdev.h"
 #include "drivers/bus_spi.h"
 #include "drivers/io.h"
+
+#if defined(PICO)
+#include "hardware/sync.h"
+#endif
 #include "drivers/sensor.h"
 #include "drivers/time.h"
 
@@ -118,9 +122,20 @@ static bool ak8963SlaveReadRegisterBuffer(const extDevice_t *slaveDev, uint8_t r
     ak8963SpiWriteRegisterDelay(dev, MPU_RA_I2C_SLV0_REG, reg);                             // set I2C slave register
     ak8963SpiWriteRegisterDelay(dev, MPU_RA_I2C_SLV0_CTRL, (len & 0x0F) | I2C_SLV0_EN);     // read number of bytes
     delay(4);
+#if defined(PICO)
+    // No CMSIS device header on PICO (see common/platform.h), so
+    // __disable_irq()/__enable_irq() aren't available - pico-sdk's
+    // save/restore pair is the equivalent global-IRQ critical section.
+    uint32_t picoIrqState = save_and_disable_interrupts();
+#else
     __disable_irq();
+#endif
     bool ack = spiReadRegMskBufRB(dev, MPU_RA_EXT_SENS_DATA_00, buf, len);            // read I2C
+#if defined(PICO)
+    restore_interrupts(picoIrqState);
+#else
     __enable_irq();
+#endif
     return ack;
 }
 

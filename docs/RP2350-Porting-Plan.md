@@ -1251,3 +1251,83 @@ be invisible to STM32F4/F7/G4/H7 builds:
   changes low-level SPI bus timing for every PICO SPI peripheral (gyro,
   external flash, SD card, once wired up), so it's worth confirming with a
   scope on a real bus before relying on it, same caveat as the DSHOT work.
+
+### Fifteenth iteration (2026-08-26) — sensor drivers + storage wired up generically
+
+- Corrected a wrong assumption from earlier iterations: RP2350/RP2354 don't
+  need any board-specific IMU/pin knowledge to wire up sensors or storage.
+  Wingflight (like upstream Betaflight/Rotorflight) is a fully generic,
+  config-driven unified-target firmware - `src/main/target/STM32_UNIFIED/
+  target.mk` compiles in *every* accgyro/barometer/compass driver via a
+  wildcard glob and lets runtime auto-detection (driven entirely by a CLI
+  `.config` file's `resource GYRO_CS`/`GYRO_EXTI`, `set gyro_1_bustype`/
+  `gyro_1_spibus`, `baro_hardware`, `blackbox_device`/`flash_spi_bus`, etc. -
+  see e.g. wingflight-targets' `FRSK-VANTAC_RF007.config`) pick whichever
+  chip is actually present on a given board. RP2350_UNIFIED just needed the
+  same generic wiring; no specific board's pin/chip details were needed at
+  all. `RP2350_UNIFIED/target.mk`'s `TARGET_SRC = ` had been left empty with
+  a comment deferring this "to a later porting phase" since the fifth
+  iteration - that phase is this one.
+- `RP2350_UNIFIED/target.mk`: `TARGET_SRC` now mirrors `STM32_UNIFIED/
+  target.mk`'s wildcard glob over `drivers/accgyro/*.c` /
+  `drivers/barometer/*.c` / `drivers/compass/*.c` (plus the BMI270 vendor
+  driver they both need). `FEATURES` gained `SDCARD_SPI ONBOARDFLASH`
+  (SPI-only - PICO has no SDIO peripheral, so no `SDCARD_SDIO`, matching the
+  decision that blackbox storage is a dedicated external SPI flash chip
+  and/or SD card - see the thirteenth iteration).
+- `RP2350_UNIFIED/target.h`: added the same `USE_ACC_*`/`USE_GYRO_*`/
+  `USE_MAG`/`USE_MAG_*`/`USE_BARO`/`USE_BARO_*`/`USE_SDCARD(_SPI)`/
+  `USE_FLASHFS`/`USE_FLASH_*` block as `STM32_UNIFIED/target.h`, replacing
+  the previous bare `#define USE_ACC` with no chip enabled at all (so no
+  gyro driver could ever have matched, even with I2C/SPI bus config
+  correct) and the `#undef USE_BARO`/`#undef USE_COMPASS` guards (the latter
+  turned out to be dead/unused anywhere in the codebase - real magnetometer
+  support is gated by `USE_MAG`). Also re-enabled `USE_BLACKBOX` (previously
+  undef'd since it had nothing to write to) now that a real storage backend
+  is in scope.
+- Iteratively fixed the real compile fallout from turning all this on (same
+  build-driven approach as the DSHOT work, though this time only three
+  issues surfaced instead of ~ten):
+  - `drivers/bus_spi.h` had `SPI_IO_CS_CFG` defined only for STM32 families;
+    generic code that configures a device's own chip-select pin as a plain
+    GPIO output (`accgyro_mpu.c`, `flash.c`, `sdcard_spi.c`) needs it on any
+    platform. Added a PICO branch aliasing it to the already-existing
+    `IOCFG_OUT_PP` (PICO's SPI driver configures SCK/MISO/MOSI directly via
+    `gpio_set_function()`, not through an AF `IOConfigGPIO()` value, so no
+    `SPI_IO_AF_*` equivalents were needed).
+  - `drivers/barometer/barometer_qmp6988.c` had a genuine, pre-existing,
+    platform-independent bug: several calibration-coefficient expressions
+    mixed bare (`double`) floating-point literals with `(float)`-cast
+    operands, which is exactly what `-Wdouble-promotion` (enabled globally,
+    `Makefile:281`) flags. It had simply never been caught before because no
+    platform previously both defined `USE_BARO_QMP6988` *and* had this
+    warning trip an actual compile of the file with the RP2350 toolchain
+    exercising this path for the first time (STM32_UNIFIED defines the same
+    macro, so this may be a live, if minor, latent bug there too - worth a
+    quick check independent of PICO). Fixed by adding `f` suffixes to the
+    literals so the arithmetic stays in `float` throughout.
+  - `drivers/compass/compass_ak8963.c` called bare CMSIS-core
+    `__disable_irq()`/`__enable_irq()` around a brief SPI-register-buffer
+    read (an MPU6500/9250-as-I2C-master AK8963 read path). PICO deliberately
+    doesn't include the CMSIS device header (`common/platform.h`'s PICO
+    section explains why: address-macro collisions with pico-sdk's own
+    headers), so these aren't available - added a `#if defined(PICO)`
+    branch using pico-sdk's `save_and_disable_interrupts()`/
+    `restore_interrupts()` (`hardware/sync.h`) as the equivalent
+    global-IRQ critical section, leaving the STM32 `__disable_irq()`/
+    `__enable_irq()` path untouched.
+- Verification 2026-08-26: clean builds of all four RP2350/RP2354 targets
+  (RAM usage jumped from ~51% to ~67% with every sensor driver + flash/SD
+  storage compiled in - worth watching if more features get added later,
+  but well within budget for now). Re-verified `STM32F405`/`STM32F7X2`/
+  `STM32H743`/`STM32G47X` all rebuild to identical `.elf` sizes, confirming
+  the three shared-file fixes above have zero effect on any existing
+  platform.
+- Not done / not hardware-tested: no IMU/baro/mag/flash-chip/SD-card
+  available in this environment to verify auto-detection, bus timing, or
+  actual sensor data on real hardware - this is exactly the kind of thing
+  that needs a real board and a `.config` file (`resource`/`set` commands)
+  to prove out. `MSC_SRC` is still empty in `RP2350.mk` (USB-MSC itself
+  remains a separate, not-yet-tackled follow-up per the twelfth/thirteenth
+  iterations - the storage *backend* it would expose now exists, but the
+  TinyUSB MSC adapter still needs re-enabling and wiring to it).
