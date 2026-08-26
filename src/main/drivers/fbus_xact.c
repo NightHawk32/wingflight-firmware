@@ -62,23 +62,50 @@ static uint8_t xactReadParamIndex = 0;
 static uint8_t xactLastReadPhyID = 0;  // Track last read physical ID for polling
 static uint8_t xactLastReadFieldId = 0;  // Track last read field ID for response matching
 
-// Field IDs to read in order
-static const uint8_t xactReadFieldIds[] = {
+// Field IDs every XACT servo supports, read in order. Firmware version is read early (matching
+// FrSky's own tool) since it decides whether the "series 65" extended fields below get read too.
+static const uint8_t xactReadFieldIdsBase[] = {
     XACT_FIELD_PHYSICAL_ID,
     XACT_FIELD_APP_ID_BASE,
+    XACT_FIELD_FIRMWARE_VERSION,
     XACT_FIELD_DATA_RATE,
     XACT_FIELD_RANGE,
     XACT_FIELD_DIRECTION,
     XACT_FIELD_PULSE_TYPE,
     XACT_FIELD_CHANNEL,
     XACT_FIELD_CENTER,
-    XACT_FIELD_P1,
-    XACT_FIELD_P2,
-    XACT_FIELD_D1,
-    XACT_FIELD_TB,
-    XACT_FIELD_POT_GAP
+    XACT_FIELD_HOLDING_STRENGTH,
+    XACT_FIELD_OPERATION_SMOOTHING,
+    XACT_FIELD_DEADBAND,
 };
-#define XACT_READ_PARAM_COUNT (sizeof(xactReadFieldIds) / sizeof(xactReadFieldIds[0]))
+#define XACT_READ_PARAM_COUNT_BASE (sizeof(xactReadFieldIdsBase) / sizeof(xactReadFieldIdsBase[0]))
+
+// Only read for "series 65"+ servos (firmwareVersion >= XACT_SERIES65_MIN_FIRMWARE)
+static const uint8_t xactReadFieldIdsExtended[] = {
+    XACT_FIELD_WORKING_MODE,
+    XACT_FIELD_MAX_ANGLE,
+};
+#define XACT_READ_PARAM_COUNT_EXTENDED (sizeof(xactReadFieldIdsExtended) / sizeof(xactReadFieldIdsExtended[0]))
+
+// Total number of fields to read for a servo, once its firmware version (read early in the
+// base list) tells us whether the extended fields apply
+static uint8_t xactReadTotalParamCount(uint8_t servoIndex)
+{
+    uint8_t count = XACT_READ_PARAM_COUNT_BASE;
+    if (xactServoParams[servoIndex].hasExtendedParams) {
+        count += XACT_READ_PARAM_COUNT_EXTENDED;
+    }
+    return count;
+}
+
+// Field ID for a given position across the base+extended read sequence
+static uint8_t xactReadFieldIdAt(uint8_t index)
+{
+    if (index < XACT_READ_PARAM_COUNT_BASE) {
+        return xactReadFieldIdsBase[index];
+    }
+    return xactReadFieldIdsExtended[index - XACT_READ_PARAM_COUNT_BASE];
+}
 
 // Helper function to fill physical ID check bits
 static void xactPhyIDFillCheckBits(uint8_t *phyIDByte)
@@ -119,7 +146,12 @@ void fbusXactTrackServo(uint8_t phyID, uint16_t appId, timeUs_t currentTimeUs)
     // Check if this servo is already tracked
     for (uint8_t i = 0; i < xactServoCount; i++) {
         if (xactServos[i].phyID == phyID) {
-            // Update existing servo
+            // A different App ID showing up for a Physical ID we already track means two
+            // servos are answering the same bus address -- flag it rather than silently
+            // overwriting one servo's identity with the other's.
+            if (xactServos[i].appId != appId) {
+                xactServos[i].appIdConflict = true;
+            }
             xactServos[i].appId = appId;
             xactServos[i].lastSeenUs = currentTimeUs;
             return;
@@ -131,9 +163,13 @@ void fbusXactTrackServo(uint8_t phyID, uint16_t appId, timeUs_t currentTimeUs)
         xactServos[xactServoCount].phyID = phyID;
         xactServos[xactServoCount].appId = appId;
         xactServos[xactServoCount].lastSeenUs = currentTimeUs;
+        xactServos[xactServoCount].paramsReady = false;
+        xactServos[xactServoCount].appIdConflict = false;
         xactServoCount++;
 
-        // Start reading parameters for the first servo
+        // Start reading parameters for the first servo. Any additional servos discovered
+        // on the same bus are only read on demand, via fbusXactRequestParamsRead() -- see
+        // its header comment for why.
         if (xactServoCount == 1 && xactReadState == XACT_READ_STATE_IDLE) {
             xactReadState = XACT_READ_STATE_READING;
             xactReadServoIndex = 0;
@@ -228,9 +264,9 @@ bool fbusXactProcessQueue(fbusMasterDownlink_t *downlink)
 
     // Priority 2: Check if we need to read parameters
     if (xactReadState == XACT_READ_STATE_READING && servo != NULL) {
-        if (xactReadParamIndex < XACT_READ_PARAM_COUNT) {
+        if (xactReadParamIndex < xactReadTotalParamCount(xactReadServoIndex)) {
             // Send READ command for next parameter
-            uint8_t fieldId = xactReadFieldIds[xactReadParamIndex];
+            uint8_t fieldId = xactReadFieldIdAt(xactReadParamIndex);
 
             downlink->length = 0x08;
             downlink->phyID = servo->phyID;
@@ -315,6 +351,57 @@ bool fbusXactGetServoParams(uint8_t phyID, xactServoParams_t *params)
     return false;
 }
 
+// Check whether a full parameter read has completed for a discovered servo
+bool fbusXactIsServoParamsReady(uint8_t phyID)
+{
+    for (uint8_t i = 0; i < xactServoCount; i++) {
+        if (xactServos[i].phyID == phyID) {
+            return xactServos[i].paramsReady;
+        }
+    }
+
+    return false;
+}
+
+// Check whether this Physical ID has reported more than one App ID (see fbus_xact.h)
+bool fbusXactHasServoConflict(uint8_t phyID)
+{
+    for (uint8_t i = 0; i < xactServoCount; i++) {
+        if (xactServos[i].phyID == phyID) {
+            return xactServos[i].appIdConflict;
+        }
+    }
+
+    return false;
+}
+
+// (Re)start a full parameter read for an already-discovered servo
+bool fbusXactRequestParamsRead(uint8_t phyID)
+{
+    if (!xactInitialized) {
+        return false;
+    }
+
+    for (uint8_t i = 0; i < xactServoCount; i++) {
+        if (xactServos[i].phyID == phyID) {
+            // Don't restart a read that's already in flight for this same servo
+            const bool alreadyReadingThisServo = (xactReadServoIndex == i) &&
+                (xactReadState == XACT_READ_STATE_READING || xactReadState == XACT_READ_STATE_WAIT_POLL);
+
+            if (!alreadyReadingThisServo) {
+                xactReadServoIndex = i;
+                xactReadParamIndex = 0;
+                xactServos[i].paramsReady = false;
+                xactReadState = XACT_READ_STATE_READING;
+            }
+
+            return true;
+        }
+    }
+
+    return false;
+}
+
 // Set a specific servo parameter field (stores value from read response)
 bool fbusXactSetServoParam(uint8_t phyID, uint8_t fieldId, uint16_t appId, uint16_t data)
 {
@@ -361,22 +448,26 @@ bool fbusXactSetServoParam(uint8_t phyID, uint8_t fieldId, uint16_t appId, uint1
             params->channel = (uint8_t)data;
             break;
         case XACT_FIELD_CENTER:
-            params->center = (uint8_t)data;
+            params->center = (int8_t)data;
             break;
-        case XACT_FIELD_P1:
-            params->p1 = (uint8_t)data;
+        case XACT_FIELD_HOLDING_STRENGTH:
+            params->holdingStrength = (uint8_t)data;
             break;
-        case XACT_FIELD_P2:
-            params->p2 = (uint8_t)data;
+        case XACT_FIELD_OPERATION_SMOOTHING:
+            params->operationSmoothing = (uint8_t)data;
             break;
-        case XACT_FIELD_D1:
-            params->d1 = (uint8_t)data;
+        case XACT_FIELD_DEADBAND:
+            params->deadband = (uint8_t)data;
             break;
-        case XACT_FIELD_TB:
-            params->tb = (uint8_t)data;
+        case XACT_FIELD_FIRMWARE_VERSION:
+            params->firmwareVersion = (uint8_t)data;
+            params->hasExtendedParams = (params->firmwareVersion >= XACT_SERIES65_MIN_FIRMWARE);
             break;
-        case XACT_FIELD_POT_GAP:
-            params->potGap = (uint8_t)data;
+        case XACT_FIELD_WORKING_MODE:
+            params->workingMode = (uint8_t)data;
+            break;
+        case XACT_FIELD_MAX_ANGLE:
+            params->maxAngle = (uint16_t)data;
             break;
         default:
             return false;
@@ -430,6 +521,11 @@ bool fbusXactCompareAndWriteParams(uint8_t phyID, uint16_t appId, const xactServ
         // Update currentAppId for subsequent writes (base + offset)
         currentAppId = FBUS_SERVO_DATA_BASE + newParams->appIdOffset;
         hasChanges = true;
+
+        // We changed this ourselves, so pre-arm the tracked App ID to match: the next telemetry
+        // frame reporting it is expected, not a sign of a second servo colliding on this bus address.
+        xactServos[servoIndex].appId = currentAppId;
+        xactServos[servoIndex].appIdConflict = false;
     }
 
     if (cachedParams->dataRate != newParams->dataRate) {
@@ -464,43 +560,54 @@ bool fbusXactCompareAndWriteParams(uint8_t phyID, uint16_t appId, const xactServ
     }
 
     if (cachedParams->center != newParams->center) {
-        fbusXactWriteUplinkFramePhyID(currentPhyID, XACT_FIELD_CENTER, currentAppId, newParams->center);
+        // (uint16_t)(uint8_t) round-trips a negative int8_t through the wire's single data
+        // byte correctly -- fbusXactProcessQueue truncates this to data & 0xFF when framing.
+        fbusXactWriteUplinkFramePhyID(currentPhyID, XACT_FIELD_CENTER, currentAppId, (uint16_t)(uint8_t)newParams->center);
         cachedParams->center = newParams->center;
         hasChanges = true;
     }
 
-    if (cachedParams->p1 != newParams->p1) {
-        fbusXactWriteUplinkFramePhyID(currentPhyID, XACT_FIELD_P1, currentAppId, newParams->p1);
-        cachedParams->p1 = newParams->p1;
+    if (cachedParams->holdingStrength != newParams->holdingStrength) {
+        fbusXactWriteUplinkFramePhyID(currentPhyID, XACT_FIELD_HOLDING_STRENGTH, currentAppId, newParams->holdingStrength);
+        cachedParams->holdingStrength = newParams->holdingStrength;
+        // FrSky's own tool always re-pins the paired 0x12 field to 10 whenever Holding
+        // Strength changes; mirror that exactly rather than exposing 0x12 as its own field.
+        fbusXactWriteUplinkFramePhyID(currentPhyID, XACT_FIELD_HOLDING_STRENGTH_COMPANION, currentAppId, 10);
         hasChanges = true;
     }
 
-    if (cachedParams->p2 != newParams->p2) {
-        fbusXactWriteUplinkFramePhyID(currentPhyID, XACT_FIELD_P2, currentAppId, newParams->p2);
-        cachedParams->p2 = newParams->p2;
+    if (cachedParams->operationSmoothing != newParams->operationSmoothing) {
+        fbusXactWriteUplinkFramePhyID(currentPhyID, XACT_FIELD_OPERATION_SMOOTHING, currentAppId, newParams->operationSmoothing);
+        cachedParams->operationSmoothing = newParams->operationSmoothing;
         hasChanges = true;
     }
 
-    if (cachedParams->d1 != newParams->d1) {
-        fbusXactWriteUplinkFramePhyID(currentPhyID, XACT_FIELD_D1, currentAppId, newParams->d1);
-        cachedParams->d1 = newParams->d1;
+    if (cachedParams->deadband != newParams->deadband) {
+        fbusXactWriteUplinkFramePhyID(currentPhyID, XACT_FIELD_DEADBAND, currentAppId, newParams->deadband);
+        cachedParams->deadband = newParams->deadband;
         hasChanges = true;
     }
 
-    if (cachedParams->tb != newParams->tb) {
-        fbusXactWriteUplinkFramePhyID(currentPhyID, XACT_FIELD_TB, currentAppId, newParams->tb);
-        cachedParams->tb = newParams->tb;
-        hasChanges = true;
+    // Working Mode/Max Angle only exist on "series 65"+ servos -- never write them to a servo
+    // that hasn't reported that it supports them.
+    if (cachedParams->hasExtendedParams) {
+        if (cachedParams->workingMode != newParams->workingMode) {
+            fbusXactWriteUplinkFramePhyID(currentPhyID, XACT_FIELD_WORKING_MODE, currentAppId, newParams->workingMode);
+            cachedParams->workingMode = newParams->workingMode;
+            hasChanges = true;
+        }
+
+        if (cachedParams->maxAngle != newParams->maxAngle) {
+            fbusXactWriteUplinkFramePhyID(currentPhyID, XACT_FIELD_MAX_ANGLE, currentAppId, newParams->maxAngle);
+            cachedParams->maxAngle = newParams->maxAngle;
+            hasChanges = true;
+        }
     }
 
-    if (cachedParams->potGap != newParams->potGap) {
-        fbusXactWriteUplinkFramePhyID(currentPhyID, XACT_FIELD_POT_GAP, currentAppId, newParams->potGap);
-        cachedParams->potGap = newParams->potGap;
-        hasChanges = true;
-    }
-
-    // If any parameters were changed, queue a write flash command to save them
+    // If any parameters were changed, commit them to flash using FrSky's own two-step
+    // sequence: prime with 0x15=7, then the actual save command.
     if (hasChanges) {
+        fbusXactWriteUplinkFramePhyID(currentPhyID, XACT_FIELD_SAVE_PRIME, currentAppId, 7);
         fbusXactWriteUplinkFramePhyID(currentPhyID, XACT_FIELD_WRITE_FLASH, currentAppId, 0);
     }
 
@@ -544,8 +651,9 @@ void fbusXactNotifyResponse(uint8_t phyID, uint8_t fieldId)
     xactReadParamIndex++;
 
     // Check if we've read all parameters
-    if (xactReadParamIndex >= XACT_READ_PARAM_COUNT) {
+    if (xactReadParamIndex >= xactReadTotalParamCount(xactReadServoIndex)) {
         xactReadState = XACT_READ_STATE_COMPLETE;
+        xactServos[xactReadServoIndex].paramsReady = true;
     } else {
         // Continue reading next parameter
         xactReadState = XACT_READ_STATE_READING;

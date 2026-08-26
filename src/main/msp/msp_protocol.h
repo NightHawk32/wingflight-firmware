@@ -214,6 +214,8 @@
 #define MSP_SET_XACT_PARAMS                  163
 
 #define MSP_GPSSVINFO                        164
+// XACT FBUS servo programming, continued (experimental, requires USE_FBUS_MASTER)
+#define MSP_XACT_SERVO_LIST                  165
 #define MSP_GPSSTATISTICS                    166
 #define MSP_GET_ADJUSTMENT_FUNCTION_IDS      167
 
