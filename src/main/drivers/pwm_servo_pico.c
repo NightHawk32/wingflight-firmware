@@ -1,13 +1,13 @@
 /*
- * This file is part of Betaflight.
+ * This file is part of Wingflight.
  *
- * Betaflight is free software. You can redistribute this software
+ * Wingflight is free software. You can redistribute this software
  * and/or modify this software under the terms of the GNU General
  * Public License as published by the Free Software Foundation,
  * either version 3 of the License, or (at your option) any later
  * version.
  *
- * Betaflight is distributed in the hope that it will be useful,
+ * Wingflight is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
  *
@@ -21,92 +21,121 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <math.h>
+#include <string.h>
+
 #include "platform.h"
 
-#if defined(USE_SERVOS)
+#if defined(PICO) && defined(USE_SERVOS)
 
-#include <math.h>
-#include "hardware/pwm.h"
+#include "drivers/pwm_servo_pico.h"
 
-#include "drivers/servo_impl.h"
-
+#include "common/maths.h"
 #include "drivers/io.h"
 #include "drivers/io_impl.h"
 #include "drivers/resource.h"
 
+#include "flight/servos.h"
+#include "pg/servos.h"
+
+#include "hardware/gpio.h"
+#include "hardware/pwm.h"
+
 #include "platform/pwm.h"
 
-// Standard servo PWM frequency
-#define SERVO_PWM_FREQUENCY_HZ 50.0f // 50 Hz (20ms period)
-
-// We set a prescaler of 64 to keep the TOP count (WRAP) within the 16-bit register.
-#define PWM_PRESCALER 64.0f 
-// Calculated TOP count for 50 Hz: (125M / 50) / 64 = 39062.5. We use 39063 for integer WRAP.
-#define PWM_TOP_COUNT ((uint16_t)roundf((SYS_CLK_HZ / SERVO_PWM_FREQUENCY_HZ) / PWM_PRESCALER)) // 39063
-
-// Factor to convert Microseconds (us) to PWM counter counts.
-// Counts = us * US_TO_COUNTS_FACTOR
-// US_TO_COUNTS_FACTOR = (SYS_CLK_HZ / PWM_PRESCALER) / 1,000,000
-#define US_TO_COUNTS_FACTOR (SYS_CLK_HZ / (PWM_PRESCALER * 1000000.0f)) // ~1.953 counts/us
+// Same clamp used by pwm_motor_pico.c's standard-PWM path: maximum practical
+// TOP/compare value, safely inside the 16-bit PWM counter regardless of the
+// configured wrap for a given servo's rate.
+#define TOPMAX (0xfffe)
 
 static picoPwmOutput_t picoPwmServos[MAX_SUPPORTED_SERVOS];
+// Ticks-per-microsecond at each servo's own PWM slice clock, used to convert
+// a microsecond pulse width (servoSetOutput()'s 'pos') into a compare level.
+// Equivalent to servoResolution[] in the STM32 timerChannel_t path.
+static float servoTicksPerUs[MAX_SUPPORTED_SERVOS];
 
-void servoDevInit(const servoDevConfig_t *servoDevConfig)
+uint8_t picoServoDevInit(const ioTag_t *ioTags)
 {
-    if (!servoDevConfig) {
-        return;
-    }
+    memset(picoPwmServos, 0, sizeof(picoPwmServos));
+    memset(servoTicksPerUs, 0, sizeof(servoTicksPerUs));
 
-    for (uint8_t index = 0; index < MAX_SUPPORTED_SERVOS; index++) {
-        const IO_t servoIO = IOGetByTag(servoDevConfig->ioTags[index]);
-
-        if (!servoIO) {
-            continue;
+    uint8_t index;
+    for (index = 0; index < MAX_SUPPORTED_SERVOS && ioTags[index]; index++) {
+        const ioTag_t tag = ioTags[index];
+        const IO_t io = IOGetByTag(tag);
+        if (!io) {
+            break;
         }
 
-        const uint8_t pin = IO_GPIOPinIdx(servoIO);
-        IOInit(servoIO, OWNER_SERVO, RESOURCE_INDEX(index));
+        const uint8_t pin = IO_PINBYTAG(tag);
+        const uint16_t slice = pwm_gpio_to_slice_num(pin);
+        const uint16_t channel = pwm_gpio_to_channel(pin);
 
-        const uint8_t slice = pwm_gpio_to_slice_num(pin);
-        const uint8_t channel = pwm_gpio_to_channel(pin);
+        IOInit(io, OWNER_SERVO, RESOURCE_INDEX(index));
 
-        // Store the hardware mapping for fast access in servoWrite
         picoPwmServos[index].slice = slice;
         picoPwmServos[index].channel = channel;
 
-        gpio_set_function(pin, GPIO_FUNC_PWM);
-        
-        // Configure the PWM slice frequency (50 Hz)
-        pwm_set_clkdiv(slice, PWM_PRESCALER);
-        pwm_set_wrap(slice, PWM_TOP_COUNT);
+        bool sliceAlreadyUsed = false;
+        for (int i = 0; i < index; i++) {
+            if (picoPwmServos[i].slice == slice) {
+                sliceAlreadyUsed = true;
+                break;
+            }
+        }
+        picoPwmServos[index].sliceHead = !sliceAlreadyUsed;
 
-        // Set initial neutral position (using 'mid' value from config, typically 1500 us)
-        const uint16_t neutral_pulse_us = servoDevConfig->servoCenterPulse; 
-        const uint16_t initial_level = (uint16_t)roundf((float)neutral_pulse_us * US_TO_COUNTS_FACTOR);
-        
-        pwm_set_chan_level(slice, channel, initial_level);
-        
-        // Enable the PWM slice
-        pwm_set_enabled(slice, true);
+        // PWM Frequency = clock / (clkdiv * (wrap + 1)); use the smallest
+        // clkdiv that still fits a full period into the 16-bit wrap
+        // register, then let wrap take up the remaining resolution (same
+        // approach as pwm_motor_pico.c's standard-PWM path).
+        const unsigned pwmRateHz = constrain(servoParams(index)->rate, SERVO_RATE_MIN, SERVO_RATE_MAX);
+        const uint32_t clock = SystemCoreClock; // PICO PWM clock is the CPU clock.
+        const float ticksPerPeriod = (float)clock / (float)pwmRateHz;
+
+        uint32_t clkdiv = (uint32_t)ceilf(ticksPerPeriod / 0xffff);
+        clkdiv = constrain(clkdiv, 1, 255);
+
+        const uint32_t hz = clock / clkdiv; // counter tick rate after the divider
+        const int32_t period = lrintf(ticksPerPeriod / (float)clkdiv);
+        const int32_t wrap = constrain(period - 1, 0, TOPMAX);
+
+        pwm_config config = pwm_get_default_config();
+        pwm_config_set_clkdiv_int(&config, clkdiv);
+        pwm_config_set_wrap(&config, wrap);
+        gpio_set_function(pin, GPIO_FUNC_PWM);
+
+        servoTicksPerUs[index] = (float)hz / 1e6f;
+
+        // Start at the configured center pulse so the servo doesn't jump on
+        // the first real update.
+        const uint32_t initialLevel = constrain(lrintf(servoParams(index)->mid * servoTicksPerUs[index]), 0, TOPMAX);
+        pwm_set_chan_level(slice, channel, initialLevel);
+        pwm_init(slice, &config, true);
+
         picoPwmServos[index].initialised = true;
     }
+
+    return index;
 }
 
-void servoWrite(uint8_t index, float value)
+void picoServoWrite(uint8_t index, float pos)
 {
     if (index >= MAX_SUPPORTED_SERVOS || !picoPwmServos[index].initialised) {
         return;
     }
 
-    // Ensure value is within a reasonable microsecond range (500us to 2500us)
-    // to prevent hardware overflow or out-of-spec pulses.
-    const float clamped_value = fmaxf(PWM_SERVO_MIN, fminf(PWM_SERVO_MAX, value));
-
-    // Convert the microsecond pulse width to PWM duty cycle counts
-    const uint16_t level = (uint16_t)roundf(clamped_value * US_TO_COUNTS_FACTOR);
-
-    // Apply the new duty cycle level to the specific PWM channel
+    const uint32_t level = constrain(lrintf(pos * servoTicksPerUs[index]), 0, TOPMAX);
     pwm_set_chan_level(picoPwmServos[index].slice, picoPwmServos[index].channel, level);
 }
 
-#endif
+void picoServoShutdown(void)
+{
+    for (int index = 0; index < MAX_SUPPORTED_SERVOS; index++) {
+        if (picoPwmServos[index].initialised) {
+            pwm_set_chan_level(picoPwmServos[index].slice, picoPwmServos[index].channel, 0);
+        }
+    }
+}
+
+#endif // defined(PICO) && defined(USE_SERVOS)

@@ -146,7 +146,16 @@ typedef void USART_TypeDef;
 // headers (pg/adc.h, pg/bus_spi.h) and must still parse; these placeholders
 // let their (unused-for-PICO) declarations compile unmodified.
 typedef void TIM_TypeDef;
-typedef void TIM_OCInitTypeDef;
+// TIM_OCInitTypeDef/TIM_ICInitTypeDef: unlike the other placeholders above,
+// these are used BY VALUE (not just by pointer) in drivers/dshot_dpwm.h's
+// motorDmaOutput_t - a struct that must still be declarable for PICO since
+// drivers/dshot.c and cli.c transitively include dshot_dpwm.h unconditionally
+// (dshot_dpwm.c itself, the only file that instantiates motorDmaOutput_t, is
+// excluded for PICO via MCU_EXCLUDES in make/mcu/RP2350.mk - see
+// dshot_bidir_pico.c for PICO's own equivalent telemetry-request bookkeeping).
+// `void` can't be used by value, so these need a real (if inert) struct body.
+typedef struct { uint8_t _unused; } TIM_OCInitTypeDef;
+typedef struct { uint8_t _unused; } TIM_ICInitTypeDef;
 typedef enum { DISABLE = 0, ENABLE = !DISABLE } FunctionalState;
 // DMA_InitTypeDef is used BY VALUE (not just by pointer) in drivers/bus.h's
 // extDevice_t, so it must be a complete type. Use pico-sdk's own

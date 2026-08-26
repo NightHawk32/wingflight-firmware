@@ -27,7 +27,24 @@
 #include "drivers/io.h"
 #include "drivers/dshot.h"
 #include "drivers/dshot_command.h"
-#include "drivers/motor_types.h"
+// NB: upstream Betaflight (see betaflight/src/platform/PICO/dshot_pico.h)
+// includes "drivers/motor_types.h" and uses its motorProtocolTypes_e /
+// motorVTable_t (postInit/telemetryWait/decodeTelemetry/updateInit/isMotorIdle/
+// requestTelemetry/convertExternalToMotor/convertMotorToExternal). Wingflight
+// forked before that motor-API refactor and still has the older, simpler
+// drivers/motor.h contract (motorPwmProtocolTypes_e, and a motorVTable_t with
+// just postInit/enable/disable/shutdown/updateStart/updateComplete/write(index,
+// mode,value)/writeInt/isMotorEnabled - see drivers/motor.c, dshot_bitbang.c,
+// pwm_output_dshot_shared.c for the real, working contract). dshot_pico.c and
+// dshot_bidir_pico.c are adapted to that older contract.
+#include "drivers/motor.h"
+// For motorDmaOutput_t/getMotorDmaOutput() - the cross-backend "shared
+// per-motor DSHOT command state" contract that dshot_command.c's
+// allMotorsAreIdle()/dshotCommandWrite() use unconditionally (regardless of
+// which backend is active). dshot_dpwm.c itself (the STM32 DMA backend that
+// normally provides the getMotorDmaOutput() definition) is excluded for PICO
+// via MCU_EXCLUDES - dshot_pico.c provides its own definition instead.
+#include "drivers/dshot_dpwm.h"
 #include "drivers/time.h"
 
 #include "hardware/pio.h"
@@ -52,12 +69,17 @@ typedef struct motorOutput_s {
 
 extern const PIO dshotPio; // currently only single pio supported => 4 motors.
 
-extern motorProtocolTypes_e dshotMotorProtocol;
+extern motorPwmProtocolTypes_e dshotMotorProtocol;
 
 extern motorOutput_t dshotMotors[MAX_SUPPORTED_MOTORS];
+
+// Number of motors actually configured by dshotPwmDevInit() - not present in
+// Wingflight's dshot.h (unlike upstream Betaflight's), so declared here since
+// only the PICO PIO backend needs it shared between dshot_pico.c and
+// dshot_bidir_pico.c.
+extern uint8_t dshotMotorCount;
 
 float dshotGetPeriodTiming(void);
 
 bool dshot_program_bidir_init(PIO pio, uint sm, int offset, uint pin);
-bool dshotTelemetryWait(void);
 bool dshotDecodeTelemetry(void);
