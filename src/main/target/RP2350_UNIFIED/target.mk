@@ -15,7 +15,7 @@ PICO_FLASH_DEFINES = \
                    -DPICO_FLASH_SPI_CLKDIV=2 \
                    -DPICO_FLASH_SIZE_BYTES=8388608 \
                    -DPICO_BOOT_STAGE2_CHOOSE_W25Q080=1
-FEATURES        += VCP
+FEATURES        += VCP SDCARD_SPI ONBOARDFLASH
 endif
 
 ifneq ($(findstring RP2350B,$(TARGET)),)
@@ -28,7 +28,7 @@ PICO_FLASH_DEFINES = \
                    -DPICO_FLASH_SPI_CLKDIV=2 \
                    -DPICO_FLASH_SIZE_BYTES=8388608 \
                    -DPICO_BOOT_STAGE2_CHOOSE_W25Q080=1
-FEATURES        += VCP
+FEATURES        += VCP SDCARD_SPI ONBOARDFLASH
 endif
 
 ifneq ($(findstring RP2354A,$(TARGET)),)
@@ -39,7 +39,7 @@ DEVICE_FLAGS    += -DPICO_RP2350A=1
 MCU_FLASH_SIZE  := 2048
 PICO_FLASH_DEFINES = \
                    -DPICO_FLASH_SIZE_BYTES=2097152
-FEATURES        += VCP
+FEATURES        += VCP SDCARD_SPI ONBOARDFLASH
 endif
 
 ifneq ($(findstring RP2354B,$(TARGET)),)
@@ -50,11 +50,17 @@ DEVICE_FLAGS    += -DPICO_RP2350A=0
 MCU_FLASH_SIZE  := 2048
 PICO_FLASH_DEFINES = \
                    -DPICO_FLASH_SIZE_BYTES=2097152
-FEATURES        += VCP
+FEATURES        += VCP SDCARD_SPI ONBOARDFLASH
 endif
 
 DEVICE_FLAGS    += $(PICO_FLASH_DEFINES)
 
-# Sensor drivers (accgyro/barometer/compass) are not yet wired up for RP2350 -
-# deferred to a later porting phase once bus_i2c_pico/bus_spi_pico are validated.
-TARGET_SRC =
+# Every accgyro/barometer/compass driver is compiled in and runtime-detected
+# from the CLI config (resource GYRO_CS/GYRO_EXTI, gyro_1_bustype,
+# baro_hardware, mag_hardware, ...) - no board-specific code needed here,
+# mirroring src/main/target/STM32_UNIFIED/target.mk's identical pattern.
+TARGET_SRC = \
+    $(addprefix drivers/accgyro/,$(notdir $(wildcard $(SRC_DIR)/drivers/accgyro/*.c))) \
+    $(ROOT)/lib/main/BoschSensortec/BMI270-Sensor-API/bmi270_maximum_fifo.c \
+    $(addprefix drivers/barometer/,$(notdir $(wildcard $(SRC_DIR)/drivers/barometer/*.c))) \
+    $(addprefix drivers/compass/,$(notdir $(wildcard $(SRC_DIR)/drivers/compass/*.c)))

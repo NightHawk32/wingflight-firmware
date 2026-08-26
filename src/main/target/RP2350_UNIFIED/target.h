@@ -88,7 +88,82 @@
 
 #define USE_ADC
 
+// Generic, auto-detecting sensor/storage set - mirrors STM32_UNIFIED's
+// target.h. Board-specific pin/bus assignment (GYRO_CS/GYRO_EXTI resources,
+// gyro_1_bustype/gyro_1_spibus, baro_hardware, flash_spi_bus, etc.) happens
+// entirely via the runtime CLI config, not compile-time target code - see
+// wingflight-targets' example .config files. Compiling every known chip
+// driver in and letting runtime detection pick the right one is the
+// intended model, same as every STM32 unified target.
 #define USE_ACC
+#define USE_GYRO
+
+#undef USE_ACC_MPU6050
+#undef USE_GYRO_MPU6050
+#undef USE_ACC_MPU6500
+#undef USE_GYRO_MPU6500
+#define USE_ACC_SPI_MPU6500
+#define USE_GYRO_SPI_MPU6500
+#define USE_ACC_SPI_MPU6000
+#define USE_GYRO_SPI_MPU6000
+#define USE_ACC_SPI_ICM20689
+#define USE_GYRO_SPI_ICM20689
+#undef USE_ACCGYRO_LSM6DSO
+#undef USE_ACCGYRO_BMI160
+#define USE_ACCGYRO_BMI270
+#define USE_ACCGYRO_SPI_BMI323
+#define USE_ACCGYRO_SPI_BMI088
+#define USE_GYRO_SPI_ICM42605
+#define USE_GYRO_SPI_ICM42688P
+#define USE_ACC_SPI_ICM42605
+#define USE_ACC_SPI_ICM42688P
+
+#define USE_MAG
+#define USE_MAG_DATA_READY_SIGNAL
+#define USE_MAG_HMC5883
+#define USE_MAG_SPI_HMC5883
+#define USE_MAG_QMC5883
+#define USE_MAG_LIS3MDL
+#define USE_MAG_AK8963
+#define USE_MAG_MPU925X_AK8963
+#define USE_MAG_SPI_AK8963
+#define USE_MAG_AK8975
+
+#define USE_BARO
+#define USE_BARO_MS5611
+#define USE_BARO_SPI_MS5611
+#define USE_BARO_BMP085
+#define USE_BARO_BMP280
+#define USE_BARO_SPI_BMP280
+#define USE_BARO_BMP388
+#define USE_BARO_SPI_BMP388
+#define USE_BARO_LPS
+#define USE_BARO_SPI_LPS
+#define USE_BARO_QMP6988
+#define USE_BARO_SPI_QMP6988
+#define USE_BARO_DPS310
+#define USE_BARO_SPI_DPS310
+#define USE_BARO_BMP581
+#define USE_BARO_SPI_BMP581
+
+// Blackbox storage, decided 2026-08-26 (docs/RP2350-Porting-Plan.md): a
+// dedicated external SPI flash chip and/or an SD card over SPI - not the
+// on-die/QSPI firmware flash (see the porting plan for why). SDIO is
+// STM32-hardware-specific and not applicable to PICO, so SPI-only for the
+// SD card, matching the `SDCARD_SPI`/`ONBOARDFLASH` FEATURES in
+// RP2350_UNIFIED/target.mk (not `SDCARD_SDIO`).
+#define USE_SDCARD
+#define USE_SDCARD_SPI
+
+#define USE_FLASHFS
+#define USE_FLASHFS_LOOP
+#define USE_FLASH_TOOLS
+#define USE_FLASH_M25P16
+#define USE_FLASH_W25N01G
+#define USE_FLASH_W25M
+#define USE_FLASH_W25M512
+#define USE_FLASH_W25M02G
+#define USE_FLASH_W25Q128FV
 
 #define USE_VCP
 
@@ -161,8 +236,6 @@
 // Various untested or unsupported elements are undefined below
 
 #undef USE_RX_SPI
-#undef USE_BARO
-#undef USE_COMPASS
 #undef USE_GYRO_REGISTER_DUMP
 #undef USE_GPS_RESCUE
 #undef USE_GPS_NAV
@@ -197,7 +270,9 @@
 #undef USE_TELEMETRY_SBUS2
 #undef USE_TELEMETRY_CASTLE
 #undef USE_SPORT_MASTER
-#undef USE_BLACKBOX
+// USE_BLACKBOX stays enabled (common_pre.h default) now that a real storage
+// backend is in scope - see the SDCARD/FLASH block above and
+// docs/RP2350-Porting-Plan.md's blackbox storage decision.
 
 #undef USE_SERIAL_4WAY_BLHELI_INTERFACE
 #undef USE_SERIAL_4WAY_BLHELI_BOOTLOADER
