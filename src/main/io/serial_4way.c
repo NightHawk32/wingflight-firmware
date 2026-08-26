@@ -51,6 +51,10 @@
 
 #if defined(USE_HAL_DRIVER)
 #define Bit_RESET GPIO_PIN_RESET
+#elif defined(PICO)
+// PICO's IORead() returns a plain bool (gpio_get()); the SPL/HAL pin-state
+// enums don't exist. "reset" = low = 0/false.
+#define Bit_RESET false
 #endif
 
 #define USE_TXRX_LED

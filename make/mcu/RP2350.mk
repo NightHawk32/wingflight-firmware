@@ -404,11 +404,8 @@ MCU_COMMON_SRC = \
             drivers/system_rp2350.c \
             drivers/serial_uart_pico.c \
             drivers/multicore.c \
-            drivers/io_pico.c
-
-# light_ws2811strip_pico.c intentionally not built - USE_LED_STRIP is
-# undefined for this target (see RP2350_UNIFIED/target.h). File left on disk,
-# unused, as a starting point for a future PICO LED-strip rewrite.
+            drivers/io_pico.c \
+            drivers/light_ws2811strip_pico.c
 
 # Files replaced by the RP2350-specific equivalents above.
 # timer.c/timer_common.c/dma_reqmap.c are the STM32 hardware-timer and
@@ -432,7 +429,20 @@ MCU_EXCLUDES = \
             drivers/pwm_output_dshot_hal.c \
             drivers/pwm_output_dshot_hal_hal.c
 
-MSC_SRC :=
+# USB-MSC over TinyUSB. usb_msc_pico.c implements the tud_msc_* callbacks
+# against the generic USBD_STORAGE_cb_TypeDef fops interface and carries its
+# own internal SD-SPI backend, so msc/usbd_storage_sd_spi.c must NOT be
+# listed here (it would duplicate USBD_MSC_MICRO_SD_SPI_fops); the emfat
+# flash-log backend (msc/usbd_storage_emfat.c + emfat*.c) is shared with
+# STM32 unchanged. NB source.mk appends $(MSC_SRC) under the SDCARD_SPI and
+# ONBOARDFLASH feature blocks (both enabled in RP2350_UNIFIED/target.mk) -
+# duplicate entries are collapsed by make's $^ in the link rule.
+MSC_SRC = \
+            drivers/usb_msc_common.c \
+            drivers/usb_pico/usb_msc_pico.c \
+            msc/usbd_storage_emfat.c \
+            msc/emfat.c \
+            msc/emfat_file.c
 
 DEVICE_STDPERIPH_SRC := \
             $(PICO_LIB_SRC) \

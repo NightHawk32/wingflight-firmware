@@ -1331,3 +1331,106 @@ be invisible to STM32F4/F7/G4/H7 builds:
   remains a separate, not-yet-tackled follow-up per the twelfth/thirteenth
   iterations - the storage *backend* it would expose now exists, but the
   TinyUSB MSC adapter still needs re-enabling and wiring to it).
+
+### Sixteenth iteration (2026-08-26) — USB-MSC, qmp6988 verdict, multicore flash safety, ESC 4-way, LED strip
+
+Five open points tackled in one pass. All verified by clean builds of all
+four RP2350/RP2354 targets plus `STM32F405`/`STM32F7X2`/`STM32H743`/
+`STM32G47X` (byte-identical `.elf` sizes to the previous baselines,
+confirming zero effect on existing platforms despite several shared-file
+edits). None of it is hardware-tested - same caveat as everything else on
+this branch.
+
+1. **USB-MSC enabled.** `MSC_SRC` in `RP2350.mk` now builds
+   `drivers/usb_msc_common.c`, `drivers/usb_pico/usb_msc_pico.c` (the
+   already-written TinyUSB `tud_msc_*` adapter), and the shared emfat
+   flash-log backend (`msc/usbd_storage_emfat.c`, `emfat*.c`).
+   `msc/usbd_storage_sd_spi.c` is deliberately NOT listed - `usb_msc_pico.c`
+   carries its own SD-SPI fops and listing both would duplicate the symbol.
+   Fixes needed along the way: `msc/usbd_storage.h` got a PICO branch that
+   includes only the lightweight `usbd_msc_mem.h` struct header (the non-HAL
+   default also pulls STM32's `usbd_msc_core.h` - the original reason MSC
+   was deferred in the sixth iteration); `#define USE_USB_MSC` had to be
+   explicit in `RP2350_UNIFIED/target.h` (common_pre.h only defines it
+   inside per-STM32-family blocks - the first build after wiring MSC_SRC
+   linked "successfully" with every MSC file compiled to an empty
+   translation unit and an identical binary, a nearly-invisible trap);
+   `mscWaitForButton()` (usb_msc_common.c) now pumps `mscTask()` under
+   `#if defined(PICO)` because TinyUSB is polled, not interrupt-driven -
+   without it the MSC device would enumerate and then never answer a SCSI
+   command (mirrors upstream Betaflight's loop); and `usb_msc_pico.c` used
+   upstream's `cmpTimeMs()`, which Wingflight doesn't have (plain wrap-safe
+   `millis() - start` subtraction instead).
+2. **qmp6988 double-promotion: no latent STM32 bug.** Tested empirically by
+   restoring the pre-fix file and compiling it for `STM32F7X2`: zero
+   diagnostics. The `-Wdouble-promotion` error only manifests under PICO's
+   `-mfloat-abi=softfp` M33 configuration, not STM32's hard-float setups,
+   and the old double-precision calibration arithmetic was functionally
+   harmless (marginally *more* precise). The fifteenth iteration's "worth a
+   quick check on STM32" note is hereby closed: nothing to fix there.
+3. **Multicore flash safety (the real prerequisite, not the ring buffers).**
+   `core1_main()` (drivers/multicore.c) now registers itself via
+   `flash_safe_execute_core_init()` on entry (and deinits on
+   MULTICORE_CMD_STOP), and `config_streamer.c`'s PICO flash write resolved
+   its `// TODO: synchronise second core`: the erase+program now runs inside
+   pico-sdk's `flash_safe_execute()`, which parks core 1 outside XIP for the
+   duration. Without USE_MULTICORE this degrades to exactly the IRQ-disable
+   it replaces; with it, a config save can no longer bus-fault core 1
+   fetching the flash-resident cli/pg sections mid-erase. Verified both
+   configurations build (USE_MULTICORE via `EXTRA_FLAGS=-DUSE_MULTICORE`
+   clean build). USE_MULTICORE itself stays opt-in; the ring-buffer task
+   consumer from the Phase 5 design remains future work now that its safety
+   prerequisite exists.
+4. **ESC 4-way / AM32/BLHeli forward-programming enabled.** The eleventh
+   iteration's assumption that `io/serial_4way.c` "needs its bootloader
+   protocol ported to a PICO-compatible I/O path" turned out to be wrong on
+   inspection: all three files (serial_4way.c, _avrootloader.c,
+   _stk500v2.c, ~2500 lines) are written purely against the generic
+   IORead/IOHi/IOLo/IOConfigGPIO API plus micros() bit timing - all of which
+   PICO now implements (the ninth iteration's pull/open-drain work was the
+   real enabler). Actual gaps fixed: `Bit_RESET` defined as `false` for
+   PICO (SPL/HAL pin-state enums don't exist; IORead returns bool);
+   `dshot_pico.c` now registers each motor's IO in the shared
+   `pwmOutputPort_t motors[]` array (esc4wayInit() enumerates ESC pins
+   exclusively through `pwmGetMotors()`, the same contract STM32's
+   dshot_dpwm.c fills - previously 4-way would have found zero ESCs under
+   DSHOT); and both `dshotEnableMotors()` and `pwmEnableMotors()` now
+   re-route their pins' function mux (pio_gpio_init()/GPIO_FUNC_PWM) on
+   enable, because a 4-way session switches motor pins to plain SIO and
+   `esc4wayDeinit()`'s IOCFG_AF_PP cannot restore a pico function select
+   (mirrors STM32's dshotPwmEnableMotors() re-applying the AF). The
+   target.h #undefs for the 4way/forward-programming flags are gone;
+   common_post.h's derivation re-enables USE_SERIAL_4WAY_BLHELI_INTERFACE.
+5. **LED strip enabled; PIO-UART deferral made explicit.**
+   - `light_ws2811strip_pico.c` rewritten against Wingflight's actual
+     contract instead of upstream's. Key insight that made the "needs a
+     core-loop rewrite" assessment obsolete: the shared core packs ONE
+     uint32 word PER LED BIT (`BIT_COMPARE_1/0` timer-compare values), and
+     a PIO state machine configured to shift right with an autopull
+     threshold of 1 consumes exactly that stream - each DMA'd word yields
+     its LSB as the wire bit, so with BIT_COMPARE_1=1/BIT_COMPARE_0=0 the
+     shared buffer is already a valid PIO bitstream and the shared core
+     loop needed no PICO branch at all. This also preserves the per-LED
+     format-inversion feature (mixed 24-bit GRB / 32-bit GRBW strips),
+     which a per-LED packed-word approach with a fixed autopull threshold
+     could not. The 32x DMA-bandwidth overhead is irrelevant against the
+     800kHz wire rate. Timing: 10 PIO cycles/bit (T0H 375ns, T1H 750ns).
+     Also fixed `io/ledstrip.c`'s pgReset default-pin lookup
+     (`timerioTagGetByUsage()` is STM32-timer-map-only; PICO defaults to
+     IO_TAG_NONE, pin comes from `resource LED_STRIP` in the CLI config),
+     and `BIT_COMPARE_1/0` are assigned in the driver's hardware init
+     rather than redefined (light_ws2811strip.c owns the globals -
+     the first attempt hit a duplicate-definition link error).
+   - **PIO extra UARTs stay deferred, now as an explicit decision**: the
+     upstream implementation (betaflight/src/platform/PICO/uart/, ~1200
+     lines) is built on Betaflight's newer uartDevice_t serial architecture
+     whose Wingflight adaptation was already attempted and abandoned in the
+     second build iteration. Re-porting it means restructuring the working
+     hardware-UART driver (the FC's RX link) around a dual hw/PIO dispatch
+     with bit-banged RX timing that cannot be validated without hardware -
+     bad risk/benefit while serial_uart_pico.c is the one proven-shaped
+     serial path. Revisit when real hardware is available, or if more than
+     2 UARTs + VCP are actually needed.
+   - RAM watch: RP2350B is now at 78.6% RAM (412KB/512KB) with everything
+     enabled (sensors, MSC+emfat, blackbox, LED strip, 4way). Still
+     headroom, but the next big feature should check this first.

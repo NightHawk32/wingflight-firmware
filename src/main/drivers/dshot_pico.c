@@ -30,6 +30,7 @@
 
 #include "dshot_pico.h"
 #include "common/maths.h"
+#include "drivers/pwm_output.h" // shared motors[] array, for 4way access
 
 
 static int32_t outgoingPacket[MAX_SUPPORTED_MOTORS]; // 16-bit packet or -1 for none pending.
@@ -281,7 +282,18 @@ static void dshotUpdateComplete(void)
 static bool dshotEnableMotors(void)
 {
     bprintf("pico dshotEnableMotors (useDshotTelemetry = %d)", useDshotTelemetry);
-    // No special processing required
+    // Re-route each motor pin's function mux back to this PIO block. Matters
+    // after an ESC 4-way session (io/serial_4way.c), which switches motor
+    // pins to plain SIO GPIO via IOConfigGPIO() for bit-banging and cannot
+    // itself know how to restore a PIO function (its esc4wayDeinit() applies
+    // IOCFG_AF_PP, which on PICO is plain output). Idempotent when already
+    // routed - mirrors dshot_dpwm.c's dshotPwmEnableMotors() re-applying the
+    // pin AF for the same reason on STM32.
+    for (int motorIndex = 0; motorIndex < dshotMotorCount; motorIndex++) {
+        if (dshotMotors[motorIndex].configured) {
+            pio_gpio_init(dshotMotors[motorIndex].pio, dshotMotors[motorIndex].pinIndex);
+        }
+    }
     return true;
 }
 
@@ -432,6 +444,13 @@ motorDevice_t *dshotPwmDevInit(const motorDevConfig_t *motorConfig, uint8_t moto
         dshotMotors[motorIndex].pio = dshotPio;
         dshotMotors[motorIndex].pio_sm = pio_sm;
         dshotMotors[motorIndex].offset = offset;
+
+        // Also register in the shared pwmOutputPort_t motors[] array
+        // (pwm_output.h): io/serial_4way.c's esc4wayInit() enumerates ESC
+        // pins exclusively through pwmGetMotors()[i].io/.enabled, the same
+        // way STM32's dshot_dpwm.c fills it in for 4way access.
+        motors[motorIndex].io = io;
+        motors[motorIndex].enabled = true;
 
         bool dshotInit;
         if (useDshotTelemetry) {

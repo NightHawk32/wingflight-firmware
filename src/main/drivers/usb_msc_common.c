@@ -126,6 +126,12 @@ void mscWaitForButton(void)
     while (mscCheckButton());
     delay(DEBOUNCE_TIME_MS);
     while (true) {
+#if defined(PICO)
+        // TinyUSB is polled, not interrupt-driven: without pumping tud_task()
+        // here the MSC device would enumerate but never answer a single SCSI
+        // command (matches upstream Betaflight's mscWaitForButton()).
+        mscTask();
+#endif
         asm("NOP");
         if (mscCheckButton()) {
             systemResetFromMsc();

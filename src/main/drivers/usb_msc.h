@@ -27,6 +27,12 @@
 void mscInit(void);
 bool mscCheckBootAndReset(void);
 uint8_t mscStart(void);
+// Service the USB device stack while in MSC mode. Only needed (and only
+// defined) on platforms whose USB stack is polled rather than
+// interrupt-driven - PICO's TinyUSB (usb_pico/usb_msc_pico.c's tud_task()
+// pump). STM32's USB-OTG MSC path is fully interrupt-driven and defines no
+// mscTask(); mscWaitForButton() only calls this under #if defined(PICO).
+void mscTask(void);
 bool mscCheckButton(void);
 void mscWaitForButton(void);
 void systemResetToMsc(int timezoneOffsetMinutes);

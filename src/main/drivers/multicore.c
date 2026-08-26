@@ -23,6 +23,7 @@
 #include "platform/multicore.h"
 #include "pico/multicore.h"
 #include "pico/util/queue.h"
+#include "pico/flash.h"
 
 #ifdef USE_MULTICORE
 
@@ -38,7 +39,20 @@ static queue_t core1_queue;
 
 static void core1_main(void)
 {
-    // This loop is run on the second core
+    // Register this core as a flash_safe_execute() lockout victim so core 0
+    // can park it (out of XIP) for the duration of a flash erase/program -
+    // config_streamer.c's PICO flash writes go through flash_safe_execute(),
+    // which returns PICO_ERROR_NOT_POSSIBLE once core 1 is launched unless
+    // this has been called here. Without the lockout, core 1 fetching code
+    // from flash (e.g. the cli/pg sections kept in flash by the RunFromHybrid
+    // layout) mid-erase would bus-fault or hang.
+    flash_safe_execute_core_init();
+
+    // This loop is run on the second core. For now the RPC consumer below IS
+    // core 1's task loop; dedicated lock-free ring-buffer consumers for
+    // latency-tolerant work (USB-MSC block I/O, blackbox flush, CLI/MSP
+    // parsing) are designed in docs/RP2350-Porting-Plan.md's "Core-1 task
+    // consumer design" and get added here as those producers materialise.
     while (true) {
 
         core_message_t msg;
@@ -59,6 +73,7 @@ static void core1_main(void)
                 }
                 break;
             case MULTICORE_CMD_STOP:
+                flash_safe_execute_core_deinit();
                 multicore_reset_core1();
                 return; // Exit the core1_main function
             default:
@@ -66,8 +81,6 @@ static void core1_main(void)
                 break;
             }
         }
-
-        // TODO call scheduler here for core 1 tasks
 
         tight_loop_contents();
     }

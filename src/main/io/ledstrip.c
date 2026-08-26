@@ -135,8 +135,13 @@ void pgResetFn_ledStripConfig(ledStripConfig_t *ledStripConfig)
     ledStripConfig->ledstrip_flicker_rate = 50;
     ledStripConfig->ledstrip_fade_rate = 50;
     ledStripConfig->ledstrip_inverted_format = 0;
-#ifndef UNIT_TEST
+#if !defined(UNIT_TEST) && !defined(PICO)
     ledStripConfig->ioTag = timerioTagGetByUsage(TIM_USE_LED, 0);
+#else
+    // No STM32-style timer pin-usage map to derive a default from on PICO
+    // (drivers/timer_common.c is excluded there); the LED strip pin comes
+    // solely from the CLI config (resource LED_STRIP 1 <pin>).
+    ledStripConfig->ioTag = IO_TAG_NONE;
 #endif
 }
 
