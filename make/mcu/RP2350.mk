@@ -405,7 +405,8 @@ MCU_COMMON_SRC = \
             drivers/serial_uart_pico.c \
             drivers/multicore.c \
             drivers/io_pico.c \
-            drivers/light_ws2811strip_pico.c
+            drivers/light_ws2811strip_pico.c \
+            drivers/serial_softserial_pico.c
 
 # Files replaced by the RP2350-specific equivalents above.
 # timer.c/timer_common.c/dma_reqmap.c are the STM32 hardware-timer and
@@ -423,6 +424,7 @@ MCU_EXCLUDES = \
             drivers/timer.c \
             drivers/timer_common.c \
             drivers/dma_reqmap.c \
+            drivers/serial_softserial.c \
             drivers/dshot_dpwm.c \
             drivers/pwm_output_dshot.c \
             drivers/pwm_output_dshot_shared.c \
