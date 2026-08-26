@@ -9,6 +9,7 @@ on:
 env:
 
   TARGETS: unified MATEKF405 MATEKF411 MATEKF722 MATEKH743
+  RP2350_TARGETS: RP2350A RP2350B RP2354A RP2354B
 
 jobs:
 
@@ -19,6 +20,8 @@ jobs:
     steps:
     - name: Check out repository
       uses: actions/checkout@v4
+      with:
+        submodules: recursive
 
     - name: Install ARM tools
       run: make arm_sdk_install
@@ -31,12 +34,20 @@ jobs:
     - name: Build HEX files for multiple targets
       run: make ${{ env.TARGETS }} FC_VER_SUFFIX="${{ env.GIT_VER }}" FLASH_CONFIG_ERASE=yes
 
-    - name: Move HEX
-      run: mv -v obj/*STM32*.hex .
+    - name: Build RP2350/RP2354 targets
+      run: make ${{ env.RP2350_TARGETS }} FC_VER_SUFFIX="${{ env.GIT_VER }}" FLASH_CONFIG_ERASE=yes
+
+    - name: Build UF2 image for RP2350B
+      run: make TARGET=RP2350B FC_VER_SUFFIX="${{ env.GIT_VER }}" uf2
+
+    - name: Move HEX/UF2
+      run: mv -v obj/*STM32*.hex obj/*RP235*.hex obj/*.uf2 .
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: wingflight-${{ env.GIT_VER }}
-        path: wingflight*.hex
+        path: |
+          wingflight*.hex
+          wingflight*.uf2
 
