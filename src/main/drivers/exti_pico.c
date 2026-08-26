@@ -43,10 +43,15 @@ void EXTIConfig(IO_t io, extiCallbackRec_t *cb, int irqPriority, ioConfig_t conf
     uint32_t gpio = IO_Pin(io);
 
     UNUSED(irqPriority); // Just stick with default GPIO irq priority for now
-    UNUSED(config); // TODO consider pullup/pulldown etc. Needs fixing first in platform.h
 
     // Ensure the GPIO is initialised and not being used for some other function
     gpio_init(gpio);
+
+    // Decode pull bits the same way IOConfigGPIO() (io_pico.c) does - see
+    // IO_CONFIG() in drivers/io.h for the PICO config-bit encoding.
+    const bool pullUp = (config >> 1) & 0x01;
+    const bool pullDown = (config >> 2) & 0x01;
+    gpio_set_pulls(gpio, pullUp, pullDown);
 
     extiChannelRec_t *rec = &extiChannelRecs[gpio];
     rec->handler = cb;
