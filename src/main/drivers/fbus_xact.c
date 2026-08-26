@@ -25,6 +25,7 @@
 
 #include "common/time.h"
 #include "common/utils.h"
+#include "drivers/time.h"
 #include "rx/frsky_crc.h"
 #include "rx/fbus.h"
 
@@ -61,6 +62,13 @@ static uint8_t xactReadServoIndex = 0;
 static uint8_t xactReadParamIndex = 0;
 static uint8_t xactLastReadPhyID = 0;  // Track last read physical ID for polling
 static uint8_t xactLastReadFieldId = 0;  // Track last read field ID for response matching
+
+// Not every field is supported by every servo (e.g. older units may not answer a Firmware
+// Version or Working Mode/Max Angle read at all). Give a field this long to answer before
+// skipping it and moving on, rather than blocking the rest of the read forever -- mirrors
+// FrSky's own "XAct" ETHOS tool giving up on an unresponsive field after a few tries.
+#define XACT_FIELD_READ_TIMEOUT_US 200000  // 200ms
+static timeUs_t xactFieldReadStartUs = 0;
 
 // Field IDs every XACT servo supports, read in order. Firmware version is read early (matching
 // FrSky's own tool) since it decides whether the "series 65" extended fields below get read too.
@@ -105,6 +113,21 @@ static uint8_t xactReadFieldIdAt(uint8_t index)
         return xactReadFieldIdsBase[index];
     }
     return xactReadFieldIdsExtended[index - XACT_READ_PARAM_COUNT_BASE];
+}
+
+// Move past the current field (whether it was actually answered or timed out) and either start
+// reading the next one or mark the whole read complete. Shared by the success path
+// (fbusXactNotifyResponse) and the per-field timeout path in fbusXactProcessQueue.
+static void xactAdvanceReadField(void)
+{
+    xactReadParamIndex++;
+
+    if (xactReadParamIndex >= xactReadTotalParamCount(xactReadServoIndex)) {
+        xactReadState = XACT_READ_STATE_COMPLETE;
+        xactServos[xactReadServoIndex].paramsReady = true;
+    } else {
+        xactReadState = XACT_READ_STATE_READING;
+    }
 }
 
 // Helper function to fill physical ID check bits
@@ -243,6 +266,13 @@ bool fbusXactProcessQueue(fbusMasterDownlink_t *downlink)
 
     // Priority 1: Check if we need to send 0x10 poll frame after 0x30 read
     if (xactReadState == XACT_READ_STATE_WAIT_POLL && servo != NULL) {
+        // This field hasn't answered in time -- skip it (leaving its cached value at whatever
+        // it already was, typically 0) and move on rather than blocking every later field.
+        if (cmpTimeUs(micros(), xactFieldReadStartUs) > XACT_FIELD_READ_TIMEOUT_US) {
+            xactAdvanceReadField();
+            return false;
+        }
+
         // Send 0x10 DATA frame to poll for the response
         downlink->length = 0x08;
         downlink->phyID = xactLastReadPhyID;
@@ -284,6 +314,7 @@ bool fbusXactProcessQueue(fbusMasterDownlink_t *downlink)
             // Save the physical ID and field ID for the next poll frame
             xactLastReadPhyID = servo->phyID;
             xactLastReadFieldId = fieldId;
+            xactFieldReadStartUs = micros();
 
             // Transition to wait for poll state (don't increment param index yet)
             xactReadState = XACT_READ_STATE_WAIT_POLL;
@@ -647,15 +678,5 @@ void fbusXactNotifyResponse(uint8_t phyID, uint8_t fieldId)
         return;
     }
 
-    // Move to next parameter
-    xactReadParamIndex++;
-
-    // Check if we've read all parameters
-    if (xactReadParamIndex >= xactReadTotalParamCount(xactReadServoIndex)) {
-        xactReadState = XACT_READ_STATE_COMPLETE;
-        xactServos[xactReadServoIndex].paramsReady = true;
-    } else {
-        // Continue reading next parameter
-        xactReadState = XACT_READ_STATE_READING;
-    }
+    xactAdvanceReadField();
 }
