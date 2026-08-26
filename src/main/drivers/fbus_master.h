@@ -108,3 +108,10 @@ void fbusMasterInit(void);
 
 // Restarts sensor discovery (used by XACT servo programming before a scan)
 void fbusMasterStartDiscovery(void);
+
+// Diagnostics: 0 = still sweeping every Physical ID (FBUS_MASTER_SCAN_PHY_ID), 1 = polling the
+// Physical IDs already found (FBUS_MASTER_QUERY_PHY_ID)
+uint8_t fbusMasterGetTelemetryState(void);
+
+// Diagnostics: how many Physical IDs the master's own phys-ID sweep has found so far
+uint8_t fbusMasterGetPhysIdsFoundCount(void);

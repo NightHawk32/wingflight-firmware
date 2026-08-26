@@ -364,9 +364,19 @@ void fbusMasterUpdate(timeUs_t currentTimeUs)
     readBytes = 0;
 }
 
-bool fbusMasterIsEnabled(void) 
-{ 
+bool fbusMasterIsEnabled(void)
+{
     return fbusMasterPort != NULL;
+}
+
+uint8_t fbusMasterGetTelemetryState(void)
+{
+    return (uint8_t)fbusMasterTelemetryState;
+}
+
+uint8_t fbusMasterGetPhysIdsFoundCount(void)
+{
+    return physIdsfound;
 }
 
 void fbusMasterInit(void)
