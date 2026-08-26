@@ -291,9 +291,11 @@ uint8_t mscStart(void)
             msc_storage->Init(0);
         }
         {
+            // Wingflight has no cmpTimeMs() (upstream-Betaflight-only helper);
+            // plain unsigned wrap-safe subtraction is equivalent here.
             const uint32_t start = millis();
             while (msc_storage->IsReady && msc_storage->IsReady(0) != 0) {
-                if (cmpTimeMs(millis(), start) > MSC_SD_INIT_TIMEOUT) {
+                if (millis() - start > MSC_SD_INIT_TIMEOUT) {
                     return 1; // error
                 }
             }

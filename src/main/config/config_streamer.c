@@ -30,6 +30,7 @@
 #if defined(PICO)
 #include "hardware/flash.h"
 #include "hardware/sync.h"
+#include "pico/flash.h"
 #endif
 
 #if !defined(CONFIG_IN_FLASH)
@@ -366,6 +367,26 @@ static void getFLASHSectorForEEPROM(uint32_t *bank, uint32_t *sector)
 #endif
 #endif // CONFIG_IN_FLASH
 
+#if defined(CONFIG_IN_FLASH) && defined(PICO)
+// Erase+program callback run by flash_safe_execute() with interrupts off and
+// (under USE_MULTICORE) core 1 parked outside XIP - see write_word() below.
+typedef struct picoFlashWriteOp_s {
+    uint32_t flashOffset;
+    const uint8_t *data;
+} picoFlashWriteOp_t;
+
+static void picoFlashWriteUnsafe(void *param)
+{
+    const picoFlashWriteOp_t *op = (const picoFlashWriteOp_t *)param;
+
+    if ((op->flashOffset % FLASH_SECTOR_SIZE) == 0) {
+        flash_range_erase(op->flashOffset, FLASH_SECTOR_SIZE);
+    }
+
+    flash_range_program(op->flashOffset, op->data, CONFIG_STREAMER_BUFFER_SIZE);
+}
+#endif
+
 // FIXME the return values are currently magic numbers
 static int write_word(config_streamer_t *c, config_streamer_buffer_align_type_t *buffer)
 {
@@ -441,18 +462,20 @@ static int write_word(config_streamer_t *c, config_streamer_buffer_align_type_t 
 
 #elif defined(CONFIG_IN_FLASH) && defined(PICO)
 
-    // TODO: synchronise second core, see e.g. pico-examples flash_program (uses flash_safe_execute).
-    const uint32_t flashOffset = (uint32_t)c->address - XIP_BASE;
+    // flash_safe_execute() disables interrupts on this core and - when core 1
+    // is running and has registered via flash_safe_execute_core_init() (see
+    // core1_main() in drivers/multicore.c) - parks the other core outside XIP
+    // for the duration, so the erase/program can't collide with core 1
+    // fetching code from flash. Without USE_MULTICORE core 1 is never
+    // launched and this degrades to the plain IRQ-disable it replaces.
+    const picoFlashWriteOp_t op = {
+        .flashOffset = (uint32_t)c->address - XIP_BASE,
+        .data = (const uint8_t *)buffer,
+    };
 
-    const uint32_t interrupts = save_and_disable_interrupts();
-
-    if ((flashOffset % FLASH_SECTOR_SIZE) == 0) {
-        flash_range_erase(flashOffset, FLASH_SECTOR_SIZE);
+    if (flash_safe_execute(picoFlashWriteUnsafe, (void *)&op, UINT32_MAX) != PICO_OK) {
+        return -2;
     }
-
-    flash_range_program(flashOffset, (const uint8_t *)buffer, CONFIG_STREAMER_BUFFER_SIZE);
-
-    restore_interrupts(interrupts);
 
 #elif defined(CONFIG_IN_FLASH)
 

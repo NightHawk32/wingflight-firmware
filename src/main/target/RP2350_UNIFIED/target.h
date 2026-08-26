@@ -167,7 +167,12 @@
 
 #define USE_VCP
 
-#undef USE_USB_MSC
+// USB-MSC over TinyUSB (drivers/usb_pico/usb_msc_pico.c implements the
+// tud_msc_* callbacks against the SD-SPI / flashfs-emfat storage backends,
+// wired via make/mcu/RP2350.mk's MSC_SRC). Must be defined here explicitly:
+// common_pre.h only defines USE_USB_MSC inside its per-STM32-family blocks,
+// which PICO never enters.
+#define USE_USB_MSC
 
 #define USE_SERIALRX_SBUS
 
@@ -204,6 +209,11 @@
 #define PIO_DSHOT_INDEX    0
 #endif
 
+// Reserved for PIO-based extra UARTs - NOT implemented: serial is hardware
+// uart0/uart1 only (serial_uart_pico.c). The earlier PIO-UART port was
+// abandoned (upstream's ~1200-line uart/ subsystem is built on Betaflight's
+// newer uartDevice_t serial architecture); see docs/RP2350-Porting-Plan.md
+// for the deliberate deferral rationale.
 #ifndef PIO_UART_INDEX
 #define PIO_UART_INDEX     1
 #endif
@@ -221,17 +231,12 @@
 #undef USE_FRSKYOSD
 #undef USE_MSP_DISPLAYPORT
 
-// LED strip: wingflight's shared drivers/light_ws2811strip.c bakes in the
-// STM32 timer-DMA bit-pattern-buffer approach (ledStripDMABuffer,
-// updateLEDDMABuffer()) directly rather than calling out to a portable
-// per-family hook, so it is not compatible as-is with betaflight's
-// PIO+DMA-based light_ws2811strip_pico.c (which expects a completely
-// different API: ws2811LedStripInit(ioTag, format)/
-// ws2811LedStripUpdateTransferBuffer(), neither of which exist in
-// wingflight's header). Deferred - needs a PICO-specific rewrite of
-// light_ws2811strip.c's core update loop, not just the hardware driver.
-// See docs/RP2350-Porting-Plan.md.
-#undef USE_LED_STRIP
+// LED strip stays enabled (common_pre.h default): light_ws2811strip_pico.c
+// was rewritten against wingflight's real contract - the shared
+// one-word-per-bit ledStripDMABuffer stream is consumed directly by a PIO
+// state machine shifting right with an autopull threshold of 1 (each DMA'd
+// word yields its LSB as the wire bit, BIT_COMPARE_1=1/BIT_COMPARE_0=0), so
+// the shared core loop needed no PICO branch at all.
 
 // Various untested or unsupported elements are undefined below
 
@@ -274,19 +279,14 @@
 // backend is in scope - see the SDCARD/FLASH block above and
 // docs/RP2350-Porting-Plan.md's blackbox storage decision.
 
-#undef USE_SERIAL_4WAY_BLHELI_INTERFACE
-#undef USE_SERIAL_4WAY_BLHELI_BOOTLOADER
-#undef USE_SERIAL_4WAY_SK_BOOTLOADER
+// ESC 4-way / AM32/BLHeli forward-programming stays enabled (common_pre.h
+// defaults + common_post.h's USE_SERIAL_4WAY_BLHELI_INTERFACE derivation):
+// io/serial_4way*.c turned out to be written entirely against the generic
+// IO API (IORead/IOHi/IOLo/IOConfigGPIO + micros() bit timing), all of
+// which PICO now implements - only Bit_RESET (serial_4way.c) and motor-pin
+// registration/function-restore (dshot_pico.c/pwm_motor_pico.c) needed
+// PICO-specific handling.
 #undef USE_SERIAL_PASSTHROUGH
-// AM32/BLHeli "ESC forward programming" (sensors/esc_sensor.c, reading/writing
-// ESC parameters via bidirectional DSHOT) unconditionally calls the low-level
-// fwifCmdDevice*()/esc4wayInit() primitives that are only ever defined in
-// io/serial_4way.c, itself gated by USE_SERIAL_4WAY_BLHELI_INTERFACE (already
-// undef'd above) - so this must be disabled too, or the link fails as soon as
-// USE_DSHOT is enabled. Not implemented for PICO yet (would need io/serial_4way.c's
-// bootloader protocol ported to a PICO-compatible I/O path first).
-#undef USE_AM32_FORWARD_PROGRAMMING
-#undef USE_BLHELI_FORWARD_PROGRAMMING
 #undef USE_MULTI_GYRO
 
 #undef USE_RANGEFINDER_HCSR04

@@ -24,6 +24,12 @@
 
 #ifdef USE_HAL_DRIVER
 #include "usbd_msc.h"
+#elif defined(PICO)
+// TinyUSB-based PICO MSC (drivers/usb_pico/usb_msc_pico.c) only needs the
+// storage-callback struct (USBD_STORAGE_cb_TypeDef), not the STM32 USB
+// device library core (usbd_msc_core.h -> usbd_conf.h are STM32-only).
+// Resolves to the lightweight src/main/drivers/usbd_msc_mem.h.
+#include "usbd_msc_mem.h"
 #else
 #include "usbd_msc_mem.h"
 #include "usbd_msc_core.h"

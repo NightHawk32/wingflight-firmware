@@ -144,6 +144,16 @@ bool pwmEnableMotors(void)
         return false;
     }
 
+    // Re-route each motor pin back to the PWM slice. Matters after an ESC
+    // 4-way session (io/serial_4way.c), which switches motor pins to plain
+    // SIO GPIO for bit-banging; its esc4wayDeinit()'s IOCFG_AF_PP can't
+    // restore a pico function mux. Idempotent when already routed.
+    for (int index = 0; index < motorPwmDevice.count; index++) {
+        if (picoPwmMotors[index].initialised) {
+            gpio_set_function(IO_Pin(motors[index].io), GPIO_FUNC_PWM);
+        }
+    }
+
     return true;
 }
 
