@@ -294,9 +294,11 @@ static void dshotDisableMotors(void)
 
 static void dshotShutdown(void)
 {
-    // TODO: implement?
+    // No special processing required: motor.c's motorShutdown() clears
+    // motorDevice->enabled before any further write can reach this backend
+    // (motorWriteAll() checks it first), matching dshot_dpwm.c's
+    // dshotPwmShutdown()'s identical no-op/rationale for the STM32 backend.
     bprintf("pico dshotShutdown");
-    return;
 }
 
 static bool dshotIsMotorEnabled(uint8_t index)

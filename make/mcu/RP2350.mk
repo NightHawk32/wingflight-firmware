@@ -352,6 +352,15 @@ TARGET_FLAGS    = -D$(TARGET)
 # LD_SCRIPT must be set to the first included linker script.
 LD_SCRIPT = $(LINKER_DIR)/pico_flash_mem_defaults.ld
 
+# Override pico_flash_mem_defaults.ld's PRIMARY_FLASH_LENGTH default (4M) with
+# this target's actual physical flash size (MCU_FLASH_SIZE, in KB, set per
+# variant above: 8192 for RP2350A/B's external QSPI, 2048 for RP2354A/B's
+# on-die flash) - see pico_flash_mem_defaults.ld for why this must be a real
+# per-target value rather than a shared guess. --defsym takes effect as if
+# inserted at the very start of the link, so it doesn't matter that this
+# appears before pico_flash_mem_defaults.ld's own (now-conditional) assignment.
+EXTRA_LD_FLAGS  += -Wl,--defsym=PRIMARY_FLASH_LENGTH=$(shell echo $$(( $(MCU_FLASH_SIZE) * 1024 )))
+
 ifeq ($(RUN_FROM_RAM),1)
 # RunFromHybrid -> load most code / data into RAM, with some exclusions (cli, pg, ...)
 EXTRA_LD_FLAGS  += -T$(LINKER_DIR)/pico_rp2350_RunFromHybrid.ld

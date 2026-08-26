@@ -86,6 +86,31 @@ delete completed items — leave them checked so history is preserved.
       from the first pass. Wingflight has no fixed-wing OSD requirement yet;
       USB-MSC (mass-storage config/blackbox access) and multicore (core-1
       offload) are wanted and stay in scope.
+- [x] **Blackbox storage medium, decided 2026-08-26: a dedicated external
+      SPI/QSPI flash chip and an SD card, not the on-die/QSPI firmware flash.**
+      This replaces the "carve a `FLASH_BLACKBOX` region out of the same
+      physical flash the firmware/config live on" option raised during the
+      USB-MSC/multicore survey (twelfth iteration) - that approach is now
+      explicitly out of scope, which sidesteps its two real problems for
+      free: (1) it would have needed `flash_safe_execute()`-style multicore
+      XIP-write synchronization (`config_streamer.c`'s existing PICO flash
+      writer only disables interrupts, not safe once core 1 is active - see
+      its own `// TODO: synchronise second core` at the time of writing), and
+      (2) it would have been RP2350A/B-only in practice (RP2354A/B's 2MB
+      on-die flash has no real headroom once firmware+config are accounted
+      for). A separate flash chip / SD card avoids both: no XIP contention
+      (a different bus entirely from code fetches) and no dependency on how
+      much firmware flash a given RP2350/RP2354 variant happens to have.
+      Implementation should follow Wingflight's existing STM32
+      `flashVTable_t`/`flashDevice_t` abstraction (`drivers/flash_impl.h`,
+      e.g. `flash_m25p16.c`/`flash_w25n.c` as reference drivers) for the SPI
+      flash case, and the existing `USE_SDCARD`/`sdcard_spi.c` path for the
+      SD card case, rather than a PICO-specific one-off - both should compose
+      normally with `io/flashfs.c`/`blackbox/blackbox_io.c` once wired to a
+      real PICO SPI bus. This decision also means USB-MSC (Phase 5) has a
+      real backend to expose once either storage path is implemented, and
+      multicore's blackbox-I/O-offload candidate (Phase 5's core-1 task
+      consumer design) becomes concrete instead of speculative.
 
 ## Phase 1 — Toolchain feasibility spike
 
@@ -361,11 +386,22 @@ framebuffer support dropped from scope per Phase 0 decision).
       and don't apply.
 - [ ] Port USB-MSC support (`PICO/usb/usb_msc_pico.c`,
       `drivers/usb_msc_common.c`, `msc/usbd_storage*.c`, `msc/emfat*.c`) so the
-      flight controller can expose config/blackbox storage as a mass-storage
+      flight controller can expose blackbox storage as a mass-storage
       device over USB. **Deferred 2026-08-25**: temporarily disabled for the
       first RP2350B link because Wingflight's existing `msc/usbd_storage*.c`
       pulls STM32 USB-device headers (`usbd_msc_core.h` -> `usbd_conf.h`) rather
       than TinyUSB-native types. Needs a deliberate TinyUSB storage adapter.
+      **Update 2026-08-26**: re-surveyed in the twelfth iteration -
+      `drivers/usb_pico/usb_msc_pico.c` turned out to already *be* that
+      TinyUSB adapter (implements every `tud_msc_*` callback against the
+      existing generic `USBD_STORAGE_cb_TypeDef` fops struct, no new
+      abstraction needed) - it's just not in `RP2350.mk`'s source list
+      (`MSC_SRC :=` is still empty) because there's no storage backend for it
+      to expose yet. Per the storage-medium decision above (external SPI
+      flash + SD card, not firmware flash), the real remaining work is that
+      backend, not the MSC adapter layer itself - once a `flashVTable_t`
+      SPI-flash driver or `sdcard_spi.c` is wired up for a real PICO SPI bus,
+      re-enabling `MSC_SRC` should be close to mechanical.
 - [ ] Port multicore support in two parts:
       1. **Straight port** (low risk): `platform/multicore.h`, `multicore.c`
          (queue-based `multicoreExecute()`/`multicoreExecuteBlocking()` RPC to
@@ -1106,3 +1142,84 @@ be invisible to STM32F4/F7/G4/H7 builds:
   then a real ESC+motor) before flight is strongly recommended before
   relying on this. AM32/BLHeli ESC parameter forward-programming is now a
   known, explicit gap (see above) rather than a silent link failure.
+
+### Twelfth iteration (2026-08-26) — DSHOT/dead-code cleanup pass
+
+- Surveyed USB-MSC and multicore (both flagged as deferred follow-ups) to
+  scope the next task; found both are blocked on the same missing
+  prerequisite - RP2350 has no blackbox/log storage backend at all today
+  (`USE_BLACKBOX` still undef'd), so there's nothing for MSC to expose and
+  no real consumer for multicore's task-offload design yet. Also found a
+  real (separate, unrelated) bug worth flagging for later: `pico_rp2350_memory.ld`'s
+  `PRIMARY_FLASH_LENGTH` default (4M) doesn't match either RP2350A/B's 8MB
+  external QSPI or RP2354A/B's 2MB on-die flash - not fixed this iteration
+  (user chose to defer both the flash-blackbox feature and this bug fix in
+  favour of a cleanup pass instead), but noted here so it isn't lost.
+- `dshot_pico.c`'s `dshotShutdown()` had a stale `// TODO: implement?` left
+  over from the eleventh iteration's straight-upstream-copy origins; clarified
+  it's intentionally a no-op, matching `dshot_dpwm.c`'s `dshotPwmShutdown()`
+  for the STM32 backend (both rely on `motor.c`'s `motorShutdown()` clearing
+  `motorDevice->enabled` before any further write can reach the backend).
+- Removed `src/main/drivers/debug_pin.c`: a dead, unreferenced duplicate of
+  the real, compiled `src/main/build/debug_pin.c` (different license-header
+  style matching the other straight-ported `*_pico.c` files, ~40% smaller,
+  never listed in any Makefile) - same class of leftover-porting-artifact
+  risk as the `uart_pico/` folder removed in the seventh iteration. It never
+  caused a problem because `USE_DEBUG_PIN` is off by default, so neither
+  copy's body actually compiles either way - but having two files defining
+  the same `dbgPinInit/dbgPinHi/dbgPinLo` API risked a future edit landing
+  in the wrong (dead) one.
+- Fixed `exti_pico.c`'s `EXTIConfig()`, which had a `// TODO consider
+  pullup/pulldown etc. Needs fixing first in platform.h` comment dating from
+  before the ninth iteration's `IOConfigGPIO()` open-drain/pull work landed
+  the actual prerequisite (the PICO `IO_CONFIG()` pull-bit encoding in
+  `drivers/io.h`). Now decodes and applies the same pull-up/pull-down bits
+  `IOConfigGPIO()` does via `gpio_set_pulls()`, instead of silently ignoring
+  the `ioConfig_t` passed in - this matters for e.g. an interrupt-driven
+  gyro `DRDY` pin configured with `IOCFG_IPU`/`IOCFG_IPD`, which previously
+  had its requested pull silently dropped when wired through `EXTIConfig()`
+  rather than `IOConfigGPIO()` directly.
+- Verification 2026-08-26: clean builds of all four RP2350/RP2354 targets
+  and `STM32F405` succeed after all of the above.
+
+### Thirteenth iteration (2026-08-26) — flash-size linker bug fix + blackbox storage decision
+
+- Fixed the `PRIMARY_FLASH_LENGTH` bug flagged in the twelfth iteration.
+  `src/link/pico_flash_mem_defaults.ld` unconditionally set
+  `PRIMARY_FLASH_LENGTH = 4M;` regardless of target, so every RP2350/RP2354
+  variant computed its `FLASH`/`FLASH_CONFIG`/`FLASH_FONT` region sizes from
+  the same wrong assumption - not just cosmetically wrong: on RP2354A/B
+  (2MB on-die flash), `FLASH_CONFIG` would land at `4M - 64K`, an address
+  with no physical flash behind it at all, so `config_streamer.c`'s
+  `flash_range_erase()`/`flash_range_program()` calls would have targeted
+  memory that doesn't exist on that chip.
+  - Made both assignments in `pico_flash_mem_defaults.ld` conditional via
+    `DEFINED(...) ? ... : ...` instead of a plain `=`, so a value already
+    established via `--defsym` on the link command line isn't clobbered.
+  - `make/mcu/RP2350.mk` now passes
+    `-Wl,--defsym=PRIMARY_FLASH_LENGTH=<bytes>`, computed from the
+    already-known per-variant `MCU_FLASH_SIZE` (8192 for RP2350A/B, 2048 for
+    RP2354A/B, both in KB) via `$(shell echo $$(( $(MCU_FLASH_SIZE) * 1024 )))`.
+    Note: the more obvious `$(shell expr $(MCU_FLASH_SIZE) \* 1024)` does
+    **not** work in this environment - Make hands the shell an unescaped
+    `*`, which glob-expands against the working directory's files
+    (`expr: syntax error: unexpected argument 'AGENTS.md'`) instead of
+    multiplying. The `$(( ... ))` arithmetic-expansion form sidesteps this
+    since `*` inside it is never subject to pathname expansion.
+  - Verification: rebuilt all four targets and confirmed via
+    `--print-memory-usage`'s "Memory region" table that `FLASH` is now
+    correctly `8128 KB` on RP2350A/B (8192K - 64K config) and `1984 KB` on
+    RP2354A/B (2048K - 64K config), instead of the previous ~4032K on all
+    four regardless of real chip size. `STM32F405` rebuilds to an identical
+    `.elf` size, confirming no effect on non-PICO targets (this bug/fix is
+    entirely inside `make/mcu/RP2350.mk`/PICO-specific linker scripts).
+- **Blackbox storage medium decided: a dedicated external SPI/QSPI flash
+  chip and an SD card - not the on-die/QSPI firmware flash.** Recorded as a
+  Phase 0 decision and cross-referenced from Phase 5's USB-MSC entry (see
+  above); this explicitly rules out the "carve a `FLASH_BLACKBOX` region out
+  of firmware flash" option the twelfth iteration's survey had been
+  assessing, which avoids both of that option's real problems (multicore
+  XIP-write safety, and RP2354A/B having no real flash headroom) rather than
+  solving them. Implementation should reuse Wingflight's existing
+  `flashVTable_t`/`sdcard_spi.c` abstractions against a real PICO SPI bus,
+  not a new PICO-specific storage type - not started this iteration.
