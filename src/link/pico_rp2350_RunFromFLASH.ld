@@ -146,6 +146,17 @@ SECTIONS
     __binary_info_end = .;
     . = ALIGN(4);
 
+    /* Board-config custom-defaults blob (USE_CUSTOM_DEFAULTS, cli.c).
+     * NOLOAD: the firmware image leaves this region erased (0xFF); a build
+     * tool or the configurator writes the "## Wingflight Custom Defaults"
+     * text blob here, and cli.c's parseCustomDefaultsHeader() detects it. */
+    .custom_defaults (NOLOAD): {
+        . = ALIGN(4);
+        __custom_defaults_start = .;
+        KEEP(*(.custom_defaults))
+    } > FLASH_CUSTOM_DEFAULTS
+    __custom_defaults_end = ORIGIN(FLASH_CUSTOM_DEFAULTS) + LENGTH(FLASH_CUSTOM_DEFAULTS);
+
     .ram_vector_table (NOLOAD): {
         *(.ram_vector_table)
     } > RAM

@@ -90,6 +90,17 @@
 // takes two plain bools via gpio_set_pulls(), and has no open-drain output
 // mode at all), so IOConfigGPIO() (io_pico.c) decodes this directly and
 // emulates open-drain by toggling direction (see IOHi/IOLo/IOWrite there).
+//
+// RP2350-E9 ERRATA WARNING: on RP2350 A2 silicon, an input-enabled pad with
+// only the internal pull-down can latch at ~2.2V (reading HIGH) after the
+// line was externally driven high and released - the internal pull-down is
+// too weak to recover it. Anything relying on IOCFG_IPD to read an
+// undriven line as low (buttons, MSC button, RX-SPI EXTI lines) needs an
+// external pull-down (<= 8.2k per the datasheet erratum) on RP2350 boards,
+// or should prefer pull-up polarity instead. Lines actively driven by a
+// peripheral (UART RX, VBUS divider) are unaffected while driven. Upstream
+// Betaflight sidesteps this only by accident: its PICO IOCFG_IPD applies no
+// pull at all (leaving such inputs floating), which is not better.
 #define IO_CONFIG(dir, pullup, pulldown, opendrain) ((dir) | ((pullup) << 1) | ((pulldown) << 2) | ((opendrain) << 3))
 
 # define IOCFG_OUT_PP         IO_CONFIG(1, 0, 0, 0)

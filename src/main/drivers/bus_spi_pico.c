@@ -427,11 +427,25 @@ void spiInternalInitStream(const extDevice_t *dev, bool preInit)
     UNUSED(dev);
     UNUSED(preInit);
 #else
-    UNUSED(preInit); // pico-sdk config objects are cheap to (re)build - no benefit to caching by preInit phase
-
     busDevice_t *bus = dev->bus;
     spi_inst_t *spi = SPI_INST(bus->busType_u.spi.instance);
     volatile busSegment_t *segment = bus->curSegment;
+
+    if (preInit) {
+        // Called from the tail of spiIrqHandler() to prepare the FOLLOWING
+        // segment while the current one is still in flight - ignoring this
+        // (as an earlier version did) left initTx/initRx describing the
+        // already-running segment, so from the 3rd segment of a transaction
+        // onward DMA ran with a stale read/write-increment config whenever
+        // adjacent segments differ in tx/rx buffer presence: silent data
+        // corruption (all RX bytes to one address / TX from the dummy byte).
+        // Mirrors bus_spi_ll.c's identical preInit handling for STM32.
+        segment++;
+        if (segment->len == 0) {
+            // There's no following segment
+            return;
+        }
+    }
 
     // Prepare config, store in initTx/initRx, to be used in the following spiInternalStartDMA.
     // To keep everything uniform (always both TX and RX channels active, callback always on RX completion), if there is
@@ -596,6 +610,7 @@ void spiSequenceStart(const extDevice_t *dev)
             busSegment_t *endSegment = (busSegment_t *)bus->curSegment;
             bus->curSegment = nextSegments;
             endSegment->u.link.dev = NULL;
+            endSegment->u.link.segments = NULL;
             spiSequenceStart(nextDev);
         } else {
             // The end of the segment list has been reached, so mark transactions as complete

@@ -26,7 +26,11 @@
 // ISR + consumer core) operating concurrently without locks: head is only
 // ever written by the producer, tail only by the consumer, and both are
 // read by the other side with a single aligned 16-bit load, which is
-// atomic on Cortex-M33. Capacity must be a power of two.
+// atomic on Cortex-M33. Atomicity alone is not enough across cores though:
+// Armv8-M normal memory is weakly ordered, so each index publish carries a
+// release fence (data written before the other core can observe the new
+// index) and each consume side an acquire pairing. Capacity must be a
+// power of two.
 
 #pragma once
 
@@ -60,7 +64,10 @@ static inline bool multicoreRingBufferPush(multicoreRingBuffer_t *rb, uint8_t by
         return false; // full - never block the producer, drop instead
     }
     rb->buffer[rb->head & rb->mask] = byte;
-    rb->head++; // publish last: consumer must see the byte before the new head
+    // Release: the byte store must be visible to the consumer core before
+    // the new head is (volatile alone does not order it on Armv8-M).
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    rb->head++;
     return true;
 }
 
@@ -69,7 +76,13 @@ static inline bool multicoreRingBufferPop(multicoreRingBuffer_t *rb, uint8_t *ou
     if (multicoreRingBufferBytesUsed(rb) == 0) {
         return false; // empty
     }
+    // Acquire: pairs with the producer's release so the byte read below is
+    // the one published with the observed head.
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
     *out = rb->buffer[rb->tail & rb->mask];
+    // Release: the byte must be fully read before the slot is handed back
+    // to the producer via the new tail, or it can be overwritten mid-read.
+    __atomic_thread_fence(__ATOMIC_RELEASE);
     rb->tail++;
     return true;
 }

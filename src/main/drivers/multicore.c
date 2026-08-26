@@ -51,7 +51,7 @@ typedef struct {
 } multicoreConsumerEntry_t;
 
 static multicoreConsumerEntry_t multicoreConsumers[MAX_MULTICORE_CONSUMERS];
-static uint8_t multicoreConsumerCount;
+static volatile uint8_t multicoreConsumerCount;
 
 static volatile uint32_t multicoreHeartbeat;
 
@@ -62,6 +62,11 @@ bool multicoreRegisterConsumer(multicoreConsumerDrainFn_t *drainFn, void *ctx)
     }
     multicoreConsumers[multicoreConsumerCount].drainFn = drainFn;
     multicoreConsumers[multicoreConsumerCount].ctx = ctx;
+    // Release fence: core 1 polls multicoreConsumerCount from its loop, and
+    // Armv8-M normal memory is weakly ordered - without this it could
+    // observe the incremented count before the entry stores above and call
+    // a garbage/NULL drainFn.
+    __atomic_thread_fence(__ATOMIC_RELEASE);
     multicoreConsumerCount++;
     return true;
 }
@@ -112,10 +117,19 @@ static void core1_main(void)
                     queue_add_blocking(&core0_queue, &result);
                 }
                 break;
-            case MULTICORE_CMD_STOP:
+            case MULTICORE_CMD_STOP: {
+                // multicore_reset_core1() is a CORE-0-ONLY API (its first
+                // action force-powers-off proc1, so executed here it kills
+                // this core mid-function with the SDK's core-1 status and
+                // handshake left inconsistent). Instead: deinit, ack core 0
+                // (multicoreStop() blocks on this), and return - falling out
+                // of core1_main() parks this core in the SDK's wait loop,
+                // after which core 0 performs the actual reset.
                 flash_safe_execute_core_deinit();
-                multicore_reset_core1();
+                bool stopped = true;
+                queue_add_blocking(&core0_queue, &stopped);
                 return; // Exit the core1_main function
+            }
             default:
                 // unknown command or none
                 break;
@@ -126,8 +140,14 @@ static void core1_main(void)
         // per pass, so a busy consumer can't starve the others or the RPC
         // queue above. Each drainFn is responsible for its own bound (e.g.
         // "at most N bytes this call") - this loop does not enforce one.
-        for (uint8_t i = 0; i < multicoreConsumerCount; i++) {
-            multicoreConsumers[i].drainFn(multicoreConsumers[i].ctx);
+        // Acquire fence pairs with multicoreRegisterConsumer()'s release:
+        // once the count is observed, the entries behind it are visible.
+        const uint8_t consumerCount = multicoreConsumerCount;
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        for (uint8_t i = 0; i < consumerCount; i++) {
+            if (multicoreConsumers[i].drainFn) {
+                multicoreConsumers[i].drainFn(multicoreConsumers[i].ctx);
+            }
         }
 
         multicoreHeartbeat++;
@@ -155,6 +175,13 @@ void multicoreStop(void)
     msg.func = NULL;
 
     queue_add_blocking(&core1_queue, &msg);
+
+    // Wait for core 1 to acknowledge (deinit done, exiting its main loop),
+    // then reset it from here - the only core allowed to (see the STOP
+    // handler in core1_main()).
+    bool stopped;
+    queue_remove_blocking(&core0_queue, &stopped);
+    multicore_reset_core1();
  }
 #else // !USE_MULTICORE
 

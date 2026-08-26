@@ -102,10 +102,11 @@ static uint8_t pico_sdspi_Inquirydata[] = {
     0x00, 0x80, 0x02, 0x02,
     (USBD_STD_INQUIRY_LENGTH - 5),
     0x00, 0x00, 0x00,
-    'B','E','T','A','F','L','T',' ',
-    'S','D',' ','S','t','o','r','a','g','e',' ',' ',' ',' ',' ',
-    '0','.','0','1'
+    'W','I','N','G','F','L','T',' ',                                 // vendor: 8 bytes
+    'S','D',' ','S','t','o','r','a','g','e',' ',' ',' ',' ',' ',' ', // product: 16 bytes (was 15 - short one byte, which shifted the revision and read one byte past the array)
+    '0','.','0','1'                                                  // revision: 4 bytes
 };
+STATIC_ASSERT(sizeof(pico_sdspi_Inquirydata) == USBD_STD_INQUIRY_LENGTH, pico_sdspi_inquiry_must_be_36_bytes);
 USBD_STORAGE_cb_TypeDef USBD_MSC_MICRO_SD_SPI_fops = {
     pico_sdspi_Init,
     pico_sdspi_GetCapacity,
@@ -315,12 +316,24 @@ uint8_t mscStart(void)
         return 1;
     }
 
-    // TinyUSB core should already be initialized by CDC init; ensure it is
+    // Must be set BEFORE the device stack can serve a GET_DESCRIPTOR -
+    // tud_descriptor_configuration_cb() (usb_descriptors.c) selects the
+    // MSC-only configuration from this flag.
+    pico_msc_active = true;
+
     if (!tud_inited()) {
         tusb_init();
+    } else {
+        // TinyUSB (and likely the host's view of us as a CDC device) is
+        // already up: force a re-enumeration so the host re-reads the
+        // configuration descriptor and sees MSC instead of CDC. Without
+        // this the descriptor callback is simply never asked again and MSC
+        // mode silently never appears.
+        tud_disconnect();
+        delay(50);
+        tud_connect();
     }
 
-    pico_msc_active = true;
     return 0;
 }
 

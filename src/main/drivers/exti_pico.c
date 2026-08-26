@@ -85,13 +85,19 @@ void EXTIRelease(IO_t io)
 
 static void EXTI_IRQHandler(uint gpio, uint32_t event_mask)
 {
+    UNUSED(event_mask);
+
+    // No gpio_acknowledge_irq() here: the SDK dispatcher that invokes this
+    // callback (gpio_default_irq_handler(), hardware_gpio/gpio.c) has
+    // ALREADY acknowledged the event before calling us. Acknowledging a
+    // second time - after the handler has run - would clear any NEW edge
+    // that arrived while the handler (e.g. the gyro's SPI read-out) was
+    // executing, silently dropping that interrupt with no re-latch.
+
     // Call the registered handler for this GPIO
     if (extiChannelRecs[gpio].handler) {
         extiChannelRecs[gpio].handler->fn(extiChannelRecs[gpio].handler);
     }
-
-    // Acknowledge the interrupt
-    gpio_acknowledge_irq(gpio, event_mask);
 }
 
 void EXTIInit(void)
@@ -126,5 +132,10 @@ void EXTIDisable(IO_t io)
         return;
     }
 
-    gpio_set_irq_enabled(IO_Pin(io), 0, false);
+    // Must name the events to clear: gpio_set_irq_enabled() masks/unmasks
+    // exactly the bits passed, so an event mask of 0 clears nothing and the
+    // interrupt stays armed.
+    gpio_set_irq_enabled(IO_Pin(io),
+                         GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL | GPIO_IRQ_LEVEL_HIGH | GPIO_IRQ_LEVEL_LOW,
+                         false);
 }

@@ -395,6 +395,12 @@ void spiIrqHandler(const extDevice_t *dev)
     busDevice_t *bus = dev->bus;
     busSegment_t *nextSegment;
 
+    // Captured before the callback, which rewinds curSegment to repeat a
+    // segment on BUS_BUSY. When the repeated segment is the first of the
+    // list that leaves curSegment pointing in front of the array, so
+    // negateCS can no longer be read from it once the callback has run.
+    const bool negateCS = bus->curSegment->negateCS;
+
     if (bus->curSegment->callback) {
         switch(bus->curSegment->callback(dev->callbackArg)) {
         case BUS_BUSY:
@@ -405,8 +411,16 @@ void spiIrqHandler(const extDevice_t *dev)
             break;
 
         case BUS_ABORT:
-            bus->curSegment = (busSegment_t *)BUS_SPI_FREE;
-            return;
+            // Skip to the end of the segment list so the end-of-list
+            // handling below still runs - a linked following transaction is
+            // started (or its link cleanly consumed) instead of being
+            // silently dropped with a stale u.link.dev left behind.
+            nextSegment = (busSegment_t *)bus->curSegment + 1;
+            while (nextSegment->len != 0) {
+                bus->curSegment = nextSegment;
+                nextSegment = (busSegment_t *)bus->curSegment + 1;
+            }
+            break;
 
         case BUS_READY:
         default:
@@ -427,15 +441,15 @@ void spiIrqHandler(const extDevice_t *dev)
             // The end of the segment list has been reached
             bus->curSegment = nextSegments;
             nextSegment->u.link.dev = NULL;
+            nextSegment->u.link.segments = NULL;
             spiSequenceStart(nextDev);
         } else {
             // The end of the segment list has been reached, so mark transactions as complete
             bus->curSegment = (busSegment_t *)BUS_SPI_FREE;
         }
     } else {
-        // Do as much processing as possible before asserting CS to avoid violating minimum high time
-        bool negateCS = bus->curSegment->negateCS;
-
+        // negateCS for the just-completed segment was captured at the top of
+        // this handler, before the segment callback could rewind curSegment.
         bus->curSegment = nextSegment;
 
         // After the completion of the first segment setup the init structure for the subsequent segment
