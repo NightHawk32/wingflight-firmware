@@ -304,6 +304,12 @@ void uartReconfigure(uartPort_t *uartPort)
 
 void uartEnableTxInterrupt(uartPort_t *uartPort)
 {
+    if (uartPort->port.txBufferTail == uartPort->port.txBufferHead) {
+        // Nothing queued: arming the level-triggered TXIM here would just
+        // cost one spurious IRQ that immediately disarms itself.
+        return;
+    }
+
     uart_inst_t *uartInstance = UART_INST(uartPort->USARTx);
     uart_hw_t *uartHw = uart_get_hw(uartInstance);
 

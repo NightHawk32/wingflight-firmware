@@ -124,7 +124,9 @@
 #define USE_TELEMETRY_CASTLE
 #endif
 
-#if defined(STM32F4) || defined(STM32F7) || defined(STM32H7) || defined(STM32G4)
+// PICO (RP2350, 150MHz M33) is roughly F405-class per core - it belongs in
+// the fast-scheduler tier, not the legacy-MCU 1kHz fallback below.
+#if defined(STM32F4) || defined(STM32F7) || defined(STM32H7) || defined(STM32G4) || defined(PICO)
 #define TASK_GYROPID_DESIRED_PERIOD     125 // 125us = 8kHz
 #define SCHEDULER_DELAY_LIMIT           10
 #else

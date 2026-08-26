@@ -532,4 +532,24 @@ bool isDshotTelemetryActive(void)
     return false;
 }
 
+#ifdef USE_DSHOT_TELEMETRY_STATS
+// Same platform-agnostic reimplementation situation as the two functions
+// above: normally lives in pwm_output_dshot_shared.c, excluded for PICO.
+int16_t getDshotTelemetryMotorInvalidPercent(uint8_t motorIndex)
+{
+    int16_t invalidPercent = 0;
+
+    if (dshotTelemetryState.motorState[motorIndex].telemetryActive) {
+        const uint32_t totalCount = dshotTelemetryQuality[motorIndex].packetCountSum;
+        const uint32_t invalidCount = dshotTelemetryQuality[motorIndex].invalidCountSum;
+        if (totalCount > 0) {
+            invalidPercent = lrintf(invalidCount * 10000.0f / totalCount);
+        }
+    } else {
+        invalidPercent = 10000;  // 100.00%
+    }
+    return invalidPercent;
+}
+#endif // USE_DSHOT_TELEMETRY_STATS
+
 #endif // defined(USE_DSHOT) && defined(USE_DSHOT_TELEMETRY)

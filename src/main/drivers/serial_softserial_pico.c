@@ -100,6 +100,39 @@ static PIO softSerialPio;
 static int txProgramOffset = -1;
 static int rxProgramOffset = -1;
 static bool softSerialIrqInstalled = false;
+static int softSerialGpioBase = -1; // -1 = not decided yet
+
+// A PIO block only addresses a 32-pin window (GPIO base 0..31 or 16..47,
+// relevant on the 48-pin RP2350B/RP2354B). The base can only be chosen
+// before the block's programs/SMs are set up, so the first port to open
+// fixes it from its own pins; a later port's pins must fit the same
+// window. tagTx/tagRx may be 0 (unused direction).
+static bool softSerialClaimGpioBase(ioTag_t tagTx, ioTag_t tagRx)
+{
+    bool need16 = false;
+    bool need0 = false;
+
+    for (int i = 0; i < 2; i++) {
+        const ioTag_t tag = i ? tagRx : tagTx;
+        if (!tag) {
+            continue;
+        }
+        const int pin = DEFIO_TAG_PIN(tag);
+        need16 |= (pin >= 32);
+        need0 |= (pin < 16);
+    }
+
+    if (need16 && need0) {
+        return false; // pins span more than one 32-pin window
+    }
+
+    if (softSerialGpioBase < 0) {
+        softSerialGpioBase = need16 ? 16 : 0;
+        pio_set_gpio_base(softSerialPio, softSerialGpioBase);
+    }
+
+    return (!need16 || softSerialGpioBase == 16) && (!need0 || softSerialGpioBase == 0);
+}
 
 // --- PIO programs (pico-examples uart_tx.pio / uart_rx.pio, pioasm output) ---
 
@@ -147,7 +180,7 @@ static float softSerialClkdiv(uint32_t baud)
     return (float)clock_get_hz(clk_sys) / (SOFTSERIAL_PIO_CYCLES_PER_BIT * (float)baud);
 }
 
-static void softSerialTxProgramInit(PIO pio, uint sm, uint pin, uint32_t baud)
+static bool softSerialTxProgramInit(PIO pio, uint sm, uint pin, uint32_t baud)
 {
     // Drive the pin to its idle level before handing it to PIO, so hooking
     // up doesn't glitch a start bit onto the wire.
@@ -166,11 +199,17 @@ static void softSerialTxProgramInit(PIO pio, uint sm, uint pin, uint32_t baud)
     sm_config_set_sideset_pins(&c, pin);
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX); // TX only: 8-deep FIFO
     sm_config_set_clkdiv(&c, softSerialClkdiv(baud));
-    pio_sm_init(pio, sm, txProgramOffset, &c);
+    // pio_sm_init() rejects (PICO_ERROR_BAD_ALIGNMENT) configs whose pins
+    // fall outside the block's GPIO-base window - don't enable an SM whose
+    // PINCTRL/EXECCTRL were never written.
+    if (pio_sm_init(pio, sm, txProgramOffset, &c) != PICO_OK) {
+        return false;
+    }
     pio_sm_set_enabled(pio, sm, true);
+    return true;
 }
 
-static void softSerialRxProgramInit(PIO pio, uint sm, uint pin, uint32_t baud, bool inverted)
+static bool softSerialRxProgramInit(PIO pio, uint sm, uint pin, uint32_t baud, bool inverted)
 {
     pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, false);
     pio_gpio_init(pio, pin);
@@ -187,8 +226,11 @@ static void softSerialRxProgramInit(PIO pio, uint sm, uint pin, uint32_t baud, b
     sm_config_set_in_shift(&c, true, false, 32);
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX); // RX only: 8-deep FIFO
     sm_config_set_clkdiv(&c, softSerialClkdiv(baud));
-    pio_sm_init(pio, sm, rxProgramOffset, &c);
+    if (pio_sm_init(pio, sm, rxProgramOffset, &c) != PICO_OK) {
+        return false;
+    }
     pio_sm_set_enabled(pio, sm, true);
+    return true;
 }
 
 // --- ring-buffer helpers (single producer / single consumer each way) ---
@@ -294,18 +336,31 @@ uint8_t softSerialReadByte(serialPort_t *instance)
     return byte;
 }
 
+// Stop an SM, flush its FIFOs, apply a new divider and restart it cleanly
+// from its program's first instruction. Restarting mid-frame would corrupt
+// the byte in flight (and bytes queued at the old rate would go out at the
+// new one), so the SM is fully quiesced around the change.
+static void softSerialRestartSm(uint sm, int programOffset, float div)
+{
+    pio_sm_set_enabled(softSerialPio, sm, false);
+    pio_sm_clear_fifos(softSerialPio, sm);
+    pio_sm_set_clkdiv(softSerialPio, sm, div);
+    pio_sm_restart(softSerialPio, sm);
+    pio_sm_clkdiv_restart(softSerialPio, sm);
+    pio_sm_exec(softSerialPio, sm, pio_encode_jmp(programOffset));
+    pio_sm_set_enabled(softSerialPio, sm, true);
+}
+
 void softSerialSetBaudRate(serialPort_t *instance, uint32_t baudRate)
 {
     picoSoftSerial_t *s = (picoSoftSerial_t *)instance;
     const float div = softSerialClkdiv(baudRate);
 
     if (s->txSm >= 0) {
-        pio_sm_set_clkdiv(softSerialPio, s->txSm, div);
-        pio_sm_clkdiv_restart(softSerialPio, s->txSm);
+        softSerialRestartSm(s->txSm, txProgramOffset, div);
     }
     if (s->rxSm >= 0) {
-        pio_sm_set_clkdiv(softSerialPio, s->rxSm, div);
-        pio_sm_clkdiv_restart(softSerialPio, s->rxSm);
+        softSerialRestartSm(s->rxSm, rxProgramOffset, div);
     }
     s->port.baudRate = baudRate;
 }
@@ -316,7 +371,14 @@ bool isSoftSerialTransmitBufferEmpty(const serialPort_t *instance)
     if (s->txSm < 0) {
         return true;
     }
-    return txBytesUsed(s) == 0 && pio_sm_is_tx_fifo_empty(softSerialPio, s->txSm);
+    // The FIFO empties as soon as the SM has PULLed the last word - the
+    // frame still needs ~10 bit times to shift out. The SM is only truly
+    // idle when it is back parked on the blocking `pull` at the program's
+    // first instruction (callers use this as a "safe to reconfigure /
+    // release the line" gate, so reporting early truncates the last byte).
+    return txBytesUsed(s) == 0
+        && pio_sm_is_tx_fifo_empty(softSerialPio, s->txSm)
+        && pio_sm_get_pc(softSerialPio, s->txSm) == (uint)txProgramOffset;
 }
 
 static void softSerialSetMode(serialPort_t *instance, portMode_e mode)
@@ -349,7 +411,19 @@ serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallb
         return NULL;
     }
 
+    if ((mode & MODE_RXTX) == MODE_RXTX && tagRx == tagTx) {
+        // Pin directions are per-pin, not per-state-machine: the RX SM init
+        // would switch the shared pin to input and silently break TX. Needs
+        // the same direction-handover work as SERIAL_BIDIR - refuse.
+        return NULL;
+    }
+
     softSerialPio = PIO_INSTANCE(PIO_UART_INDEX);
+
+    if (!softSerialClaimGpioBase((mode & MODE_TX) ? tagTx : IO_TAG_NONE,
+                                 (mode & MODE_RX) ? tagRx : IO_TAG_NONE)) {
+        return NULL;
+    }
 
     // Load each program once, shared by both ports' state machines.
     if (txProgramOffset < 0 && (mode & MODE_TX)) {
@@ -393,7 +467,11 @@ serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallb
         IOInit(s->txIO, OWNER_SERIAL_TX, RESOURCE_INDEX(pinCfgIndex));
 
         const uint txPin = IO_Pin(s->txIO);
-        softSerialTxProgramInit(softSerialPio, sm, txPin, baud);
+        if (!softSerialTxProgramInit(softSerialPio, sm, txPin, baud)) {
+            pio_sm_unclaim(softSerialPio, sm);
+            s->txSm = -1;
+            return NULL;
+        }
         if (options & SERIAL_INVERTED) {
             gpio_set_outover(txPin, GPIO_OVERRIDE_INVERT);
         }
@@ -401,22 +479,29 @@ serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallb
 
     if (mode & MODE_RX) {
         const int sm = pio_claim_unused_sm(softSerialPio, false);
-        if (sm < 0) {
+        bool rxOk = sm >= 0;
+        if (rxOk) {
+            s->rxSm = (int8_t)sm;
+            s->rxIO = IOGetByTag(tagRx);
+            IOInit(s->rxIO, OWNER_SERIAL_RX, RESOURCE_INDEX(pinCfgIndex));
+
+            const uint rxPin = IO_Pin(s->rxIO);
+            rxOk = softSerialRxProgramInit(softSerialPio, sm, rxPin, baud, (options & SERIAL_INVERTED) != 0);
+            if (rxOk && (options & SERIAL_INVERTED)) {
+                gpio_set_inover(rxPin, GPIO_OVERRIDE_INVERT);
+            }
+        }
+        if (!rxOk) {
+            if (sm >= 0) {
+                pio_sm_unclaim(softSerialPio, sm);
+                s->rxSm = -1;
+            }
             if (s->txSm >= 0) {
                 pio_sm_set_enabled(softSerialPio, s->txSm, false);
                 pio_sm_unclaim(softSerialPio, s->txSm);
                 s->txSm = -1;
             }
             return NULL;
-        }
-        s->rxSm = (int8_t)sm;
-        s->rxIO = IOGetByTag(tagRx);
-        IOInit(s->rxIO, OWNER_SERIAL_RX, RESOURCE_INDEX(pinCfgIndex));
-
-        const uint rxPin = IO_Pin(s->rxIO);
-        softSerialRxProgramInit(softSerialPio, sm, rxPin, baud, (options & SERIAL_INVERTED) != 0);
-        if (options & SERIAL_INVERTED) {
-            gpio_set_inover(rxPin, GPIO_OVERRIDE_INVERT);
         }
     }
 
@@ -428,11 +513,19 @@ serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallb
         irq_set_enabled(irqNum, true);
         softSerialIrqInstalled = true;
     }
+
+    // Mark active BEFORE unmasking the (level-triggered) RX source: the RX
+    // SM has been running since its init, so a byte could already be in the
+    // FIFO - if the IRQ fired first, the handler's !active skip would leave
+    // the level source asserted and the core would tail-chain back into the
+    // handler forever. Also flush any line noise captured during init so it
+    // isn't delivered as a frame.
+    s->active = true;
     if (s->rxSm >= 0) {
+        pio_sm_clear_fifos(softSerialPio, s->rxSm);
         pio_set_irqn_source_enabled(softSerialPio, 0, pio_get_rx_fifo_not_empty_interrupt_source(s->rxSm), true);
     }
 
-    s->active = true;
     return &s->port;
 }
 

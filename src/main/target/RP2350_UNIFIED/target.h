@@ -181,6 +181,35 @@
 // which PICO never enters.
 #define USE_USB_MSC
 
+// Same per-STM32-family-block trap as USE_USB_MSC: without this,
+// system_rp2350.c's systemReset(reason) compiles out the
+// persistentObjectWrite() of the reset reason, so systemResetToMsc() (the
+// configurator's "reboot into mass storage" path) could never be detected
+// after the reboot by mscCheckBootAndReset(). The SRAM-backed store
+// (drivers/persistent_rp2350.c, .uninitialized_data NOLOAD section in the
+// pico linker scripts) is compiled either way - only this gate was missing.
+#define USE_PERSISTENT_OBJECTS
+
+// More flags common_pre.h only grants inside its per-STM32-family blocks,
+// all platform-agnostic and applicable here:
+// - RPM filter + dynamic notch: the two main gyro filtering features; RPM
+//   filter is fed by the bidirectional-DSHOT eRPM telemetry this port
+//   already implements.
+// - DSHOT telemetry stats: per-motor invalid-packet percentages for
+//   CLI/MSP - without it those report "NO DATA".
+// - Late task statistics: scheduler bookkeeping used by tasks/status CLI.
+#define USE_RPM_FILTER
+#define USE_DYN_NOTCH_FILTER
+#define USE_DSHOT_TELEMETRY_STATS
+#define USE_LATE_TASK_STATISTICS
+
+// Board-config-as-custom-defaults (the wingflight-targets .config
+// distribution model, same as STM32_UNIFIED): a dedicated
+// FLASH_CUSTOM_DEFAULTS region (16K, NOLOAD - stays erased unless a build
+// tool/configurator writes a "## Wingflight Custom Defaults"-prefixed blob
+// there) that cli.c's resetConfigToCustomDefaults() applies on `defaults`.
+#define USE_CUSTOM_DEFAULTS
+
 #define USE_SERIALRX_SBUS
 
 #undef USE_TRANSPONDER

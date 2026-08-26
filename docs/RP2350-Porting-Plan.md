@@ -1512,3 +1512,123 @@ drivers/multicore_ringbuffer.h, drivers/dma_pico.c):**
 - The PIO_UART_INDEX comment in target.h still said "NOT implemented" -
   superseded by this iteration (pio1 is now genuinely the soft-serial
   block).
+
+### Eighteenth iteration (2026-08-26) — review pass: bugs fixed, gaps closed
+
+A dedicated review of the whole RP235x implementation: two independent
+passes (one comparing every PICO driver against the `betaflight/` PICO
+reference, one bug-hunting the newly written drivers against the vendored
+pico-sdk contracts) plus a self-review. Everything below is fixed and
+verified by clean builds of all four RP2350/RP2354 targets, all four STM32
+families and the `USE_MULTICORE` configuration. Still not hardware-tested.
+
+**Flight-relevant bugs found and fixed**
+- `bus_spi_pico.c` **(HIGH): SPI DMA ran later segments with a stale
+  config.** `spiInternalInitStream()` ignored its `preInit` argument, so
+  the "prepare the following segment" call at the end of every DMA IRQ
+  rebuilt the config for the segment already running. From the 3rd segment
+  of any transaction onward, DMA used the previous segment's read/write-
+  increment flags whenever adjacent segments differ in tx/rx-buffer
+  presence (write-reg-then-read-burst is the normal gyro/flash/SD pattern):
+  all RX bytes to one address, or TX from the dummy byte. Silent
+  corruption, not a hang. Now mirrors `bus_spi_ll.c`'s segment+1 handling.
+- `exti_pico.c`: **gyro EXTI edges could be dropped.** The SDK's GPIO IRQ
+  dispatcher already acknowledges the event before invoking our callback;
+  we acknowledged again *after* running the handler, clearing any new edge
+  that arrived during the (SPI-heavy) gyro handler. Also `EXTIDisable()`
+  passed an event mask of 0 and so never actually disabled anything.
+- `bus_spi.c` (shared, affects STM32 too - both fixed upstream long ago):
+  `negateCS` read after a `BUS_BUSY` callback could rewind `curSegment`
+  before the array (out-of-bounds read / wrong CS); `BUS_ABORT` dropped
+  linked follow-on transactions and left a stale `u.link.dev`; link
+  consumption didn't clear `u.link.segments`.
+- `multicore.c`: `MULTICORE_CMD_STOP` called `multicore_reset_core1()`
+  **from core 1** - a core-0-only API whose first action force-powers-off
+  proc1, leaving the SDK's core status inconsistent. Core 1 now acks and
+  falls out of `core1_main()`; core 0 waits for the ack and resets it.
+  Also: consumer registration and the SPSC ring buffer relied on 16-bit
+  atomicity but had **no memory ordering** - added release/acquire fences
+  (`__atomic_thread_fence`) around every cross-core index publish, made the
+  consumer count volatile, NULL-guarded `drainFn`.
+- `serial_softserial_pico.c`: `s->active` was set *after* unmasking the
+  level-triggered RX-FIFO-not-empty source - if a byte was already in the
+  FIFO the handler's `!active` skip would tail-chain forever (fatal). Also:
+  `pio_sm_init()` return values now checked (PICO_ERROR_BAD_ALIGNMENT on a
+  pin outside the GPIO-base window would otherwise run an unconfigured
+  SM), `isSoftSerialTransmitBufferEmpty()` now also requires the SM to be
+  parked on its idle `pull` (the FIFO empties ~10 bit-times before the
+  frame finishes - callers gate line release on this), baud change now
+  fully quiesces/flushes/restarts both SMs instead of restarting the
+  divider mid-frame, pins >= 32 (RP2350B/RP2354B) get `pio_set_gpio_base`
+  handling, and same-pin RX+TX is refused (pindirs are per-pin: the RX
+  init would flip a shared pin to input and kill TX).
+- `usb_msc_pico.c`: the SD-SPI SCSI INQUIRY table was **35 bytes, not
+  36** - product string one short, revision shifted, one byte read past
+  the array (now `STATIC_ASSERT`ed). And `pico_msc_active` was set after
+  `tusb_init()`, so once CDC init is wired up the host would keep its CDC
+  configuration and MSC mode would silently never appear; now set first,
+  with a `tud_disconnect()/tud_connect()` re-enumeration if the stack was
+  already up.
+- `dshot_pico.c`: `dshotEnableMotors()` restored the PIO function mux
+  after a 4-way session but not the idle pull (pull-down normal /
+  pull-up bidir) that `IOCFG_AF_PP` had cleared; a failed init partway
+  through the motor loop left earlier `motors[]` entries enabled for
+  4-way enumeration (now cleared on every failure path).
+
+**Missing features / wrong configuration found and fixed**
+- Three more "common_pre.h only defines it inside the per-STM32-family
+  blocks" traps (the same one that hid `USE_USB_MSC`):
+  `USE_PERSISTENT_OBJECTS` (without it `systemReset(reason)` compiled out
+  the reset-reason persist - **"reboot into mass storage" could never
+  trigger**; the SRAM-backed store in `persistent_rp2350.c` was ready and
+  unused), and `USE_RPM_FILTER` / `USE_DYN_NOTCH_FILTER` /
+  `USE_DSHOT_TELEMETRY_STATS` / `USE_LATE_TASK_STATISTICS` (all
+  platform-agnostic; the two filters are the main gyro-noise features and
+  RPM filter is fed by the bidir-DSHOT eRPM this port already produces).
+  `getDshotTelemetryMotorInvalidPercent()` reimplemented for PICO.
+- **PICO was in the 1kHz legacy-MCU scheduler tier**
+  (`TASK_GYROPID_DESIRED_PERIOD 1000`, common_pre.h's `#else`). Moved to
+  the 8kHz tier alongside F4/F7/H7/G4, consistent with the port's own
+  F405-class assessment.
+- **Custom defaults (the wingflight-targets `.config` distribution model)
+  did not exist for PICO**: added a 16K `FLASH_CUSTOM_DEFAULTS` region
+  (`pico_rp2350_memory.ld`, deterministic end-of-flash position per
+  variant) plus a NOLOAD `.custom_defaults` section with
+  `__custom_defaults_start/_end` in all three RunFrom linker scripts, and
+  `USE_CUSTOM_DEFAULTS` in target.h - `cli.c`'s `resetConfigToCustomDefaults()`
+  now works the same as on STM32_UNIFIED once a tool writes the blob there.
+- Smaller: `uartEnableTxInterrupt()` no longer arms a spurious TX IRQ on
+  an empty buffer; `dmaSetHandler()` records `irqN` on every descriptor;
+  `light_ws2811strip_pico.c` checks `pio_sm_init()`, unclaims a DMA channel
+  on `dmaAllocate()` failure, and the latch guard has margin for the ~11us
+  of FIFO+OSR wire time after the DMA IRQ.
+
+**RP2350-E9 errata (documented, not fixable in firmware alone).** On A2
+silicon an input pad with only the internal pull-down can latch at ~2.2V
+after being driven high and released. Neither tree had a workaround -
+Betaflight sidesteps it only because its PICO `IOCFG_IPD` applies no pull
+at all (inputs float). Since the ninth iteration Wingflight actually
+asserts the pull, so `IOCFG_IPD` users (buttons, MSC button, RX-SPI EXTI
+lines) need external pull-downs (<= 8.2k) or pull-up polarity on RP2350
+boards. Warning added to `drivers/io.h`'s PICO block.
+
+**Confirmed correct by the review (no change needed):** PIO program
+encodings (uart_tx/rx, ws2812) against pioasm semantics, `pio_sm_put`
+byte placement and the RX `>>24` extraction, `pio_set_irqn_source_enabled`
+race-safety (atomic set/clear aliases), `BIT_COMPARE_*` init ordering vs
+`updateLEDDMABuffer()`, `motors[]` linkage/zeroing for the DSHOT path,
+`pinOpenDrain[]` bounds for 48-pin variants, TinyUSB MSC read10/write10
+chunking (always 512-aligned with `CFG_TUD_MSC_EP_BUFSIZE 512`), clock
+setup (both trees use the pico-sdk 150MHz default), ADC and system init.
+Places where Wingflight is now *ahead* of upstream Betaflight's PICO port:
+real pull-up/down + open-drain emulation + SIO-reclaim in `io_pico.c`,
+`flash_safe_execute()` core-1 lockout for config writes, per-core DMA IRQ
+unmasking, per-variant `PRIMARY_FLASH_LENGTH`, DSHOT150/300, 4-way pin
+restore, 16-bit polled SPI, and `uartReconfigure()` re-applying
+stop-bits/parity after `uart_init()` (upstream silently reverts to 8N1).
+
+**Known remaining gaps:** `SERIAL_CHECK_TX`/`isTxComplete` TX-line
+monitor from upstream not ported (documented in `serial_uart_pico.c`);
+soft-serial `SERIAL_BIDIR` unsupported; `USE_USB_CDC_HID` and
+`USE_ADC_INTERNAL` deliberately off. RAM on RP2350B is now ~82% with
+everything enabled.

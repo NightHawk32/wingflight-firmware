@@ -99,7 +99,7 @@ static inline pio_sm_config ws2812_program_get_default_config(uint offset)
     return c;
 }
 
-static void ws2812_program_init(PIO pio, uint sm, uint offset, uint pin)
+static bool ws2812_program_init(PIO pio, uint sm, uint offset, uint pin)
 {
     pio_gpio_init(pio, pin);
     pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
@@ -112,8 +112,13 @@ static void ws2812_program_init(PIO pio, uint sm, uint offset, uint pin)
     int cycles_per_bit = WS2812_T1 + WS2812_T2 + WS2812_T3;
     float div = clock_get_hz(clk_sys) / ((float)WS2811_CARRIER_HZ * cycles_per_bit);
     sm_config_set_clkdiv(&c, div);
-    pio_sm_init(pio, sm, offset, &c);
+    // Rejected (PICO_ERROR_BAD_ALIGNMENT) if the pin is outside the block's
+    // GPIO-base window - never enable an SM whose config wasn't written.
+    if (pio_sm_init(pio, sm, offset, &c) != PICO_OK) {
+        return false;
+    }
     pio_sm_set_enabled(pio, sm, true);
+    return true;
 }
 
 static FAST_IRQ_HANDLER void ws2811LedStripDmaHandler(dmaChannelDescriptor_t* descriptor)
@@ -156,11 +161,20 @@ bool ws2811LedStripHardwareInit(ioTag_t ioTag)
         return false;
     }
 
-    ws2812_program_init(pio, pio_sm, offset, pinIndex);
+    if (!ws2812_program_init(pio, pio_sm, offset, pinIndex)) {
+        pio_sm_unclaim(pio, pio_sm);
+        return false;
+    }
 
     // --- DMA Configuration ---
     const dmaIdentifier_e dma_id = dmaGetFreeIdentifier();
-    if (dma_id == DMA_NONE || !dmaAllocate(dma_id, OWNER_LED_STRIP, 0)) {
+    if (dma_id == DMA_NONE) {
+        return false;
+    }
+    if (!dmaAllocate(dma_id, OWNER_LED_STRIP, 0)) {
+        // dmaGetFreeIdentifier() already claimed the channel in the SDK -
+        // release it or it leaks for good.
+        dma_channel_unclaim(DMA_IDENTIFIER_TO_CHANNEL(dma_id));
         return false;
     }
     dma_chan = DMA_IDENTIFIER_TO_CHANNEL(dma_id);
@@ -195,18 +209,25 @@ void ws2811LedStripDMAEnable(void)
         return; // Not initialized
     }
 
-    // Honour the WS281x >=50us reset/latch period: the DMA-complete IRQ fires
-    // while the PIO FIFO still holds up to 8 words, so measure from the IRQ
-    // and skip (not block) if a new frame comes in implausibly fast.
-    if (ledStripCompletedTime != 0 && ABS(cmpTimeUs(micros(), ledStripCompletedTime)) < 50 + 13) {
+    // Honour the WS281x >=50us reset/latch period. The DMA-complete IRQ
+    // fires while the joined TX FIFO still holds up to 8 words plus one in
+    // the OSR (~11us of wire time at 1.25us/bit), so measure from the IRQ
+    // with margin, and skip (not block) if a new frame comes implausibly
+    // fast. Note the reset itself comes from the SM stalling low on
+    // `out x,1 side 0` once the FIFO drains - not from trailing buffer words.
+    if (ledStripCompletedTime != 0 && ABS(cmpTimeUs(micros(), ledStripCompletedTime)) < 50 + 11 + 10) {
         ws2811LedDataTransferInProgress = false;
         return;
     }
 
-    // The tail of ledStripDMABuffer beyond the LEDs' bits holds zero words
-    // (BIT_COMPARE_0), which this backend emits as harmless extra 0-bits
-    // past the end of the physical strip - same "always send the full
-    // buffer" convention as the STM32 timer-DMA backends.
+    // Unlike STM32 (where the buffer's unused tail holds timer-compare 0 =
+    // line held low), on PIO every trailing BIT_COMPARE_0 word is a genuine
+    // WS281x "0" bit shifted past the end of the physical strip: with the
+    // shared core filling only ledCount*bitsPerLed words, the remaining
+    // ~300 words at 24-bit GRB cost ~370us of extra wire time per frame.
+    // Harmless (LEDs past the end don't exist) and kept for the same
+    // "always send the full buffer" contract as the STM32 backends, since
+    // the per-LED bit width isn't known here.
     dma_channel_set_read_addr(dma_chan, ledStripDMABuffer, false);
     dma_channel_set_trans_count(dma_chan, WS2811_DMA_BUFFER_SIZE, false);
     // Start the DMA transfer

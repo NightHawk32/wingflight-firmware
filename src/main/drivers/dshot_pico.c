@@ -292,6 +292,11 @@ static bool dshotEnableMotors(void)
     for (int motorIndex = 0; motorIndex < dshotMotorCount; motorIndex++) {
         if (dshotMotors[motorIndex].configured) {
             pio_gpio_init(dshotMotors[motorIndex].pio, dshotMotors[motorIndex].pinIndex);
+            // Also restore the idle-level bias the program inits applied
+            // (bidir idles HIGH with pull-up, normal DSHOT idles LOW with
+            // pull-down) - a 4-way session's IOConfigGPIO(IOCFG_AF_PP)
+            // cleared the pulls along with the function mux.
+            gpio_set_pulls(dshotMotors[motorIndex].pinIndex, useDshotTelemetry, !useDshotTelemetry);
         }
     }
     return true;
@@ -359,6 +364,12 @@ motorDevice_t *dshotPwmDevInit(const motorDevConfig_t *motorConfig, uint8_t moto
 
     dshotMotorCount = 0; // Only set once initialisation succeeds
 
+    // Also start with a clean shared motors[] array: entries are populated
+    // per-motor below for ESC-4way enumeration, and a failure return partway
+    // through must not leave earlier entries marked enabled (esc4wayInit()
+    // would enumerate ESCs on a device that never finished initialising).
+    memset(motors, 0, sizeof(motors));
+
     if (motorCount > 4) {
         // Currently support 4 motors with one PIO block, four state machines
         bprintf("*** dshot Pico %d motors unsupported", motorCount);
@@ -425,6 +436,7 @@ motorDevice_t *dshotPwmDevInit(const motorDevConfig_t *motorConfig, uint8_t moto
         bprintf("dshot motor index %d on pin %d",motorIndex, IO_Pin(io));
         if (!IOIsFreeOrPreinit(io)) {
             bprintf("io pin not free");
+            memset(motors, 0, sizeof(motors)); // undo earlier motors' 4way registration
             return NULL;
         }
 
@@ -434,6 +446,7 @@ motorDevice_t *dshotPwmDevInit(const motorDevConfig_t *motorConfig, uint8_t moto
 
         if (pio_sm < 0) {
             bprintf("\n *** dshotPwmDevInit: failed to claim state machine\n");
+            memset(motors, 0, sizeof(motors));
             return NULL;
         }
 
@@ -461,6 +474,7 @@ motorDevice_t *dshotPwmDevInit(const motorDevConfig_t *motorConfig, uint8_t moto
 
         if (!dshotInit) {
             bprintf("dshot failed to init pio program for motor index %d, pin %d, useDshotTelemetry %d", motorIndex, pinIndex, useDshotTelemetry);
+            memset(motors, 0, sizeof(motors));
             return NULL;
         }
 
