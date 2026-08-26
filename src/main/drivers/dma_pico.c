@@ -137,8 +137,19 @@ void dmaSetHandler(dmaIdentifier_e identifier, dmaCallbackHandlerFuncPtr callbac
         irq_handler_t irq_handler = core ? dma_irq1_handler : dma_irq0_handler;
 
         bprintf("dmaSetHandler on id %d, going to set exclusive handler [%d] for %p", identifier, dmaDescriptors[index].irqN, irq_handler);
+        // irq_set_exclusive_handler() writes the (single, core-shared) vector
+        // table entry, so it's safe to call from whichever core happens to
+        // be registering. irq_set_enabled() is NOT shared - each Cortex-M33
+        // core has its own independent NVIC, so this only unmasks the IRQ on
+        // whichever core calls it. If the target core differs from the
+        // calling core (the common case: peripheral init runs on core 0,
+        // but DMA_IRQ_CORE_NUM affinitizes completions to core 1), core 1
+        // enables it for itself once at startup instead - see
+        // dmaCore1IrqInit(), called from multicore.c's core1_main().
         irq_set_exclusive_handler(dmaDescriptors[index].irqN, irq_handler);
-        irq_set_enabled(dmaDescriptors[index].irqN, true);
+        if (core == get_core_num()) {
+            irq_set_enabled(dmaDescriptors[index].irqN, true);
+        }
 
         dma_irqN_handler_registered[core] = true;
     }
@@ -156,6 +167,18 @@ void dmaSetHandler(dmaIdentifier_e identifier, dmaCallbackHandlerFuncPtr callbac
 int dmaGetHandlerCount(void)
 {
     return DMA_LAST_HANDLER;
+}
+
+// Called once from core 1's own context (multicore.c's core1_main()) to
+// unmask DMA_IRQ_1 on core 1's NVIC - see the core-affinity note in
+// dmaSetHandler() above. Idempotent and safe to call even if no channel has
+// registered for core 1 yet (the IRQ just won't fire until one does via
+// dma_channel_set_irq1_enabled()).
+void dmaCore1IrqInit(void)
+{
+#if defined(USE_MULTICORE) && defined(DMA_IRQ_CORE_NUM) && (DMA_IRQ_CORE_NUM == 1)
+    irq_set_enabled(DMA_IRQ_1, true);
+#endif
 }
 
 int dmaGetDeviceNumber(dmaIdentifier_e identifier)
