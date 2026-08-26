@@ -41,3 +41,20 @@ void multicoreStart(void);
 void multicoreStop(void);
 void multicoreExecute(core1_func_t *func);
 void multicoreExecuteBlocking(core1_func_t *func);
+
+// Core-1 task consumer registration (docs/RP2350-Porting-Plan.md's "Core-1
+// task consumer design"). A consumer is a non-blocking, bounded drain
+// function core 1's main loop calls once per pass, round-robin with every
+// other registered consumer and the RPC command queue above - so no single
+// consumer can hog core 1 and starve the others. ctx is passed back
+// verbatim (typically a pointer to the consumer's own ring buffer/state);
+// drainFn must not block (no queue_*_blocking, no long loops) since it runs
+// inline in core 1's loop.
+typedef void (multicoreConsumerDrainFn_t)(void *ctx);
+bool multicoreRegisterConsumer(multicoreConsumerDrainFn_t *drainFn, void *ctx);
+
+// Incremented once per core-1 main-loop pass. Core 0 can poll this (e.g.
+// once a second) to detect a wedged core 1 (per the design's "failure
+// isolation" requirement) and degrade gracefully without affecting flight
+// control - core 0 must never block waiting on core 1.
+uint32_t multicoreGetHeartbeat(void);
