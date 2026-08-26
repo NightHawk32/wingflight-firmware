@@ -49,10 +49,10 @@
 #define PICO_ADC_MAX_CHANNELS           4
 #define PICO_ADC_FIFO_SIZE              8
 
-#if defined(RP2350A)
+#if defined(RP2350A) || defined(RP2354A)
 #define PICO_ADC_CHANNEL_COUNT          5
 #define PICO_ADC_INTERNAL_TEMP_CHANNEL  4
-#elif defined(RP2350B)
+#elif defined(RP2350B) || defined(RP2354B)
 #define PICO_ADC_CHANNEL_COUNT          9
 #define PICO_ADC_INTERNAL_TEMP_CHANNEL  8
 #else
@@ -79,11 +79,11 @@ static volatile uint16_t picoAdcValues[PICO_ADC_MAX_CHANNELS] __attribute__((ali
 
 static int adcChannelByPin(const int pin)
 {
-#ifdef RP2350A
+#if defined(RP2350A) || defined(RP2354A)
     if (pin >= 26 && pin <= 29) {
         return pin - 26;
     }
-#elif defined(RP2350B)
+#elif defined(RP2350B) || defined(RP2354B)
     if (pin >= 40 && pin <= 47) {
         return pin - 40;
     }

@@ -67,7 +67,7 @@ const uartHardware_t uartHardware[] = {
             { DEFIO_TAG_E(PA17) },
             { DEFIO_TAG_E(PA19) },
             { DEFIO_TAG_E(PA29) },
-#ifdef RP2350B
+#if defined(RP2350B) || defined(RP2354B)
             { DEFIO_TAG_E(PA31) },
             { DEFIO_TAG_E(PA33) },
             { DEFIO_TAG_E(PA35) },
@@ -83,7 +83,7 @@ const uartHardware_t uartHardware[] = {
             { DEFIO_TAG_E(PA16) },
             { DEFIO_TAG_E(PA18) },
             { DEFIO_TAG_E(PA28) },
-#ifdef RP2350B
+#if defined(RP2350B) || defined(RP2354B)
             { DEFIO_TAG_E(PA30) },
             { DEFIO_TAG_E(PA32) },
             { DEFIO_TAG_E(PA34) },
@@ -114,7 +114,7 @@ const uartHardware_t uartHardware[] = {
             { DEFIO_TAG_E(PA23) },
             { DEFIO_TAG_E(PA25) },
             { DEFIO_TAG_E(PA27) },
-#ifdef RP2350B
+#if defined(RP2350B) || defined(RP2354B)
             { DEFIO_TAG_E(PA37) },
             { DEFIO_TAG_E(PA39) },
             { DEFIO_TAG_E(PA41) },
@@ -130,7 +130,7 @@ const uartHardware_t uartHardware[] = {
             { DEFIO_TAG_E(PA22) },
             { DEFIO_TAG_E(PA24) },
             { DEFIO_TAG_E(PA26) },
-#ifdef RP2350B
+#if defined(RP2350B) || defined(RP2354B)
             { DEFIO_TAG_E(PA36) },
             { DEFIO_TAG_E(PA38) },
             { DEFIO_TAG_E(PA40) },

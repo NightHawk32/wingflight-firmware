@@ -108,7 +108,7 @@ void i2cPinConfigure(const i2cConfig_t *i2cConfig)
         int confSclPin = IO_GPIOPinIdx(confSclIO);
         int confSdaPin = IO_GPIOPinIdx(confSdaIO);
 
-#ifdef RP2350B
+#if defined(RP2350B) || defined(RP2354B)
         uint16_t numPins = 48;
 #else
         uint16_t numPins = 30;
