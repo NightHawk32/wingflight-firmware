@@ -34,6 +34,9 @@
 
 #include "drivers/time.h"
 #include "drivers/pwm_output.h"
+#if defined(PICO)
+#include "drivers/pwm_servo_pico.h"
+#endif
 
 #include "sensors/gyro.h"
 
@@ -52,13 +55,17 @@ static FAST_DATA_ZERO_INIT uint8_t      servoCount;
 
 static FAST_DATA_ZERO_INIT float        servoInput[MAX_SUPPORTED_SERVOS];
 static FAST_DATA_ZERO_INIT float        servoOutput[MAX_SUPPORTED_SERVOS];
-static FAST_DATA_ZERO_INIT float        servoResolution[MAX_SUPPORTED_SERVOS];
 
 static FAST_DATA_ZERO_INIT int16_t      servoOverride[MAX_SUPPORTED_SERVOS];
 
 static FAST_DATA_ZERO_INIT float        servoAxisTrim[3];  // last commanded per-axis trim value in µs [ROLL=0, PITCH=1, YAW=2]
 
+#if !defined(PICO)
+// STM32 timer-register path only; PICO writes PWM slices directly (see
+// drivers/pwm_servo_pico.c) and has no timerChannel_t/ccr to hold here.
+static FAST_DATA_ZERO_INIT float        servoResolution[MAX_SUPPORTED_SERVOS];
 static FAST_DATA_ZERO_INIT timerChannel_t servoChannel[MAX_SUPPORTED_SERVOS];
+#endif
 
 
 /*
@@ -226,9 +233,10 @@ void servoInit(void)
     }
 
 #if defined(PICO)
-    // PICO servo PWM output needs a dedicated implementation; the STM32 timer
-    // path below relies on timerHardware_t alternate-function/timer fields.
-    servoCount = 0;
+    // PICO has no timerHardware_t/timerAllocate() (the STM32 timer path
+    // below relies on both), so servo PWM is driven directly via RP2 PWM
+    // slices - see drivers/pwm_servo_pico.c.
+    servoCount = picoServoDevInit(servoConfig()->ioTags);
     return;
 #else
     const ioTag_t *ioTags = servoConfig()->ioTags;
@@ -309,6 +317,9 @@ void servoInit(void)
 
 void servoShutdown(void)
 {
+#if defined(PICO)
+    picoServoShutdown();
+#else
     for (int index = 0; index < MAX_SUPPORTED_SERVOS; index++)
     {
         if (servoChannel[index].ccr) {
@@ -316,6 +327,7 @@ void servoShutdown(void)
             servoChannel[index].ccr = NULL;
         }
     }
+#endif
 
     delay(100);
 }
@@ -324,8 +336,12 @@ static inline void servoSetOutput(uint8_t index, float pos)
 {
     servoOutput[index] = pos;
 
+#if defined(PICO)
+    picoServoWrite(index, pos);
+#else
     if (servoChannel[index].ccr)
         *servoChannel[index].ccr = lrintf(pos * servoResolution[index]);
+#endif
 }
 
 static inline float limitTravel(uint8_t servo, float pos, float min, float max)

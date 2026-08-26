@@ -482,6 +482,10 @@ static void validateAndFixConfig(void)
 
 #if defined(USE_DSHOT_TELEMETRY)
     bool nChannelTimerUsed = false;
+#if !defined(PICO)
+    // N-channel (complementary output) timer usage affects burst-DMA DSHOT
+    // safety - an STM32 hardware-timer concept with no PICO equivalent (PICO
+    // has no timerGetConfiguredByTag()/useBurstDshot at all, see dshot_pico.c).
     for (unsigned i = 0; i < getMotorCount(); i++) {
         const ioTag_t tag = motorConfig()->dev.ioTags[i];
         if (tag) {
@@ -493,6 +497,7 @@ static void validateAndFixConfig(void)
             }
         }
     }
+#endif
 
     if ((!configuredMotorProtocolDshot || (motorConfig()->dev.useDshotBitbang == DSHOT_BITBANG_OFF && (motorConfig()->dev.useBurstDshot == DSHOT_DMAR_ON || nChannelTimerUsed))) && motorConfig()->dev.useDshotTelemetry) {
         motorConfigMutable()->dev.useDshotTelemetry = false;

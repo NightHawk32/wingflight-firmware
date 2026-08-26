@@ -29,14 +29,23 @@
 #if defined(USE_DSHOT) && defined(USE_DSHOT_TELEMETRY)
 
 #include "dshot_pico.h"
+#include "drivers/pwm_output_dshot_shared.h"
 
 uint32_t getCycleCounter(void);
 
-// Maximum time to wait for telemetry reception to complete
-#define DSHOT_TELEMETRY_TIMEOUT 2000
+// cli.c's cliDshotTelemetryInfo() reads this unconditionally whenever
+// USE_DSHOT_TELEMETRY is defined. Its real definition lives in
+// pwm_output_dshot_shared.c (excluded for PICO, see make/mcu/RP2350.mk),
+// which measures actual DMA-IRQ-to-direction-change latency - a concept
+// that doesn't apply to this PIO-based implementation, so this just stays
+// zeroed (cli.c will report 0 cycles/0us, which is honest for this backend).
+FAST_DATA_ZERO_INIT dshotDMAHandlerCycleCounters_t dshotDMAHandlerCycleCounters;
 
-// TODO use with TELEMETRY for cli report (or not)
-FAST_DATA_ZERO_INIT dshotTelemetryCycleCounters_t dshotDMAHandlerCycleCounters;
+// Sentinel for "no valid telemetry decoded this cycle" (matches upstream
+// Betaflight's DSHOT_TELEMETRY_INVALID, which isn't present in Wingflight's
+// older, simpler dshot.h - see dshot_pico.h for context). Any real decoded
+// eRPM value fits in 12 bits, so 0xffff is unambiguous.
+#define PICO_DSHOT_TELEMETRY_INVALID 0xffffu
 
 // Integer clock divider: PIO runs at 75 MHz (150 MHz / 2) for clean timing
 // This gives exactly 125 cycles per DShot bit and 100 cycles per telemetry bit
@@ -228,7 +237,7 @@ static uint32_t decodeOversampledTelemetry(int motorIndex, const uint32_t *buffe
 #endif
 
     // Convert run lengths to GCR bits using transition-table decoding
-    uint32_t decodedValue = DSHOT_TELEMETRY_INVALID;
+    uint32_t decodedValue = PICO_DSHOT_TELEMETRY_INVALID;
 
     // Compute core GCR pattern from inter-edge gaps
     uint32_t coreGcr = 0;
@@ -359,32 +368,7 @@ static uint32_t decodeOversampledTelemetry(int motorIndex, const uint32_t *buffe
 #endif
 
     // Return 12-bit eRPM (remove 4-bit checksum)
-    return  lastFailReason == FAIL_NONE ? (decodedValue >> 4) & 0xFFF : DSHOT_TELEMETRY_INVALID;
-}
-
-bool dshotTelemetryWait(void)
-{
-    bool telemetryWait = false;
-#ifdef USE_DSHOT_TELEMETRY
-    bool telemetryPending;
-    const timeUs_t startTimeUs = micros();
-
-    do {
-        telemetryPending = false;
-        telemetryWait |= telemetryPending;
-
-        if (cmpTimeUs(micros(), startTimeUs) > DSHOT_TELEMETRY_TIMEOUT) {
-            break;
-        }
-    } while (telemetryPending);
-
-    if (telemetryWait) {
-        DEBUG_SET(DEBUG_DSHOT_TELEMETRY_COUNTS, 2, debug[2] + 1);
-    }
-
-    bprintf("dshotTelemetryWait returning %d", telemetryWait);
-#endif
-    return telemetryWait;
+    return  lastFailReason == FAIL_NONE ? (decodedValue >> 4) & 0xFFF : PICO_DSHOT_TELEMETRY_INVALID;
 }
 
 bool dshotDecodeTelemetry(void)
@@ -453,14 +437,17 @@ bool dshotDecodeTelemetry(void)
         }
 
         uint32_t rawValue = decodeOversampledTelemetry(motorIndex, sampleBuffer);
-        DEBUG_SET(DEBUG_DSHOT_TELEMETRY_COUNTS, 0, debug[0] + 1);
         dshotTelemetryState.readCount++;
 
-        if (rawValue != DSHOT_TELEMETRY_INVALID) {
-            if ((rawValue == 0x0E00) && (dshotCommandGetCurrent(motorIndex) == DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE)) {
-                dshotTelemetryState.motorState[motorIndex].telemetryTypes = 1 << DSHOT_TELEMETRY_TYPE_STATE_EVENTS;
-            } else {
-                dshotTelemetryState.motorState[motorIndex].rawValue = rawValue;
+        // Wingflight's dshotTelemetryMotorState_t only tracks a plain eRPM
+        // value + active flag (no extended-telemetry-type tracking like
+        // upstream Betaflight's newer telemetryTypes/DSHOT_CMD_EXTENDED_
+        // TELEMETRY_ENABLE - not supported here).
+        if (rawValue != PICO_DSHOT_TELEMETRY_INVALID) {
+            dshotTelemetryState.motorState[motorIndex].telemetryValue = rawValue;
+            dshotTelemetryState.motorState[motorIndex].telemetryActive = true;
+            if (motorIndex < 4) {
+                DEBUG_SET(DEBUG_DSHOT_RPM_TELEMETRY, motorIndex, rawValue);
             }
         } else {
             dshotTelemetryState.invalidPacketCount++;
@@ -471,7 +458,7 @@ bool dshotDecodeTelemetry(void)
         static uint32_t okCount = 0, reportCount = 0;
         static uint32_t failEdge = 0, failBits = 0, failGcr = 0, failCsum = 0;
         static uint32_t lastOk = 0, lastEdge = 0, lastBits = 0, lastGcr = 0, lastCsum = 0;
-        if (rawValue != DSHOT_TELEMETRY_INVALID) {
+        if (rawValue != PICO_DSHOT_TELEMETRY_INVALID) {
             okCount++;
         } else {
             switch (lastFailReason) {
@@ -508,17 +495,41 @@ bool dshotDecodeTelemetry(void)
 #endif
 
 #ifdef USE_DSHOT_TELEMETRY_STATS
-        updateDshotTelemetryQuality(&dshotTelemetryQuality[motorIndex], rawValue != DSHOT_TELEMETRY_INVALID, currentTimeMs);
+        updateDshotTelemetryQuality(&dshotTelemetryQuality[motorIndex], rawValue != PICO_DSHOT_TELEMETRY_INVALID, currentTimeMs);
 #endif
     }
 
-    dshotTelemetryState.rawValueState = DSHOT_RAW_VALUE_STATE_NOT_PROCESSED;
 #ifdef PICO_TRACE
     cacc += getCycleCounter() - c1;
 #endif
 
     return true;
 #endif
+}
+
+// Wingflight's real implementations of these (used unconditionally by
+// cli.c/msp.c whenever USE_DSHOT_TELEMETRY is defined) live in
+// pwm_output_dshot_shared.c, which is excluded for PICO (it's STM32
+// DMA/timer-register based - see make/mcu/RP2350.mk's MCU_EXCLUDES). Both
+// are simple, backend-agnostic reads of the shared dshotTelemetryState, so
+// reimplement them here identically.
+bool isDshotMotorTelemetryActive(uint8_t motorIndex)
+{
+    return dshotTelemetryState.motorState[motorIndex].telemetryActive;
+}
+
+bool isDshotTelemetryActive(void)
+{
+    const unsigned motorCount = motorDeviceCount();
+    if (motorCount) {
+        for (unsigned i = 0; i < motorCount; i++) {
+            if (!isDshotMotorTelemetryActive(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
 }
 
 #endif // defined(USE_DSHOT) && defined(USE_DSHOT_TELEMETRY)

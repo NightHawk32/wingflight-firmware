@@ -114,6 +114,7 @@
 #define DMA_IRQ_CORE_NUM 1 // Use core 1 for DMA IRQs
 #undef USE_DMA_SPEC // not yet required - possibly won't be used at all
 
+#define USE_DSHOT
 #undef USE_DSHOT_BITBANG
 #define USE_DSHOT_TELEMETRY
 
@@ -202,6 +203,15 @@
 #undef USE_SERIAL_4WAY_BLHELI_BOOTLOADER
 #undef USE_SERIAL_4WAY_SK_BOOTLOADER
 #undef USE_SERIAL_PASSTHROUGH
+// AM32/BLHeli "ESC forward programming" (sensors/esc_sensor.c, reading/writing
+// ESC parameters via bidirectional DSHOT) unconditionally calls the low-level
+// fwifCmdDevice*()/esc4wayInit() primitives that are only ever defined in
+// io/serial_4way.c, itself gated by USE_SERIAL_4WAY_BLHELI_INTERFACE (already
+// undef'd above) - so this must be disabled too, or the link fails as soon as
+// USE_DSHOT is enabled. Not implemented for PICO yet (would need io/serial_4way.c's
+// bootloader protocol ported to a PICO-compatible I/O path first).
+#undef USE_AM32_FORWARD_PROGRAMMING
+#undef USE_BLHELI_FORWARD_PROGRAMMING
 #undef USE_MULTI_GYRO
 
 #undef USE_RANGEFINDER_HCSR04

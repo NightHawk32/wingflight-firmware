@@ -2258,4 +2258,18 @@ void blackboxInit(void)
     else
         blackboxSetState(BLACKBOX_STATE_DISABLED);
 }
+
+#else // !USE_BLACKBOX
+
+// sensors/esc_sensor.c's recordSensorProcess() calls this unconditionally
+// (reachable via a live function-pointer table regardless of whether
+// blackbox logging is actually enabled on this build), so it must still
+// link when USE_BLACKBOX is undefined - true for RP2350_UNIFIED today, and
+// latent (if never previously hit) on any other USE_BLACKBOX-less target.
+void blackboxLogCustomData(const uint8_t *ptr, size_t length)
+{
+    UNUSED(ptr);
+    UNUSED(length);
+}
+
 #endif

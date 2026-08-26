@@ -919,3 +919,190 @@ be invisible to STM32F4/F7/G4/H7 builds:
   emulation logic was verified by inspection against pico-sdk's
   `gpio_set_dir`/`gpio_put`/`gpio_get` semantics and against `i2cUnstick()`'s
   actual usage pattern, not on a scope.
+
+### Tenth iteration (2026-08-26) — real PICO servo PWM output
+
+- Implemented the servo PWM output flagged as a high-priority follow-up since
+  the sixth iteration ("implement real PICO servo PWM output in
+  `flight/servos.c`"). The old `drivers/pwm_servo_pico.c` (excluded from the
+  build, per the fifth iteration's note that it "targets a non-existent
+  Wingflight servo-device API") called `servoDevInit()`/`servoWrite()`
+  against a `servoDevConfig_t` type that doesn't exist anywhere in this
+  codebase - confirmed by grep, that type/API pair is also dead/uncalled in
+  `target/SITL/target.c`, so it was never a real integration point to begin
+  with, just a speculative stub copied from a differently-structured
+  upstream.
+- The actual live servo API (`flight/servos.c`) writes output via a raw
+  `timerChannel_t.ccr` register pointer (`*servoChannel[index].ccr = pos *
+  servoResolution[index]`, `pos` in microseconds), populated by
+  `pwmOutConfig()`/`timerAllocate()` - both STM32-timer-register concepts
+  with no PICO equivalent (`timerHardware_t` has no PICO branch). Since
+  `servoInit()` previously just set `servoCount = 0` and returned without
+  populating `servoChannel[]`, `ccr` stayed NULL and every `servoSetOutput()`
+  call was already a silent, safe no-op on PICO - servo mixer/PID logic ran
+  every loop, but no hardware ever moved.
+- Rewrote `pwm_servo_pico.c` (new `drivers/pwm_servo_pico.h` declares the
+  interface) against RP2's real PWM-slice hardware, following the exact
+  pattern already proven working for motor PWM output in
+  `pwm_motor_pico.c`'s `PWM_TYPE_STANDARD` case (same 1 ms-centered pulse
+  concept, same clkdiv/wrap-resolution-maximizing math) rather than STM32
+  timer registers: `picoServoDevInit(ioTags)` configures one PWM slice/
+  channel per servo pin (stopping at the first `IO_TAG_NONE`, matching the
+  STM32 loop's convention) at that servo's own `servoParams()->rate`, and
+  returns the count instead of touching a shared struct instance;
+  `picoServoWrite(index, pos)` converts a microsecond pulse width to a
+  compare level via a per-servo ticks-per-µs factor (the PICO equivalent of
+  `servoResolution[]`); `picoServoShutdown()` zeroes every configured channel.
+- Wired into `flight/servos.c` with three `#if defined(PICO)` branches
+  (`servoInit()`, `servoSetOutput()`, `servoShutdown()`) alongside the
+  existing STM32 code, and guarded the now-STM32-only `servoResolution[]`/
+  `servoChannel[]` file-scope arrays behind `#if !defined(PICO)` (they'd
+  otherwise trip `-Werror=unused-variable` on PICO, since PICO no longer
+  references them at all). Added `drivers/pwm_servo_pico.c` back to
+  `make/mcu/RP2350.mk`'s source list (it had been dropped when the old,
+  API-mismatched version was excluded).
+- Verification 2026-08-26: clean builds of all four RP2350/RP2354 targets
+  succeed and link in the new driver; `STM32F405` rebuilt to an
+  identical `.elf` size as before this change, confirming zero impact on the
+  STM32 path. Not hardware-tested (no board, and no servo pins are wired in
+  `RP2350_UNIFIED/target.h` by default - actual pin assignment is per-board
+  CLI config like every other unified target) - the PWM timing math itself
+  mirrors `pwm_motor_pico.c`'s already-used-in-this-port formula, so it's
+  verified by inspection/analogy, not on a scope.
+
+### Eleventh iteration (2026-08-26) — DSHOT actually enabled (was silently dead code)
+
+- Major finding: **`USE_DSHOT` was never defined for `RP2350_UNIFIED`.**
+  `target.h` already anticipated DSHOT everywhere (`PIO_DSHOT_INDEX`,
+  `USE_DSHOT_TELEMETRY`, `#undef USE_DSHOT_BITBANG`) and `dshot_pico.c`/
+  `dshot_bidir_pico.c` are fully-implemented PIO drivers (the latter has a
+  substantial custom GCR-decode/auto-calibration telemetry engine, not from
+  upstream Betaflight), both listed in `RP2350.mk`'s source list since early
+  iterations - but without `USE_DSHOT` itself, `#ifdef USE_DSHOT` compiled
+  both files down to nothing every time, on every build, silently. Confirmed
+  by checking the generated `.d` dependency file for `dshot_pico.o`: it
+  listed nothing but `platform.h`'s own include chain - `dshot_pico.h` was
+  never even reached. Until this iteration, **no RP2350/RP2354 build has
+  ever had motor output beyond plain PWM/OneShot** (`pwm_motor_pico.c`),
+  regardless of anything configured in the CLI.
+- Turning `USE_DSHOT` on (`target.h`) surfaced that `dshot_pico.c`/
+  `dshot_pico.h`/`dshot_bidir_pico.c` were byte-for-byte straight copies of
+  upstream Betaflight's `src/platform/PICO/dshot_pico.c` (confirmed against
+  the `betaflight/` reference checkout in this repo) - written against a
+  *newer* Betaflight motor API (`drivers/motor_types.h`'s
+  `motorProtocolTypes_e`, and a `motorVTable_t` with
+  `telemetryWait`/`decodeTelemetry`/`updateInit`/`isMotorIdle`/
+  `requestTelemetry`/`convertExternalToMotor`/`convertMotorToExternal`) that
+  Wingflight, a Rotorflight-lineage fork, never adopted. Wingflight's real,
+  working contract (`drivers/motor.h`, proven by `motor.c`, `dshot_bitbang.c`,
+  `pwm_output_dshot_shared.c`) is older/simpler: `motorPwmProtocolTypes_e`
+  (`PWM_TYPE_DSHOT150/300/600`, not upstream's `MOTOR_PROTOCOL_*`), and a
+  `motorVTable_t` with just `postInit/enable/disable/shutdown/updateStart/
+  updateComplete/write(index,mode,value)/writeInt/isMotorEnabled` - no
+  telemetry-specific vtable slots at all (telemetry decode instead happens
+  inside `updateStart()`, and cross-backend command/telemetry-request state
+  is shared via `getMotorDmaOutput()`, not a vtable callback). This is the
+  same class of upstream-API-mismatch already found and fixed for
+  `pwm_servo_pico.c` (tenth iteration) and dead `servoDevInit`/`pwmWriteServo`
+  in `target/SITL/target.c` - evidently a recurring hazard whenever a file is
+  ported by literal copy from upstream rather than adapted to Wingflight's
+  actual (older) driver contracts, and made worse here because `USE_DSHOT`
+  being off meant the mismatch could never surface as a compile error.
+- Rewrote `dshot_pico.h`/`dshot_pico.c`/`dshot_bidir_pico.c` against the real
+  API, keeping the PIO logic/timing and the bidir GCR-telemetry decode
+  algorithm entirely intact (only their *plumbing* into the rest of the
+  firmware changed):
+  - `dshotPwmDevInit()` now returns `motorDevice_t *` (`NULL` on failure)
+    taking `(motorDevConfig, motorCount)` directly, matching
+    `motorPwmDevInit()`/`dshotBitbangDevInit()`'s real signature, instead of
+    the old `bool dshotPwmDevInit(motorDevice_t *device, ...)`.
+  - `dshotVTable` now has exactly Wingflight's 9 real fields; `dshotWrite()`
+    takes `(index, mode, value)` and calls the shared `dshotConvertToInternal()`
+    (used identically by bitbang/HAL); telemetry decode + the old
+    `dshotUpdateInit()`'s per-cycle packet-buffer reset both moved into a new
+    `dshotUpdateStart()`, which is the real vtable hook for this (there is no
+    `updateInit` slot in Wingflight's `motorVTable_t`).
+  - Added `getMotorDmaOutput()` (backed by a small PICO-local
+    `dshotDmaMotors[]` using the *real* `motorDmaOutput_t` from
+    `drivers/dshot_dpwm.h` - only `->protocolControl` is meaningful, the rest
+    is unused STM32-DMA bookkeeping) since `dshot_command.c`'s
+    `allMotorsAreIdle()`/`dshotCommandWrite()` call it *unconditionally*
+    (regardless of backend) to manage command/telemetry-request state - this
+    is a real, load-bearing cross-backend contract, not upstream-only cruft.
+  - `dshot_bidir_pico.c`'s telemetry decode now writes into Wingflight's real
+    `dshotTelemetryState.motorState[i].telemetryValue`/`.telemetryActive`
+    (not upstream's `.rawValue`/`.telemetryTypes`/`dshotRawValueState_t`,
+    none of which exist here), dropped the unsupported extended-telemetry-type
+    branch, and added `isDshotMotorTelemetryActive()`/`isDshotTelemetryActive()`
+    (normally defined in `pwm_output_dshot_shared.c`, which is excluded for
+    PICO - see below - but called unconditionally from `cli.c`/`msp.c`
+    whenever `USE_DSHOT_TELEMETRY` is defined).
+  - Removed the DSHOT600-only restriction the user asked to lift: since
+    `dshotGetPeriodTiming()`/`dshot_program_init()`/`dshot_program_bidir_init()`
+    already scale the PIO clock divider from the selected protocol's real bit
+    period (the PIO programs' cycle counts are protocol-agnostic - "DSHOT600"
+    in the program names is just historical), DSHOT150/300 needed no PIO
+    changes at all, only removing the artificial gate in `dshotPwmDevInit()`.
+    The user confirmed 4 motors max is fine, so that existing cap is
+    untouched.
+  - `make/mcu/RP2350.mk`'s `MCU_EXCLUDES` gained `dshot_dpwm.c`,
+    `pwm_output_dshot.c`, `pwm_output_dshot_shared.c`, `pwm_output_dshot_hal.c`,
+    `pwm_output_dshot_hal_hal.c` - all STM32 DMA/timer-register DSHOT backends
+    that would otherwise either duplicate-define `dshotPwmDevInit()`/
+    `useDshotTelemetry` against `dshot_pico.c`, or fail outright (they need
+    `timerAllocate()`, excluded since the sixth iteration).
+- Turning on `USE_DSHOT`/`USE_DSHOT_TELEMETRY` also surfaced three unrelated,
+  previously-latent gaps in generic (non-PICO-specific) code - each is a real
+  bug on *any* platform that has DSHOT+telemetry but not full STM32 timer/DMA
+  hardware, just never previously exercised because no such Wingflight target
+  existed before RP2350:
+  - `drivers/dshot_dpwm.h`'s `motorDmaOutput_t` uses `TIM_OCInitTypeDef`/
+    `TIM_ICInitTypeDef` *by value*, but `common/platform.h`'s PICO
+    compatibility shim only stubbed `TIM_OCInitTypeDef` as `typedef void`
+    (incomplete - can't be used by value) and didn't stub
+    `TIM_ICInitTypeDef` at all. Both are now real (if inert) empty-struct
+    stubs, matching the existing `DMA_InitTypeDef` precedent in the same
+    file. This header is reachable from genuinely generic code
+    (`drivers/dshot.c`, `cli.c`) any time `USE_DSHOT` is defined, regardless
+    of backend.
+  - `config/config.c`'s `validateAndFixConfig()` unconditionally calls
+    `timerGetConfiguredByTag()` (only defined in `drivers/timer_common.c`,
+    excluded for PICO since the sixth iteration) under
+    `#if defined(USE_DSHOT_TELEMETRY)` to check for N-channel timer usage
+    (an STM32 burst-DMA-safety concept). Guarded just that loop with
+    `#if !defined(PICO)`, leaving `nChannelTimerUsed = false` otherwise.
+  - `sensors/esc_sensor.c`'s AM32/BLHeli "ESC forward programming" feature
+    (reading/writing ESC parameters over bidirectional DSHOT,
+    `USE_AM32_FORWARD_PROGRAMMING`/`USE_BLHELI_FORWARD_PROGRAMMING`, both on
+    by default) calls `fwifCmdDevice*()`/`esc4wayInit()` unconditionally,
+    but those are only ever defined in `io/serial_4way.c`, itself gated by
+    `USE_SERIAL_4WAY_BLHELI_INTERFACE` - which `RP2350_UNIFIED/target.h`
+    already (and correctly) disables. The dependency between the two
+    feature flags was never enforced, so it only broke once something
+    (`USE_DSHOT`) finally made the reference reachable. Disabled
+    `USE_AM32_FORWARD_PROGRAMMING`/`USE_BLHELI_FORWARD_PROGRAMMING` for
+    RP2350 to match - this is a real, if minor, feature loss (ESC parameter
+    read/write via the Configurator won't work) versus upstream, deferred
+    until `io/serial_4way.c`'s bootloader protocol is ported to a
+    PICO-compatible I/O path.
+  - Similarly, `sensors/esc_sensor.c`'s raw-telemetry recorder calls
+    `blackboxLogCustomData()` unconditionally, but `blackbox.c` (and hence
+    its definition) is entirely `#ifdef USE_BLACKBOX`-gated, and
+    `USE_BLACKBOX` is undef'd for RP2350 (deferred since the sixth
+    iteration). Added a no-op fallback definition in `blackbox.c`'s
+    `#else` branch.
+- Verification 2026-08-26: clean builds of all four RP2350/RP2354 targets
+  succeed and **link** (the real proof this all actually wired up, unlike
+  the silent no-op state this branch has been in since inception).
+  Re-verified `STM32F405`/`STM32F7X2`/`STM32H743`/`STM32G47X` (one target per
+  MCU family/toolchain: non-HAL F4, and HAL F7/H7/G4) all rebuild to
+  identical `.elf` sizes as before this iteration, confirming the
+  `common/platform.h`/`config/config.c`/`blackbox.c` changes (all shared,
+  non-PICO-specific files) have zero effect on any existing platform.
+- Not done / not hardware-tested: no ESC available in this environment to
+  verify DSHOT150/300/600 output or bidirectional telemetry decode timing
+  for real - this is motor-control-critical code, so real-hardware
+  validation (oscilloscope/logic analyzer on the signal line at minimum,
+  then a real ESC+motor) before flight is strongly recommended before
+  relying on this. AM32/BLHeli ESC parameter forward-programming is now a
+  known, explicit gap (see above) rather than a silent link failure.

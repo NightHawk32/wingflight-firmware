@@ -389,6 +389,7 @@ MCU_COMMON_SRC = \
             drivers/exti_pico.c \
             drivers/persistent_rp2350.c \
             drivers/pwm_motor_pico.c \
+            drivers/pwm_servo_pico.c \
             drivers/pwm_beeper_pico.c \
             drivers/gyro_clkin_pico.c \
             drivers/system_rp2350.c \
@@ -415,7 +416,12 @@ MCU_EXCLUDES = \
             drivers/rx/rx_pwm.c \
             drivers/timer.c \
             drivers/timer_common.c \
-            drivers/dma_reqmap.c
+            drivers/dma_reqmap.c \
+            drivers/dshot_dpwm.c \
+            drivers/pwm_output_dshot.c \
+            drivers/pwm_output_dshot_shared.c \
+            drivers/pwm_output_dshot_hal.c \
+            drivers/pwm_output_dshot_hal_hal.c
 
 MSC_SRC :=
 
