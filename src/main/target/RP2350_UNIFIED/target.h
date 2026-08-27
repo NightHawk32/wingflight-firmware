@@ -70,6 +70,16 @@
 // docs/RP2350-Porting-Plan.md.
 #define USE_UART1
 #define USE_UART2
+
+// RP2350's PL011 UARTs have no native single-wire half-duplex mode (unlike
+// STM32's USART) and a given instance's TX/RX are always two distinct,
+// fixed GPIOs - so SERIAL_BIDIR on UART1/UART2 requires an external SPST
+// analog switch joining those two pins, gated by one more GPIO. This just
+// exposes that gate pin as a CLI resource (`resource SERIAL_BIDIR_EN <n>
+// <pin>`, n=1/2); boards without the switch simply leave it unset (NONE)
+// and fall back to a bare wire-tie, matching the pre-existing behavior. See
+// drivers/serial_uart_pico.c and docs/RP235XB-Reference-Pinout.md.
+#define USE_SERIAL_BIDIR_SWITCH
 // "Soft serial" on PICO = extra UARTs bit-banged by PIO state machines
 // (drivers/serial_softserial_pico.c) on the PIO_UART_INDEX block - not
 // timer-interrupt bit-banging like STM32, so they are not limited to low

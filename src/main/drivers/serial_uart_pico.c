@@ -63,6 +63,8 @@
 #include "drivers/serial_uart.h"
 #include "drivers/serial_uart_impl.h"
 
+#include "pg/serial_pinconfig.h"
+
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
 #include "hardware/uart.h"
@@ -395,7 +397,31 @@ uartPort_t *serialUART(UARTDevice_e device, uint32_t baudRate, portMode_e mode, 
         } else {
             gpio_set_pulls(b->rxPin, true, false); // pull up
         }
+
+#ifdef USE_SERIAL_BIDIR_SWITCH
+        // Drive the external SPST combiner switch's enable pin (if the
+        // board has one - resource SERIAL_BIDIR_EN) closed for the whole
+        // time this port is open in half duplex. Boards without the switch
+        // just leave this unset and rely on a bare wire-tie instead.
+        IO_t bidirEnIO = IOGetByTag(serialPinConfig()->ioTagBidirEnable[device]);
+        if (bidirEnIO) {
+            IOInit(bidirEnIO, OWNER_SERIAL_BIDIR_ENABLE, RESOURCE_INDEX(device));
+            IOConfigGPIO(bidirEnIO, IOCFG_OUT_PP);
+            IOWrite(bidirEnIO, true);
+        }
+#endif
     } else {
+#ifdef USE_SERIAL_BIDIR_SWITCH
+        // Full duplex on this port: if a combiner switch is fitted, hold it
+        // open so the two pins stay isolated (matters if the same board
+        // config is ever reused without SERIAL_BIDIR set).
+        IO_t bidirEnIO = IOGetByTag(serialPinConfig()->ioTagBidirEnable[device]);
+        if (bidirEnIO) {
+            IOInit(bidirEnIO, OWNER_SERIAL_BIDIR_ENABLE, RESOURCE_INDEX(device));
+            IOConfigGPIO(bidirEnIO, IOCFG_OUT_PP);
+            IOWrite(bidirEnIO, false);
+        }
+#endif
         if ((mode & MODE_TX) && txIO) {
             IOInit(txIO, OWNER_SERIAL_TX, RESOURCE_INDEX(device));
             const uint32_t txPin = IO_Pin(txIO);
