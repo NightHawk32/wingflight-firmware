@@ -605,11 +605,31 @@ bool fbusXactCompareAndWriteParams(uint8_t phyID, uint16_t appId, const xactServ
 
     // Compare each parameter and queue writes for differences
     if (cachedParams->physicalId != newParams->physicalId) {
-        fbusXactWriteUplinkFramePhyID(currentPhyID, XACT_FIELD_PHYSICAL_ID, currentAppId, newParams->physicalId);
-        cachedParams->physicalId = newParams->physicalId;
-        // Update currentPhyID for subsequent writes
-        currentPhyID = newParams->physicalId;
-        hasChanges = true;
+        // Refuse to rename onto a Physical ID another discovered servo already has -- unlike
+        // the App ID guard above, this only skips this one field rather than the whole write:
+        // Physical ID isn't what write commands are actually addressed by (App ID is), so a
+        // bad rename here doesn't make the other fields' writes unsafe, it would just create a
+        // second Physical ID collision.
+        bool physicalIdTaken = false;
+        for (uint8_t i = 0; i < xactServoCount; i++) {
+            if (i != (uint8_t)servoIndex && xactServos[i].phyID == newParams->physicalId) {
+                physicalIdTaken = true;
+                break;
+            }
+        }
+
+        if (!physicalIdTaken) {
+            fbusXactWriteUplinkFramePhyID(currentPhyID, XACT_FIELD_PHYSICAL_ID, currentAppId, newParams->physicalId);
+            cachedParams->physicalId = newParams->physicalId;
+            // Update currentPhyID for subsequent writes, and keep the tracking key (which the
+            // discovery list and every fbusXactGetServoParams()/-CompareAndWriteParams() lookup
+            // is keyed by) in sync with the rename -- otherwise this servo keeps appearing
+            // under its old Physical ID until the next full rescan, and further reads/writes
+            // addressed to the new one won't find it.
+            currentPhyID = newParams->physicalId;
+            xactServos[servoIndex].phyID = newParams->physicalId;
+            hasChanges = true;
+        }
     }
 
     if (cachedParams->appIdOffset != newParams->appIdOffset) {
