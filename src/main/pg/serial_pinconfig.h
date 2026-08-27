@@ -40,6 +40,10 @@ typedef struct serialPinConfig_s {
     ioTag_t ioTagTx[SERIAL_PORT_MAX_INDEX];
     ioTag_t ioTagRx[SERIAL_PORT_MAX_INDEX];
     ioTag_t ioTagInverter[SERIAL_PORT_MAX_INDEX];
+    // Enable pin for an external SPST switch joining a hardware UART's fixed
+    // TX/RX pins for single-wire half duplex (SERIAL_BIDIR) - see
+    // drivers/serial_uart_pico.c. Unused/NONE unless such a switch is fitted.
+    ioTag_t ioTagBidirEnable[SERIAL_PORT_MAX_INDEX];
 } serialPinConfig_t;
 
 PG_DECLARE(serialPinConfig_t, serialPinConfig);

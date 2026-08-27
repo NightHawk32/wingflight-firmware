@@ -38,6 +38,7 @@ const char * const ownerNames[OWNER_TOTAL_COUNT] = {
     "ADC_EXT",
     "SERIAL_TX",
     "SERIAL_RX",
+    "SERIAL_BIDIR_EN",
     "DEBUG",
     "TIMER",
     "SONAR_TRIGGER",

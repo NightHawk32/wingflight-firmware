@@ -127,6 +127,20 @@ software choice (drive the enable pin), not a PCB rework.
 | UART1 | GPIO30 | GPIO12 (TX) <-> GPIO13 (RX) | TI SN74LVC1G66 (SOT-23-5) |
 | UART2 | GPIO31 | GPIO20 (TX) <-> GPIO21 (RX) | TI SN74LVC1G66 (SOT-23-5) |
 
+Configured via the CLI like any other resource, e.g.:
+
+```
+resource SERIAL_BIDIR_EN 1 30
+resource SERIAL_BIDIR_EN 2 31
+```
+
+(index 1/2 = UART1/UART2, matching `resource SERIAL_TX`/`SERIAL_RX`
+numbering). Left unset (`NONE`), a port falls back to a bare wire-tie
+between its TX/RX pins with no software-driven enable - the pre-existing
+behavior. Set, `serial_uart_pico.c` drives that pin high for as long as the
+port is open with `SERIAL_BIDIR` set (closing the switch) and low otherwise
+(holding it open so full duplex still works if the port is reconfigured).
+
 Any logic-level (1.65-3.6V or wider) bilateral CMOS switch works; other
 drop-in options: TI `TS5A3159`/`TS5A23157` (SPDT, if a spare throw is useful
 elsewhere), Nexperia `NX3L1G66GW,125` or `NX3L1G3157GM,125`, onsemi

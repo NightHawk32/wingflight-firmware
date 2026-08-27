@@ -5643,6 +5643,9 @@ const cliResourceValue_t resourceTable[] = {
 #ifdef USE_INVERTER
     DEFA( OWNER_INVERTER,      PG_SERIAL_PIN_CONFIG, serialPinConfig_t, ioTagInverter[0], SERIAL_PORT_MAX_INDEX ),
 #endif
+#ifdef USE_SERIAL_BIDIR_SWITCH
+    DEFA( OWNER_SERIAL_BIDIR_ENABLE, PG_SERIAL_PIN_CONFIG, serialPinConfig_t, ioTagBidirEnable[0], SERIAL_PORT_MAX_INDEX ),
+#endif
 #ifdef USE_I2C
     DEFW( OWNER_I2C_SCL,       PG_I2C_CONFIG, i2cConfig_t, ioTagScl, I2CDEV_COUNT ),
     DEFW( OWNER_I2C_SDA,       PG_I2C_CONFIG, i2cConfig_t, ioTagSda, I2CDEV_COUNT ),
