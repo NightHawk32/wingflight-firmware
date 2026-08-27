@@ -44,8 +44,16 @@
  *
  * SERIAL_INVERTED is supported for free via the RP2350 pad-level
  * input/output override inverters (gpio_set_inover()/gpio_set_outover()).
- * SERIAL_BIDIR (single-wire half-duplex, e.g. SmartAudio) is NOT supported
- * yet - openSoftSerial() refuses it rather than misbehaving.
+ *
+ * SERIAL_BIDIR (single-wire half-duplex, e.g. SmartAudio) reuses the TX pin
+ * only (RX pin config is ignored, matching the STM32 half-duplex
+ * convention in serial_softserial.c) and hands the wire back and forth
+ * between the TX and RX programs: idle is listening (RX SM enabled, TX SM
+ * claimed but parked), softSerialWriteByte() switches to TX on the first
+ * queued byte, and the shared PIO IRQ handler switches back to RX
+ * once the ring buffer is drained AND the TX SM reports fully stalled
+ * (pio_sm_is_exec_stalled()) - i.e. the last frame, including its stop
+ * bit, has actually finished shifting out, not just left the FIFO.
  */
 
 #include <stdbool.h>
@@ -88,6 +96,7 @@ typedef struct picoSoftSerial_s {
     int8_t txSm; // -1 when direction unused
     int8_t rxSm;
     bool active;
+    bool bidirTxActive; // BIDIR only: true while the shared pin is driven by the TX program
     volatile uint8_t rxBuffer[SOFTSERIAL_BUFFER_SIZE];
     volatile uint8_t txBuffer[SOFTSERIAL_BUFFER_SIZE];
 } picoSoftSerial_t;
@@ -233,6 +242,50 @@ static bool softSerialRxProgramInit(PIO pio, uint sm, uint pin, uint32_t baud, b
     return true;
 }
 
+// --- SERIAL_BIDIR direction handover (shared pin, TX/RX programs take turns) ---
+
+// Hand the shared wire from the RX program to the TX program. Called from
+// softSerialWriteByte() the moment a write arrives while still listening.
+static bool softSerialBidirSwitchToTx(picoSoftSerial_t *s)
+{
+    pio_sm_set_enabled(softSerialPio, s->rxSm, false);
+
+    const uint pin = IO_Pin(s->txIO);
+    if (!softSerialTxProgramInit(softSerialPio, s->txSm, pin, s->port.baudRate)) {
+        return false;
+    }
+    if (s->port.options & SERIAL_INVERTED) {
+        gpio_set_outover(pin, GPIO_OVERRIDE_INVERT);
+    }
+    s->bidirTxActive = true;
+    return true;
+}
+
+// Hand the wire back to the RX program. Called from the PIO IRQ handler
+// once the ring buffer is drained AND the TX SM is confirmed fully idle -
+// see softSerialPioIrqHandler().
+static void softSerialBidirSwitchToRx(picoSoftSerial_t *s)
+{
+    pio_sm_set_enabled(softSerialPio, s->txSm, false);
+
+    const uint pin = IO_Pin(s->rxIO);
+    softSerialRxProgramInit(softSerialPio, s->rxSm, pin, s->port.baudRate, (s->port.options & SERIAL_INVERTED) != 0);
+    if (s->port.options & SERIAL_INVERTED) {
+        gpio_set_inover(pin, GPIO_OVERRIDE_INVERT);
+    }
+    s->bidirTxActive = false;
+}
+
+// True once the TX SM has fully finished shifting out its last frame: the
+// FIFO is empty AND the SM is stalled - for uart_tx_program the only
+// blocking instruction is the `pull block` at the wrap point, so "stalled"
+// here can only mean parked there waiting for more data, i.e. the previous
+// frame (including its stop bit) is completely off the wire already.
+static bool softSerialTxFullyIdle(const picoSoftSerial_t *s)
+{
+    return pio_sm_is_tx_fifo_empty(softSerialPio, s->txSm) && pio_sm_is_exec_stalled(softSerialPio, s->txSm);
+}
+
 // --- ring-buffer helpers (single producer / single consumer each way) ---
 
 static uint32_t rxBytesUsed(const picoSoftSerial_t *s)
@@ -271,15 +324,30 @@ static void softSerialPioIrqHandler(void)
             pio_interrupt_clear(softSerialPio, (4 + s->rxSm) & 7);
         }
 
-        if (s->txSm >= 0) {
+        if (s->txSm >= 0 && (!(s->port.options & SERIAL_BIDIR) || s->bidirTxActive)) {
             while (txBytesUsed(s) && !pio_sm_is_tx_fifo_full(softSerialPio, s->txSm)) {
                 pio_sm_put(softSerialPio, s->txSm, s->port.txBuffer[s->port.txBufferTail]);
                 s->port.txBufferTail = (s->port.txBufferTail + 1) & (SOFTSERIAL_BUFFER_SIZE - 1);
             }
             if (!txBytesUsed(s)) {
-                // Ring drained: mask the (level-triggered) TX-FIFO-not-full
-                // source until serialWrite() queues more data.
-                pio_set_irqn_source_enabled(softSerialPio, 0, pio_get_tx_fifo_not_full_interrupt_source(s->txSm), false);
+                const bool bidirTx = (s->port.options & SERIAL_BIDIR) && s->bidirTxActive;
+                if (!bidirTx || softSerialTxFullyIdle(s)) {
+                    // Ring drained (and, for BIDIR, the wire itself is
+                    // confirmed idle): mask the (level-triggered)
+                    // TX-FIFO-not-full source until more data is queued.
+                    pio_set_irqn_source_enabled(softSerialPio, 0, pio_get_tx_fifo_not_full_interrupt_source(s->txSm), false);
+                    if (bidirTx) {
+                        softSerialBidirSwitchToRx(s);
+                    }
+                }
+                // else: BIDIR, ring drained but the trailing frame is still
+                // shifting out - leave the source enabled. It is
+                // level-triggered on FIFO-empty (definitely true here), so
+                // this handler is re-entered immediately; other active
+                // ports' RX/TX are still serviced on every re-entry (the
+                // loop above covers all of them), so this doesn't starve
+                // them - it just re-checks softSerialTxFullyIdle() until the
+                // last frame (bounded by a handful of bit periods) is done.
             }
         }
     }
@@ -294,6 +362,12 @@ void softSerialWriteByte(serialPort_t *instance, uint8_t ch)
 
     if (s->txSm < 0 || !(s->port.mode & MODE_TX)) {
         return;
+    }
+
+    if ((s->port.options & SERIAL_BIDIR) && !s->bidirTxActive) {
+        if (!softSerialBidirSwitchToTx(s)) {
+            return;
+        }
     }
 
     if (txBytesUsed(s) >= SOFTSERIAL_BUFFER_SIZE - 1) {
@@ -356,11 +430,22 @@ void softSerialSetBaudRate(serialPort_t *instance, uint32_t baudRate)
     picoSoftSerial_t *s = (picoSoftSerial_t *)instance;
     const float div = softSerialClkdiv(baudRate);
 
-    if (s->txSm >= 0) {
-        softSerialRestartSm(s->txSm, txProgramOffset, div);
-    }
-    if (s->rxSm >= 0) {
-        softSerialRestartSm(s->rxSm, rxProgramOffset, div);
+    if (s->port.options & SERIAL_BIDIR) {
+        // Only one of the two SMs is actually enabled at a time in BIDIR
+        // mode - restarting+re-enabling the idle one would wrongly power it
+        // up and drive/listen on the shared pin alongside the active one.
+        if (s->bidirTxActive) {
+            softSerialRestartSm(s->txSm, txProgramOffset, div);
+        } else if (s->rxSm >= 0) {
+            softSerialRestartSm(s->rxSm, rxProgramOffset, div);
+        }
+    } else {
+        if (s->txSm >= 0) {
+            softSerialRestartSm(s->txSm, txProgramOffset, div);
+        }
+        if (s->rxSm >= 0) {
+            softSerialRestartSm(s->rxSm, rxProgramOffset, div);
+        }
     }
     s->port.baudRate = baudRate;
 }
@@ -369,6 +454,12 @@ bool isSoftSerialTransmitBufferEmpty(const serialPort_t *instance)
 {
     const picoSoftSerial_t *s = (const picoSoftSerial_t *)instance;
     if (s->txSm < 0) {
+        return true;
+    }
+    if ((s->port.options & SERIAL_BIDIR) && !s->bidirTxActive) {
+        // Already handed the wire back to the receiver - and the TX SM may
+        // never have been pio_sm_init()'d yet in this session, so its PC
+        // reads as whatever the hardware defaults to, not txProgramOffset.
         return true;
     }
     // The FIFO empties as soon as the SM has PULLed the last word - the
@@ -392,11 +483,7 @@ serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallb
         return NULL;
     }
 
-    if (options & SERIAL_BIDIR) {
-        // Single-wire half-duplex would need TX/RX state machines sharing
-        // one pin with direction handover - not implemented yet.
-        return NULL;
-    }
+    const bool bidir = (options & SERIAL_BIDIR) != 0;
 
     picoSoftSerial_t *s = &softSerialPorts[portIndex];
     if (s->active) {
@@ -407,21 +494,32 @@ serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallb
     const ioTag_t tagRx = serialPinConfig()->ioTagRx[pinCfgIndex];
     const ioTag_t tagTx = serialPinConfig()->ioTagTx[pinCfgIndex];
 
-    if (((mode & MODE_RX) && !tagRx) || ((mode & MODE_TX) && !tagTx)) {
-        return NULL;
-    }
+    if (bidir) {
+        // Single-wire half duplex: only the TX pin is used (matches the
+        // STM32 half-duplex convention in serial_softserial.c) - both
+        // directions are mandatory, since there'd be nothing to hand the
+        // wire back and forth between otherwise.
+        if ((mode & MODE_RXTX) != MODE_RXTX || !tagTx) {
+            return NULL;
+        }
+    } else {
+        if (((mode & MODE_RX) && !tagRx) || ((mode & MODE_TX) && !tagTx)) {
+            return NULL;
+        }
 
-    if ((mode & MODE_RXTX) == MODE_RXTX && tagRx == tagTx) {
-        // Pin directions are per-pin, not per-state-machine: the RX SM init
-        // would switch the shared pin to input and silently break TX. Needs
-        // the same direction-handover work as SERIAL_BIDIR - refuse.
-        return NULL;
+        if ((mode & MODE_RXTX) == MODE_RXTX && tagRx == tagTx) {
+            // Pin directions are per-pin, not per-state-machine: the RX SM
+            // init would switch the shared pin to input and silently break
+            // TX. Full duplex on one pin makes no sense anyway - use
+            // SERIAL_BIDIR for a single-wire port.
+            return NULL;
+        }
     }
 
     softSerialPio = PIO_INSTANCE(PIO_UART_INDEX);
 
-    if (!softSerialClaimGpioBase((mode & MODE_TX) ? tagTx : IO_TAG_NONE,
-                                 (mode & MODE_RX) ? tagRx : IO_TAG_NONE)) {
+    if (!softSerialClaimGpioBase(bidir ? tagTx : ((mode & MODE_TX) ? tagTx : IO_TAG_NONE),
+                                 bidir ? IO_TAG_NONE : ((mode & MODE_RX) ? tagRx : IO_TAG_NONE))) {
         return NULL;
     }
 
@@ -456,6 +554,7 @@ serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallb
     s->port.txBufferHead = s->port.txBufferTail = 0;
     s->txSm = -1;
     s->rxSm = -1;
+    s->bidirTxActive = false;
 
     if (mode & MODE_TX) {
         const int sm = pio_claim_unused_sm(softSerialPio, false);
@@ -466,15 +565,20 @@ serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallb
         s->txIO = IOGetByTag(tagTx);
         IOInit(s->txIO, OWNER_SERIAL_TX, RESOURCE_INDEX(pinCfgIndex));
 
-        const uint txPin = IO_Pin(s->txIO);
-        if (!softSerialTxProgramInit(softSerialPio, sm, txPin, baud)) {
-            pio_sm_unclaim(softSerialPio, sm);
-            s->txSm = -1;
-            return NULL;
+        if (!bidir) {
+            const uint txPin = IO_Pin(s->txIO);
+            if (!softSerialTxProgramInit(softSerialPio, sm, txPin, baud)) {
+                pio_sm_unclaim(softSerialPio, sm);
+                s->txSm = -1;
+                return NULL;
+            }
+            if (options & SERIAL_INVERTED) {
+                gpio_set_outover(txPin, GPIO_OVERRIDE_INVERT);
+            }
         }
-        if (options & SERIAL_INVERTED) {
-            gpio_set_outover(txPin, GPIO_OVERRIDE_INVERT);
-        }
+        // bidir: the SM is claimed but left uninitialized/disabled - idle
+        // state is listening, so the RX program owns the pin until the
+        // first write hands it over (see softSerialBidirSwitchToTx()).
     }
 
     if (mode & MODE_RX) {
@@ -482,8 +586,10 @@ serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallb
         bool rxOk = sm >= 0;
         if (rxOk) {
             s->rxSm = (int8_t)sm;
-            s->rxIO = IOGetByTag(tagRx);
-            IOInit(s->rxIO, OWNER_SERIAL_RX, RESOURCE_INDEX(pinCfgIndex));
+            s->rxIO = bidir ? s->txIO : IOGetByTag(tagRx);
+            if (!bidir) {
+                IOInit(s->rxIO, OWNER_SERIAL_RX, RESOURCE_INDEX(pinCfgIndex));
+            }
 
             const uint rxPin = IO_Pin(s->rxIO);
             rxOk = softSerialRxProgramInit(softSerialPio, sm, rxPin, baud, (options & SERIAL_INVERTED) != 0);
