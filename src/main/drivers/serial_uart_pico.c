@@ -33,10 +33,24 @@
  * TX-line half-duplex monitor feature (SERIAL_CHECK_TX/checkUsartTxOutput,
  * betaflight-only, not present in Wingflight's serial_uart.h) are not ported -
  * see docs/RP2350-Porting-Plan.md for the follow-up note.
+ *
+ * SERIAL_BIDIR: unlike STM32's USART (a real single-wire half-duplex
+ * peripheral mode, HAL_HalfDuplex_Init), the RP2350's PL011 UART has no such
+ * mode, and a UART instance's TX and RX pins are always fixed, distinct
+ * GPIOs (see uartHardware[]'s rxPins[]/txPins[] tables) - one GPIO can never
+ * serve as both. So single-wire half duplex on a hardware UART port here
+ * requires the board to physically tie the instance's TX and RX pins
+ * together on the same net; the driver just switches which of the two pins
+ * is electrically live (UART function enabled and driving/listening) vs.
+ * released to Hi-Z, starting out listening (RX pin live) and handing the
+ * wire over to TX on the first queued byte, then back to RX once the
+ * hardware UARTFR.BUSY flag confirms the last frame has actually finished
+ * shifting out (see uartBidirSwitchToTx()/uartBidirSwitchToRx()).
  */
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "platform.h"
 
@@ -165,6 +179,91 @@ void uartSelectPins(UARTDevice_e device, portOptions_e options)
     }
 }
 
+// --- SERIAL_BIDIR direction handover state, one slot per uartDevmap[] entry ---
+
+typedef struct picoUartBidir_s {
+    bool active;   // this device was opened with SERIAL_BIDIR
+    bool txActive; // true: TX pin is live (driving); false: RX pin is live (listening)
+    uint32_t txPin;
+    uint32_t rxPin;
+    portOptions_e options;
+} picoUartBidir_t;
+
+static picoUartBidir_t uartBidir[UARTDEV_COUNT_MAX];
+
+static int uartDeviceIndex(const uartPort_t *uartPort)
+{
+    for (int i = 0; i < UARTDEV_COUNT_MAX; i++) {
+        if (uartDevmap[i] && &uartDevmap[i]->port == uartPort) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Detach a pin from the UART peripheral and float it - the released side of
+// a half-duplex pair must not drive (or be read from) the shared wire while
+// the other side owns it.
+static void uartBidirReleasePin(uint32_t pin)
+{
+    gpio_set_function(pin, GPIO_FUNC_SIO);
+    gpio_set_dir(pin, false);
+    gpio_set_pulls(pin, false, false);
+}
+
+static void uartBidirSwitchToTx(int device)
+{
+    picoUartBidir_t *b = &uartBidir[device];
+    if (b->txActive) {
+        return;
+    }
+
+    uart_inst_t *uartInstance = UART_INST(uartDevmap[device]->port.USARTx);
+
+    // Mute the receiver before driving the shared wire, so our own
+    // transmission isn't echoed back up as bogus RX bytes.
+    uart_set_irqs_enabled(uartInstance, false, false);
+    uartBidirReleasePin(b->rxPin);
+
+    gpio_set_function(b->txPin, UART_FUNCSEL_NUM(uartInstance, b->txPin));
+    gpio_set_pulls(b->txPin, false, false);
+    if (b->options & SERIAL_INVERTED) {
+        gpio_set_outover(b->txPin, GPIO_OVERRIDE_INVERT);
+    }
+
+    b->txActive = true;
+}
+
+static void uartBidirSwitchToRx(int device)
+{
+    picoUartBidir_t *b = &uartBidir[device];
+    if (!b->txActive) {
+        return;
+    }
+
+    uart_inst_t *uartInstance = UART_INST(uartDevmap[device]->port.USARTx);
+
+    uartBidirReleasePin(b->txPin);
+
+    gpio_set_function(b->rxPin, UART_FUNCSEL_NUM(uartInstance, b->rxPin));
+    if (b->options & SERIAL_INVERTED) {
+        gpio_set_pulls(b->rxPin, false, true);
+        gpio_set_inover(b->rxPin, GPIO_OVERRIDE_INVERT);
+    } else {
+        gpio_set_pulls(b->rxPin, true, false);
+    }
+
+    // Discard whatever the floating/detached pin fed into the RX FIFO while
+    // it was disconnected from the peripheral, before letting it interrupt
+    // again - that noise isn't a real frame.
+    while (uart_is_readable(uartInstance)) {
+        (void)uart_get_hw(uartInstance)->dr;
+    }
+    uart_set_irqs_enabled(uartInstance, true, false);
+
+    b->txActive = false;
+}
+
 static void sendBufferToUART(uartPort_t *s)
 {
     uart_inst_t *uartInstance = UART_INST(s->USARTx);
@@ -182,8 +281,9 @@ static void sendBufferToUART(uartPort_t *s)
     }
 }
 
-static void uartIrqHandler_pico(uartPort_t *s)
+static void uartIrqHandler_pico(UARTDevice_e device)
 {
+    uartPort_t *s = &(uartDevmap[device]->port);
     uart_inst_t *uartInstance = UART_INST(s->USARTx);
     uart_hw_t *uartHw = uart_get_hw(uartInstance);
     const uint32_t misr = uartHw->mis; // Masked interrupt status
@@ -203,17 +303,33 @@ static void uartIrqHandler_pico(uartPort_t *s)
 
     if ((misr & UART_UARTIMSC_TXIM_BITS) != 0 && (uartHw->imsc & UART_UARTIMSC_TXIM_BITS) != 0) {
         sendBufferToUART(s);
+
+        picoUartBidir_t *b = &uartBidir[device];
+        if (b->active && b->txActive && s->port.txBufferTail == s->port.txBufferHead) {
+            if (uartHw->fr & UART_UARTFR_BUSY_BITS) {
+                // Ring drained but the last frame is still shifting out of
+                // the hardware FIFO/shift register - sendBufferToUART() just
+                // masked TXIM (nothing left to feed it), so re-arm it purely
+                // as a retrigger: it's level-triggered on FIFO-below-
+                // threshold, true with an empty FIFO, so this handler is
+                // called again immediately and re-checks BUSY. Bounded by
+                // however long the last few queued bytes take at this baud.
+                hw_set_bits(&(uartHw->imsc), UART_UARTIMSC_TXIM_BITS);
+            } else {
+                uartBidirSwitchToRx(device);
+            }
+        }
     }
 }
 
 static void onUart0Irq(void)
 {
-    uartIrqHandler_pico(&(uartDevmap[UARTDEV_1]->port));
+    uartIrqHandler_pico(UARTDEV_1);
 }
 
 static void onUart1Irq(void)
 {
-    uartIrqHandler_pico(&(uartDevmap[UARTDEV_2]->port));
+    uartIrqHandler_pico(UARTDEV_2);
 }
 
 uartPort_t *serialUART(UARTDevice_e device, uint32_t baudRate, portMode_e mode, portOptions_e options)
@@ -225,6 +341,12 @@ uartPort_t *serialUART(UARTDevice_e device, uint32_t baudRate, portMode_e mode, 
 
     const uartHardware_t *hardware = uart->hardware;
     if (!hardware) {
+        return NULL;
+    }
+
+    const bool bidir = (options & SERIAL_BIDIR) != 0;
+    if (bidir && (mode & MODE_RXTX) != MODE_RXTX) {
+        // Nothing to hand the wire back and forth between otherwise.
         return NULL;
     }
 
@@ -245,21 +367,51 @@ uartPort_t *serialUART(UARTDevice_e device, uint32_t baudRate, portMode_e mode, 
     IO_t txIO = IOGetByTag(uart->tx.pin);
     IO_t rxIO = IOGetByTag(uart->rx.pin);
 
-    if ((mode & MODE_TX) && txIO) {
-        IOInit(txIO, OWNER_SERIAL_TX, RESOURCE_INDEX(device));
-        const uint32_t txPin = IO_Pin(txIO);
-        gpio_set_function(txPin, UART_FUNCSEL_NUM(uartInstance, txPin));
-        gpio_set_pulls(txPin, false, false);
-    }
+    picoUartBidir_t *b = &uartBidir[device];
+    memset(b, 0, sizeof(*b));
 
-    if ((mode & MODE_RX) && rxIO) {
+    if (bidir) {
+        // Both the instance's fixed TX and RX pins are needed - the board
+        // must tie them together externally (see the file-header comment).
+        if (!txIO || !rxIO) {
+            return NULL;
+        }
+
+        b->active = true;
+        b->txPin = IO_Pin(txIO);
+        b->rxPin = IO_Pin(rxIO);
+        b->options = options;
+
+        IOInit(txIO, OWNER_SERIAL_TX, RESOURCE_INDEX(device));
         IOInit(rxIO, OWNER_SERIAL_RX, RESOURCE_INDEX(device));
-        const uint32_t rxPin = IO_Pin(rxIO);
-        gpio_set_function(rxPin, UART_FUNCSEL_NUM(uartInstance, rxPin));
+
+        // Idle state is listening: release the TX pin to Hi-Z and bring up
+        // only the RX pin, mirroring softSerial's BIDIR default.
+        uartBidirReleasePin(b->txPin);
+
+        gpio_set_function(b->rxPin, UART_FUNCSEL_NUM(uartInstance, b->rxPin));
         if (options & SERIAL_INVERTED) {
-            gpio_set_pulls(rxPin, false, true); // pull down
+            gpio_set_pulls(b->rxPin, false, true); // pull down
         } else {
-            gpio_set_pulls(rxPin, true, false); // pull up
+            gpio_set_pulls(b->rxPin, true, false); // pull up
+        }
+    } else {
+        if ((mode & MODE_TX) && txIO) {
+            IOInit(txIO, OWNER_SERIAL_TX, RESOURCE_INDEX(device));
+            const uint32_t txPin = IO_Pin(txIO);
+            gpio_set_function(txPin, UART_FUNCSEL_NUM(uartInstance, txPin));
+            gpio_set_pulls(txPin, false, false);
+        }
+
+        if ((mode & MODE_RX) && rxIO) {
+            IOInit(rxIO, OWNER_SERIAL_RX, RESOURCE_INDEX(device));
+            const uint32_t rxPin = IO_Pin(rxIO);
+            gpio_set_function(rxPin, UART_FUNCSEL_NUM(uartInstance, rxPin));
+            if (options & SERIAL_INVERTED) {
+                gpio_set_pulls(rxPin, false, true); // pull down
+            } else {
+                gpio_set_pulls(rxPin, true, false); // pull up
+            }
         }
     }
 
@@ -271,7 +423,14 @@ uartPort_t *serialUART(UARTDevice_e device, uint32_t baudRate, portMode_e mode, 
     irq_set_exclusive_handler(hardware->irqn, hardware->irqn == UART0_IRQ ? onUart0Irq : onUart1Irq);
     irq_set_enabled(hardware->irqn, true);
 
-    if (options & SERIAL_INVERTED) {
+    if (bidir) {
+        // Only the currently-live side (RX, at open) needs its override set
+        // now - uartBidirSwitchToTx()/ToRx() apply the matching override
+        // each time they hand the wire over from here on.
+        if (options & SERIAL_INVERTED) {
+            gpio_set_inover(b->rxPin, GPIO_OVERRIDE_INVERT);
+        }
+    } else if (options & SERIAL_INVERTED) {
         if (rxIO) {
             gpio_set_inover(IO_Pin(rxIO), GPIO_OVERRIDE_INVERT);
         }
@@ -308,6 +467,11 @@ void uartEnableTxInterrupt(uartPort_t *uartPort)
         // Nothing queued: arming the level-triggered TXIM here would just
         // cost one spurious IRQ that immediately disarms itself.
         return;
+    }
+
+    const int device = uartDeviceIndex(uartPort);
+    if (device >= 0 && uartBidir[device].active && !uartBidir[device].txActive) {
+        uartBidirSwitchToTx(device);
     }
 
     uart_inst_t *uartInstance = UART_INST(uartPort->USARTx);

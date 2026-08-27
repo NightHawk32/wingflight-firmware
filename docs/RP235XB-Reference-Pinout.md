@@ -145,3 +145,11 @@ header and boot flash), so none of them cost a GPIO.
   (SPI/UART/I2C/PWM) here still respects the RP2350 hardware function
   table; chip-selects, interrupt and LED lines are plain GPIO and can move
   freely.
+- **All four serial ports now support inversion and single-wire half
+  duplex (`SERIAL_INVERTED`/`SERIAL_BIDIR`)**, e.g. for SmartAudio/Tramp VTX
+  control or ESC telemetry passthrough. On UART1/UART2 (hardware UARTs),
+  half duplex needs the instance's fixed TX and RX pins (e.g. GPIO12/13 for
+  UART1) **tied together on the PCB** - the PL011 peripheral has no
+  single-wire mode of its own, so the driver just switches which of the two
+  pins is live. SOFTSERIAL1/2 (PIO) are true single-wire: only the TX pin
+  (GPIO22 or GPIO28) is used, no external tie needed.
