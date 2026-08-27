@@ -50,8 +50,8 @@ target code.
 | 27 | STORAGE MOSI | SPI1 TX | shared bus |
 | 28 | SOFTSERIAL2 TX | PIO1 sm | bit-banged |
 | 29 | SOFTSERIAL2 RX | PIO1 sm | bit-banged |
-| 30 | spare | | |
-| 31 | spare | | |
+| 30 | UART1_BIDIR_EN | SIO | SPST switch enable, joins GPIO12/13 |
+| 31 | UART2_BIDIR_EN | SIO | SPST switch enable, joins GPIO20/21 |
 | 32 | spare | | |
 | 33 | FLASH_CS | SIO | soft CS |
 | 34 | STATUS LED 1 | SIO | |
@@ -93,6 +93,7 @@ header and boot flash), so none of them cost a GPIO.
 | Motor | DSHOT / PIO0 | 2 |
 | RPM | tach input | 1 |
 | UART | 2 hw + 2 PIO, full duplex | 8 |
+| UART bidir switch | SPST enable per hw UART | 2 |
 | SPI0 | gyro, dedicated bus | 5 |
 | SPI1 | SD + flash, shared bus | 5 |
 | I2C1 | baro | 2 |
@@ -112,7 +113,29 @@ header and boot flash), so none of them cost a GPIO.
 | I2C peripherals | 1 / 2 used |
 | UART hardware | 2 / 2 used |
 | ADC channels (8 avail.) | 3 / 8 used, 1 lost to PSRAM_CS1 |
-| GPIO0-47 | 37 / 48 used |
+| GPIO0-47 | 39 / 48 used |
+
+## Half-duplex combiner switches (UART1/UART2)
+
+Both hardware UARTs get a dedicated SPST analog switch tying their fixed TX
+and RX pins together, so the port's topology - joined single-wire (e.g.
+FBUS, SmartAudio, ESC telemetry passthrough) vs. separate full duplex - is a
+software choice (drive the enable pin), not a PCB rework.
+
+| UART | Switch enable | Joins | Suggested part |
+|---|---|---|---|
+| UART1 | GPIO30 | GPIO12 (TX) <-> GPIO13 (RX) | TI SN74LVC1G66 (SOT-23-5) |
+| UART2 | GPIO31 | GPIO20 (TX) <-> GPIO21 (RX) | TI SN74LVC1G66 (SOT-23-5) |
+
+Any logic-level (1.65-3.6V or wider) bilateral CMOS switch works; other
+drop-in options: TI `TS5A3159`/`TS5A23157` (SPDT, if a spare throw is useful
+elsewhere), Nexperia `NX3L1G66GW,125` or `NX3L1G3157GM,125`, onsemi
+`NLAS1T66`. Key selection points: bidirectional (no signal-direction
+restriction - TX drives, RX only listens), low R(on) (a few Ohm, negligible
+at UART logic levels), fast enough switching to not distort a 460800 baud
+edge (all of the above are), and a pull resistor on the enable line so the
+switch defaults to a known (open/isolated) state before firmware configures
+GPIO30/31.
 
 ## Design notes
 
@@ -140,16 +163,22 @@ header and boot flash), so none of them cost a GPIO.
   GPIO0, 8, 19 or 47, and GPIO47 is the only one of those four not already
   committed to a servo/motor/UART function in this layout, so it's the
   natural pick (configured via `GPIO_FUNC_XIP_CS1`, not as a plain GPIO).
-- **11 GPIOs are still spare** (30-32, 36-39, 43-46) for a buzzer, boot
-  button, a second I2C device, or expansion. Every mux-fixed signal
-  (SPI/UART/I2C/PWM) here still respects the RP2350 hardware function
-  table; chip-selects, interrupt and LED lines are plain GPIO and can move
-  freely.
+- **9 GPIOs are still spare** (32, 36-39, 43-46) for a buzzer, boot button,
+  a second I2C device, or expansion. Every mux-fixed signal (SPI/UART/I2C/
+  PWM) here still respects the RP2350 hardware function table;
+  chip-selects, interrupt, LED and switch-enable lines are plain GPIO and
+  can move freely.
 - **All four serial ports now support inversion and single-wire half
   duplex (`SERIAL_INVERTED`/`SERIAL_BIDIR`)**, e.g. for SmartAudio/Tramp VTX
-  control or ESC telemetry passthrough. On UART1/UART2 (hardware UARTs),
-  half duplex needs the instance's fixed TX and RX pins (e.g. GPIO12/13 for
-  UART1) **tied together on the PCB** - the PL011 peripheral has no
-  single-wire mode of its own, so the driver just switches which of the two
-  pins is live. SOFTSERIAL1/2 (PIO) are true single-wire: only the TX pin
-  (GPIO22 or GPIO28) is used, no external tie needed.
+  control, ESC telemetry passthrough, or FrSky FBUS. SOFTSERIAL1/2 (PIO)
+  are true single-wire: only the TX pin (GPIO22 or GPIO28) is used, no
+  external hardware needed - but PIO's 8-word FIFO and shared-IRQ servicing
+  make it best suited to lower/moderate baud rates (recommended <=250
+  kbaud; not validated on real hardware above that), so a hard-requirement
+  high-baud link like FBUS (460800) belongs on a hardware UART instead.
+- **UART1/UART2 half duplex uses the SPST switches above** (GPIO30/31)
+  instead of a bare wire-tie: the PL011 peripheral has no single-wire mode
+  of its own, so joining its fixed TX/RX pins electrically is mandatory for
+  half duplex, and gating that join through a switch (rather than a
+  permanent solder bridge) keeps the choice of full duplex vs. single-wire
+  a runtime one, matching every other option on these ports.
