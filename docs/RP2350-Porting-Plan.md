@@ -76,9 +76,15 @@ delete completed items — leave them checked so history is preserved.
 - [x] Target variants: **all four — RP2350A, RP2350B, RP2354A, RP2354B**
       (RP2354x has built-in on-die flash, RP2350x uses external QSPI flash;
       A/B differ only in package/GPIO count).
-- [ ] Specific board / reference design to bring up first (drives which
-      variant is validated on real hardware first; the other three follow
-      from shared code once one variant boots)?
+- [x] **Specific board / reference design to bring up first, decided
+      2026-08-27: RP2350B**, documented in
+      [RP2350-Reference-Design.md](RP2350-Reference-Design.md) (full GPIO
+      pin map checked against `bus_spi_pico.c`/`serial_uart_pico.c`/
+      `adc_pico.c`, BOM, and a list of open items still needing datasheet
+      cross-check before real hardware bring-up — no PCB has been built
+      yet, this is the spec a board would be laid out from). RP2350A,
+      RP2354A, RP2354B follow from shared code once RP2350B boots, per the
+      original plan.
 - [x] Vendor pico-sdk (+ tinyusb) as a **git submodule** (matches Betaflight
       convention) rather than a committed source snapshot. Wingflight will add
       its first `.gitmodules` file for this.
