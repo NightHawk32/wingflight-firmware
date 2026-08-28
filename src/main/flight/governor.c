@@ -96,6 +96,34 @@ float governorApply(float throttle)
         rangeFaultLatched = false;
     }
 
+    // Whenever the governor/idle-up feature is configured *and* a switch is actually assigned to
+    // BOXGOVERNOR, that switch is a hard motor interlock, not just something that refines the
+    // bottom of the throttle curve: the stick gets no authority at all until it's engaged. Without
+    // this, a configured-but-disengaged governor left the stick free to drive the motor straight to
+    // full power outside the (tiny, handover-bounded) idle-hold region below -- defeating the point
+    // of a dedicated idle-up switch for safe ground arming/starting.
+    //
+    // The isModeActivationConditionPresent() check (same guard used for BOXTELEMETRY/BOXGPSRESCUE/
+    // BOXPREARM elsewhere) is what keeps this from being a footgun: governor_mode is a global gain/
+    // curve setup and can legitimately be left at RPM/THROTTLE/RPM_RANGE by someone who never wires
+    // up a governor switch at all (e.g. relying on governor_handover alone with the box permanently
+    // "on" some boards, or just hasn't gotten to it yet). IS_RC_MODE_ACTIVE() for a box with no
+    // assigned range condition is always false, so without this guard those setups would have their
+    // motor hard-cut to 0% forever instead of falling back to plain passthrough. Only once a switch
+    // is actually assigned does "off" start meaning "interlocked".
+    //
+    // Failsafe is left alone here: it computes its own (already safe) throttle and must pass through
+    // unaltered, same as the bypass below.
+    if (!failsafeActive && cfg->governor_mode != GOVERNOR_MODE_OFF &&
+        isModeActivationConditionPresent(BOXGOVERNOR) && !IS_RC_MODE_ACTIVE(BOXGOVERNOR)) {
+        governorOutput = 0.0f;
+        rpmErrorFilter.y1 = 0.0f;
+        rpmLimitErrorFilter.y1 = 0.0f;
+        integrator = 0.0f;
+        limitIntegrator = 0.0f;
+        return 0.0f;
+    }
+
     const bool belowHandover = !failsafeActive && ARMING_FLAG(ARMED) &&
         IS_RC_MODE_ACTIVE(BOXGOVERNOR) &&
         throttle < (cfg->governor_handover / 100.0f);
