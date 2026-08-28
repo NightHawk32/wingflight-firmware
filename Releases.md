@@ -5,6 +5,7 @@ Fix XACT parameter reads hanging forever on a field an unsupported servo doesn't
 Fix XACT writes silently reprogramming the wrong servo when two servos share an App ID.
 Fix XACT servo tracking losing a servo after its Physical ID is renamed.
 Fix SRXL2 telemetry seqlock read.
+Make the governor/idle-up switch a hard motor interlock when a governor mode is configured, instead of only refining the bottom of the throttle curve.
 
 # 0.0.15
 
