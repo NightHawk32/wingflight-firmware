@@ -22,6 +22,15 @@ UNIFIED_TARGETS := \
 	STM32G47X  \
 	STM32H743  \
 
+# RP2350_UNIFIED's four package/flash variants. Kept out of UNIFIED_TARGETS
+# (whose consumers assume .hex artifacts and no submodule checkout) - built
+# via the `rp2350` goal and included in CI_TARGETS below.
+RP2350_UNIFIED_TARGETS := \
+	RP2350A \
+	RP2350B \
+	RP2354A \
+	RP2354B \
+
 # Legacy targets are targets that have been replaced by Unified Target configurations
 LEGACY_TARGETS := \
     DEVEBOXH743 \
@@ -33,6 +42,7 @@ LEGACY_TARGETS := \
     NUCLEOH743 \
 
 CI_TARGETS := $(UNIFIED_TARGETS) \
+    $(RP2350_UNIFIED_TARGETS) \
     MATEKF405 \
     MATEKF411 \
     MATEKF722 \

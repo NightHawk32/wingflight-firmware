@@ -132,6 +132,7 @@ static bool softSerialClaimGpioBase(ioTag_t tagTx, ioTag_t tagRx)
     }
 
     if (need16 && need0) {
+        bprintf("* softserial: pins span both PIO GPIO-base windows (<16 and >=32)");
         return false; // pins span more than one 32-pin window
     }
 
@@ -140,7 +141,12 @@ static bool softSerialClaimGpioBase(ioTag_t tagTx, ioTag_t tagRx)
         pio_set_gpio_base(softSerialPio, softSerialGpioBase);
     }
 
-    return (!need16 || softSerialGpioBase == 16) && (!need0 || softSerialGpioBase == 0);
+    if ((need16 && softSerialGpioBase != 16) || (need0 && softSerialGpioBase != 0)) {
+        bprintf("* softserial: pins outside the PIO GPIO-base %d window fixed by the first port",
+                softSerialGpioBase);
+        return false;
+    }
+    return true;
 }
 
 // --- PIO programs (pico-examples uart_tx.pio / uart_rx.pio, pioasm output) ---
@@ -277,13 +283,18 @@ static void softSerialBidirSwitchToRx(picoSoftSerial_t *s)
 }
 
 // True once the TX SM has fully finished shifting out its last frame: the
-// FIFO is empty AND the SM is stalled - for uart_tx_program the only
-// blocking instruction is the `pull block` at the wrap point, so "stalled"
-// here can only mean parked there waiting for more data, i.e. the previous
-// frame (including its stop bit) is completely off the wire already.
+// FIFO is empty AND the SM is parked back on the blocking `pull` at the
+// program's first instruction, waiting for more data - i.e. the previous
+// frame's data bits are completely off the wire and the line is at the
+// stop/idle level. NOTE: pio_sm_is_exec_stalled() is NOT usable here - it
+// reflects SMx_EXECCTRL.EXEC_STALLED, which only tracks instructions forced
+// via SMx_INSTR (pio_sm_exec()), never a program's own `pull block` stall,
+// so it would read 0 forever. Same PC-compare idiom as
+// isSoftSerialTransmitBufferEmpty() below.
 static bool softSerialTxFullyIdle(const picoSoftSerial_t *s)
 {
-    return pio_sm_is_tx_fifo_empty(softSerialPio, s->txSm) && pio_sm_is_exec_stalled(softSerialPio, s->txSm);
+    return pio_sm_is_tx_fifo_empty(softSerialPio, s->txSm)
+        && pio_sm_get_pc(softSerialPio, s->txSm) == (uint)txProgramOffset;
 }
 
 // --- ring-buffer helpers (single producer / single consumer each way) ---
@@ -364,18 +375,28 @@ void softSerialWriteByte(serialPort_t *instance, uint8_t ch)
         return;
     }
 
-    if ((s->port.options & SERIAL_BIDIR) && !s->bidirTxActive) {
-        if (!softSerialBidirSwitchToTx(s)) {
-            return;
-        }
-    }
-
     if (txBytesUsed(s) >= SOFTSERIAL_BUFFER_SIZE - 1) {
         return; // full - drop rather than block
     }
 
+    // Queue the byte BEFORE any direction switch: once bidirTxActive is set,
+    // the shared PIO IRQ handler (fired by any other enabled source) sees
+    // "TX active + ring empty" and would immediately hand the wire back to
+    // RX, clearing bidirTxActive again - after which the TX-FIFO-not-full
+    // source unmasked below would never be serviced (the handler's TX branch
+    // is gated on bidirTxActive), leaving a level-triggered IRQ storm and a
+    // stranded byte. With the byte already in the ring, that early handover
+    // can't trigger. (Same ordering as uartWrite() -> uartEnableTxInterrupt().)
     s->port.txBuffer[s->port.txBufferHead] = ch;
     s->port.txBufferHead = (s->port.txBufferHead + 1) & (SOFTSERIAL_BUFFER_SIZE - 1);
+
+    if ((s->port.options & SERIAL_BIDIR) && !s->bidirTxActive) {
+        if (!softSerialBidirSwitchToTx(s)) {
+            // Roll the byte back out - the wire never left RX.
+            s->port.txBufferHead = (s->port.txBufferHead - 1) & (SOFTSERIAL_BUFFER_SIZE - 1);
+            return;
+        }
+    }
 
     // Kick the pump: unmasking TX-FIFO-not-full immediately takes the IRQ
     // (FIFO has room), which moves ring bytes into the FIFO.
@@ -570,6 +591,7 @@ serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallb
             if (!softSerialTxProgramInit(softSerialPio, sm, txPin, baud)) {
                 pio_sm_unclaim(softSerialPio, sm);
                 s->txSm = -1;
+                IORelease(s->txIO); // don't leave the pin marked owned on a failed open
                 return NULL;
             }
             if (options & SERIAL_INVERTED) {
@@ -601,11 +623,15 @@ serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallb
             if (sm >= 0) {
                 pio_sm_unclaim(softSerialPio, sm);
                 s->rxSm = -1;
+                if (!bidir) {
+                    IORelease(s->rxIO);
+                }
             }
             if (s->txSm >= 0) {
                 pio_sm_set_enabled(softSerialPio, s->txSm, false);
                 pio_sm_unclaim(softSerialPio, s->txSm);
                 s->txSm = -1;
+                IORelease(s->txIO); // don't leave pins marked owned on a failed open
             }
             return NULL;
         }

@@ -5644,7 +5644,7 @@ const cliResourceValue_t resourceTable[] = {
     DEFA( OWNER_INVERTER,      PG_SERIAL_PIN_CONFIG, serialPinConfig_t, ioTagInverter[0], SERIAL_PORT_MAX_INDEX ),
 #endif
 #ifdef USE_SERIAL_BIDIR_SWITCH
-    DEFA( OWNER_SERIAL_BIDIR_ENABLE, PG_SERIAL_PIN_CONFIG, serialPinConfig_t, ioTagBidirEnable[0], SERIAL_PORT_MAX_INDEX ),
+    DEFA( OWNER_SERIAL_BIDIR_ENABLE, PG_SERIAL_PIN_CONFIG, serialPinConfig_t, ioTagBidirEnable[0], SERIAL_BIDIR_SWITCH_COUNT ),
 #endif
 #ifdef USE_I2C
     DEFW( OWNER_I2C_SCL,       PG_I2C_CONFIG, i2cConfig_t, ioTagScl, I2CDEV_COUNT ),
@@ -5853,12 +5853,23 @@ static bool strToPin(char *ptr, ioTag_t *tag)
         return true;
     } else {
         const unsigned port = (*ptr >= 'a') ? *ptr - 'a' : *ptr - 'A';
-        if (port < 8) {
+#if defined(PICO)
+        // RP2350/RP2354: one flat virtual port "A" covering GPIO0..47 (B
+        // package) / GPIO0..29 (A package) - 6 pin bits in the tag
+        // (DEFIO_PORT_PINS 64), so the STM32 "pin < 16" bound would cut off
+        // GPIO16..47. DEFIO_USED_COUNT is the per-variant pin count.
+        const unsigned maxPorts = 1;
+        const long maxPins = DEFIO_USED_COUNT;
+#else
+        const unsigned maxPorts = 8;
+        const long maxPins = 16;
+#endif
+        if (port < maxPorts) {
             ptr++;
 
             char *end;
             const long pin = strtol(ptr, &end, 10);
-            if (end != ptr && pin >= 0 && pin < 16) {
+            if (end != ptr && pin >= 0 && pin < maxPins) {
                 *tag = DEFIO_TAG_MAKE(port, pin);
 
                 return true;

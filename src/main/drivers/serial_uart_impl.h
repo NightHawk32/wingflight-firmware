@@ -59,9 +59,10 @@
 #define UART_TX_BUFFER_SIZE     256
 #endif
 #elif defined(PICO)
-// RP2350/RP2354: 2 real hardware UARTs (uart0/uart1), hardware-UART-only for
-// the first bring-up (no PIO-UART yet). UARTHARDWARE_MAX_PINS is set per
-// variant in RP2350_UNIFIED/target.h (RP2350A/RP2354A: 8, RP2350B/RP2354B: 12
+// RP2350/RP2354: 2 real hardware UARTs (uart0/uart1); PIO-based extra UARTs
+// exist as SOFTSERIAL1/2 (serial_softserial_pico.c), outside this hardware
+// UART count. UARTHARDWARE_MAX_PINS is set per variant in
+// RP2350_UNIFIED/target.h (RP2350A/RP2354A: 8, RP2350B/RP2354B: 12
 // - more GPIOs can be muxed to each UART on the B/QFN variant).
 #define UARTDEV_COUNT_MAX 2
 #ifndef UART_RX_BUFFER_SIZE

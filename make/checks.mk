@@ -3,8 +3,15 @@ checks: check-target-independence \
 	check-platform-included \
 	check-unified-target-naming
 
+# RP2350A/RP2350B/RP2354A/RP2354B are chip/package names as much as target
+# names: the shared PICO drivers legitimately branch on them for package
+# differences (30 vs 48 GPIOs, ADC/UART/SPI pin tables) - the same role the
+# STM32 device macros (STM32F411xE, ...) play for STM32 unified targets, which
+# this check never sees because those macros differ from the target names.
+PACKAGE_VARIANT_TARGETS := RP2350A RP2350B RP2354A RP2354B
+
 check-target-independence:
-	$(V1) for test_target in $(VALID_TARGETS); do \
+	$(V1) for test_target in $(filter-out $(PACKAGE_VARIANT_TARGETS),$(VALID_TARGETS)); do \
 		FOUND=$$(grep -rE "\W$${test_target}(\W.*)?$$" src/main | grep -vE "(//)|(/\*).*\W$${test_target}(\W.*)?$$" | grep -vE "^src/main/target"); \
 		if [ "$${FOUND}" != "" ]; then \
 			echo "Target dependencies for target '$${test_target}' found:"; \

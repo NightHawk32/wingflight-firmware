@@ -62,12 +62,11 @@
 //#define USE_MULTICORE
 //#define ENABLE_MULTICORE_INIT
 
-// Hardware UARTs only for the first RP2350/RP2354 bring-up (RP2350 has 2 real
-// hardware UART peripherals: uart0/uart1, mapped here to wingflight's 1-based
-// UARTDevice_e naming as UARTDEV_1/UARTDEV_2, matching STM32 targets'
-// convention). PIO-based bit-banged "extra" UARTs (betaflight's
-// USE_PIOUART0/1) are a follow-up, not yet implemented - see
-// docs/RP2350-Porting-Plan.md.
+// RP2350 has 2 real hardware UART peripherals: uart0/uart1, mapped here to
+// wingflight's 1-based UARTDevice_e naming as UARTDEV_1/UARTDEV_2, matching
+// STM32 targets' convention. PIO-based extra UARTs are exposed as
+// SOFTSERIAL1/2 (see the USE_SOFTSERIAL block below), not as further
+// hardware-UART numbers like betaflight's USE_PIOUART0/1.
 #define USE_UART1
 #define USE_UART2
 
@@ -95,7 +94,11 @@
 #define USE_SPI_DEVICE_1
 #define USE_SPI_DMA_ENABLE_LATE
 
-#define QUADSPIDEV_COUNT 1
+// QMI/QuadSPI driver (drivers/bus_quadspi_pico.c) is compiled but dormant:
+// USE_QUADSPI (+ USE_QUADSPI_DEVICE_1, see fc/init.c) is deliberately not
+// defined - blackbox storage uses external SPI flash / SD-SPI per
+// docs/RP2350-Porting-Plan.md, not the QMI window. QUADSPIDEV_COUNT comes
+// from drivers/bus_quadspi.h once USE_QUADSPI is enabled.
 
 #define USE_I2C
 #define I2C_FULL_RECONFIGURABILITY
@@ -232,7 +235,6 @@
 // Pico flash writes are all aligned and in batches of pico-sdk's FLASH_PAGE_SIZE (256 bytes program granularity).
 // Use a literal here (not pico-sdk's FLASH_PAGE_SIZE macro) since hardware/flash.h is not included at this point.
 #define FLASH_CONFIG_STREAMER_BUFFER_SIZE   256
-#define FLASH_CONFIG_BUFFER_TYPE            uint8_t
 
 /* DMA Settings */
 #define DMA_IRQ_CORE_NUM 1 // Use core 1 for DMA IRQs

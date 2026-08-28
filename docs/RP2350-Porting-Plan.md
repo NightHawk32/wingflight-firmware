@@ -1497,9 +1497,12 @@ drivers/multicore_ringbuffer.h, drivers/dma_pico.c):**
   input/output override inverters (gpio_set_inover()/gpio_set_outover()),
   with the RX pull resistor biased to the *physical* idle level (pull-down
   when inverted, since the inverter sits after the pad). `SERIAL_BIDIR`
-  (single-wire half-duplex, e.g. SmartAudio) is NOT supported -
-  openSoftSerial() refuses it explicitly rather than misbehaving; needs
-  TX/RX SM direction-handover on one pin, future work.
+  (single-wire half-duplex, e.g. SmartAudio) IS now supported: the TX and
+  RX state machines take turns on the one (TX-resource) pin -
+  softSerialBidirSwitchToTx()/ToRx() hand the wire over on the first queued
+  byte and back once the TX SM is parked idle again. Hardware UARTs got the
+  matching feature (external-switch-assisted, `resource SERIAL_BIDIR_EN`)
+  in serial_uart_pico.c - see docs/RP235XB-Reference-Pinout.md.
 - Wiring: `USE_SOFTSERIAL1/2` defined in RP2350_UNIFIED/target.h
   (SERIAL_PORT_COUNT 3 -> 5), `drivers/serial_softserial.c` (the STM32
   timer-based implementation, which needs timerAllocate()) excluded via
@@ -1629,6 +1632,7 @@ stop-bits/parity after `uart_init()` (upstream silently reverts to 8N1).
 
 **Known remaining gaps:** `SERIAL_CHECK_TX`/`isTxComplete` TX-line
 monitor from upstream not ported (documented in `serial_uart_pico.c`);
-soft-serial `SERIAL_BIDIR` unsupported; `USE_USB_CDC_HID` and
-`USE_ADC_INTERNAL` deliberately off. RAM on RP2350B is now ~82% with
-everything enabled.
+`USE_USB_CDC_HID` and `USE_ADC_INTERNAL` deliberately off. (Soft-serial
+`SERIAL_BIDIR` - previously listed here - is implemented now, see the
+soft-serial section above.) RAM on RP2350B is now ~82% with everything
+enabled.

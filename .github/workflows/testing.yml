@@ -14,6 +14,9 @@ jobs:
     steps:
     - name: Check out repository
       uses: actions/checkout@v4
+      with:
+        # pico-sdk submodule needed for the RP2350/RP2354 builds
+        submodules: recursive
 
     - name: Install ARM tools
       run: make arm_sdk_install
@@ -32,14 +35,19 @@ jobs:
     - name: Build HEX files for unified targets
       run: make unified FC_VER_SUFFIX="${{ env.GIT_VER }}" FLASH_CONFIG_ERASE=yes
 
-    - name: Move HEX
-      run: mv -v obj/*.hex .
+    - name: Build UF2 files for RP2350/RP2354 targets
+      run: make rp2350 FC_VER_SUFFIX="${{ env.GIT_VER }}" FLASH_CONFIG_ERASE=yes
+
+    - name: Move HEX/UF2
+      run: mv -v obj/*.hex obj/*.uf2 .
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: wingflight-test-${{ env.GIT_VER }}
-        path: wingflight*.hex
+        path: |
+          wingflight*.hex
+          wingflight*.uf2
 
     - name: Delete tag
       run: git push origin :${GITHUB_REF}
