@@ -1,3 +1,11 @@
+# 0.0.16
+
+Add XACT servo programming support: multi-servo discovery over FBUS, per-servo background reads, and a field set aligned to FrSky's own configuration tool.
+Fix XACT parameter reads hanging forever on a field an unsupported servo doesn't answer.
+Fix XACT writes silently reprogramming the wrong servo when two servos share an App ID.
+Fix XACT servo tracking losing a servo after its Physical ID is renamed.
+Fix SRXL2 telemetry seqlock read.
+
 # 0.0.15
 
 Add support for Spektrum SRXL2 ESC (throttle and telemetry over a single bidirectional bus).
