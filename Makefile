@@ -373,13 +373,23 @@ $(TARGET_BIN): $(TARGET_ELF)
 	@echo "Creating BIN $(TARGET_BIN)" "$(STDOUT)"
 	$(V1) $(OBJCOPY) -O binary $< $@
 
+# The explicit start-address record only applies to STM32 (flash bank at
+# 0x08000000). RP2350/RP2354 images live at the 0x10000000 XIP window and boot
+# via the picobin block header, so stamping the STM32 address there would
+# produce a hex whose start record contradicts its data records.
+ifeq ($(TARGET_MCU),RP2350)
+HEX_START_FLAGS =
+else
+HEX_START_FLAGS = --set-start 0x8000000
+endif
+
 $(TARGET_HEX): $(TARGET_ELF)
 ifeq ($(SIMULATOR_BUILD),yes)
 	@echo "SITL is a native executable ($(TARGET_ELF)); skipping Intel HEX generation" "$(STDOUT)"
 	$(V1) touch $@
 else
 	@echo "Creating HEX $(TARGET_HEX)" "$(STDOUT)"
-	$(V1) $(OBJCOPY) -O ihex --set-start 0x8000000 $< $@
+	$(V1) $(OBJCOPY) -O ihex $(HEX_START_FLAGS) $< $@
 endif
 
 $(TARGET_DFU): $(TARGET_HEX)
@@ -501,6 +511,9 @@ all_all: $(VALID_TARGETS)
 ## unified : build all Unified Targets
 unified: $(UNIFIED_TARGETS)
 
+## rp2350 : build all RP2350/RP2354 unified targets (UF2 output)
+rp2350: $(RP2350_UNIFIED_TARGETS)
+
 ## pre-push : The minimum verification that should be run before pushing, to check if CI has a chance of succeeding
 pre-push:
 	$(MAKE) $(addsuffix _clean,$(PRE_PUSH_TARGET_LIST)) $(PRE_PUSH_TARGET_LIST) EXTRA_FLAGS=-Werror
@@ -514,9 +527,11 @@ targets-group-2: $(GROUP_2_TARGETS)
 ## targets-group-rest: build the rest of the targets (not listed in the other groups)
 targets-group-rest: $(GROUP_OTHER_TARGETS)
 
+# No explicit goal: the sub-make's .DEFAULT_GOAL picks the right artifact per
+# target family (uf2 for RP2350/RP2354, hex for everything else).
 $(VALID_TARGETS):
 	$(V0) @echo "Building $@" && \
-	$(MAKE) hex TARGET=$@ && \
+	$(MAKE) TARGET=$@ && \
 	echo "Building $@ succeeded."
 
 $(NOBUILD_TARGETS):

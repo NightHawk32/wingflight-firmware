@@ -22,7 +22,16 @@ UNIFIED_TARGETS := \
 	STM32G47X  \
 	STM32H743  \
 
-CI_TARGETS := $(UNIFIED_TARGETS)
+# RP2350_UNIFIED's four package/flash variants. Kept out of UNIFIED_TARGETS
+# (whose consumers assume .hex artifacts and no submodule checkout) - built
+# via the `rp2350` goal and included in CI_TARGETS below.
+RP2350_UNIFIED_TARGETS := \
+	RP2350A \
+	RP2350B \
+	RP2354A \
+	RP2354B \
+
+CI_TARGETS := $(UNIFIED_TARGETS) $(RP2350_UNIFIED_TARGETS)
 
 TARGETS_TOTAL := $(words $(CI_TARGETS))
 TARGET_GROUPS := 3

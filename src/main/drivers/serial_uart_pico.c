@@ -28,11 +28,11 @@
  * with rxPin/txPin/rx/tx fields, serialUART(UARTDevice_e device, ...)), NOT
  * betaflight's newer container_of()-based flat uartDevice_t[] architecture.
  *
- * Scope: hardware UARTs only (uart0/uart1). PIO-based bit-banged "extra"
- * UARTs (betaflight's uart_pio.c/uart_rx_program.c/uart_tx_program.c) and the
+ * Scope: hardware UARTs only (uart0/uart1). PIO-based extra UARTs are
+ * implemented separately as SOFTSERIAL1/2 (drivers/serial_softserial_pico.c),
+ * not as betaflight-style additional hardware-UART numbers (uart_pio.c). The
  * TX-line half-duplex monitor feature (SERIAL_CHECK_TX/checkUsartTxOutput,
- * betaflight-only, not present in Wingflight's serial_uart.h) are not ported -
- * see docs/RP2350-Porting-Plan.md for the follow-up note.
+ * betaflight-only, not present in Wingflight's serial_uart.h) is not ported.
  *
  * SERIAL_BIDIR: unlike STM32's USART (a real single-wire half-duplex
  * peripheral mode, HAL_HalfDuplex_Init), the RP2350's PL011 UART has no such
@@ -192,6 +192,11 @@ typedef struct picoUartBidir_s {
 } picoUartBidir_t;
 
 static picoUartBidir_t uartBidir[UARTDEV_COUNT_MAX];
+
+#ifdef USE_SERIAL_BIDIR_SWITCH
+// serialUART() indexes ioTagBidirEnable[] by UARTDevice_e.
+STATIC_ASSERT(SERIAL_BIDIR_SWITCH_COUNT >= UARTDEV_COUNT_MAX, serial_bidir_switch_count_too_small);
+#endif
 
 static int uartDeviceIndex(const uartPort_t *uartPort)
 {
@@ -482,7 +487,18 @@ void uartReconfigure(uartPort_t *uartPort)
     uart_set_fifo_enabled(uartInstance, true);
     uart_set_hw_flow(uartInstance, false, false);
 
-    if (uartPort->port.mode & MODE_RX) {
+    // uart_init() cleared IMSC, so restore the mask matching the port's
+    // current direction. For a BIDIR port that is mid-transmission (e.g. a
+    // baud change while draining), the RX pin is detached/Hi-Z - enabling RX
+    // interrupts would only harvest noise, and dropping TXIM would strand the
+    // remaining ring bytes with txActive stuck; re-arm the TX pump instead
+    // and let the IRQ handler hand the wire back to RX as usual.
+    const int device = uartDeviceIndex(uartPort);
+    const bool bidirTx = device >= 0 && uartBidir[device].active && uartBidir[device].txActive;
+
+    if (bidirTx) {
+        hw_set_bits(&(uart_get_hw(uartInstance)->imsc), UART_UARTIMSC_TXIM_BITS);
+    } else if (uartPort->port.mode & MODE_RX) {
         uart_set_irqs_enabled(uartInstance, true, false);
     }
 }

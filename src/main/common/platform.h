@@ -112,6 +112,16 @@
 
 #include <stdint.h>
 
+// make/mcu/RP2350.mk overwrites TARGET_FLAGS (plain `=`), discarding the
+// -DRP2350 that make/targets.mk derived from TARGET_MCU - same situation as
+// the STM32 families above, which re-define their family macro here for the
+// same reason. RP2354A/B are RP2350 dies (16 DMA channels etc.), so the
+// family macro applies to all four variants; platform/dma.h and
+// drivers/dma_pico.c gate DMA channels 12..15 on it.
+#ifndef RP2350
+#define RP2350
+#endif
+
 // RP2350/RP2354 (Raspberry Pi Pico 2 family). Individual pico-sdk headers
 // (hardware/gpio.h, pico/stdlib.h, ...) are included directly by the *_pico.c
 // driver files that need them, rather than centrally here.

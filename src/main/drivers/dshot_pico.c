@@ -394,6 +394,12 @@ motorDevice_t *dshotPwmDevInit(const motorDevConfig_t *motorConfig, uint8_t moto
     int pinIndexMin = 48;
     int pinIndexMax = -1;
     for (int motorIndex = 0; motorIndex < MAX_SUPPORTED_MOTORS && motorIndex < motorCount; motorIndex++) {
+        // An unassigned tag (NONE == 0) would decode as pin 0 and wrongly
+        // drag pinIndexMin down to 0, vetoing legal all-pins>=32 layouts on
+        // RP2350B/RP2354B; skip here, rejected properly in the init loop below.
+        if (!motorConfig->ioTags[motorIndex]) {
+            continue;
+        }
         int pinIndex = DEFIO_TAG_PIN(motorConfig->ioTags[motorIndex]);
         pinIndexMin = pinIndex < pinIndexMin ? pinIndex : pinIndexMin;
         pinIndexMax = pinIndex > pinIndexMax ? pinIndex : pinIndexMax;
@@ -431,6 +437,14 @@ motorDevice_t *dshotPwmDevInit(const motorDevConfig_t *motorConfig, uint8_t moto
 
     for (int motorIndex = 0; motorIndex < MAX_SUPPORTED_MOTORS && motorIndex < motorCount; motorIndex++) {
         outgoingPacket[motorIndex] = -1;
+        if (!motorConfig->ioTags[motorIndex]) {
+            // NONE tag inside motorCount: IOGetByTag(0) is NULL, which
+            // IOIsFreeOrPreinit() treats as free - without this check the
+            // state machine below would be armed on GPIO0.
+            bprintf("*** dshot motor index %d has no pin assigned", motorIndex);
+            memset(motors, 0, sizeof(motors));
+            return NULL;
+        }
         int pinIndex = DEFIO_TAG_PIN(motorConfig->ioTags[motorIndex]);
         IO_t io = IOGetByTag(motorConfig->ioTags[motorIndex]);
         bprintf("dshot motor index %d on pin %d",motorIndex, IO_Pin(io));
