@@ -167,6 +167,29 @@ SECTIONS
         *(.data*)
         *(.sdata*)
 
+        /* Betaflight DMA_DATA (.dmaram_data) and cli.c's custom-defaults
+         * pointer pair MUST be placed explicitly inside .data. crt0's
+         * data_cpy_table copies [__data_start__, __data_end__) as ONE
+         * contiguous block from LOADADDR(.data), so any orphan output
+         * section the linker drops into that VMA range gets its own,
+         * independently assigned LMA. DMA_DATA's aligned(32) forces VMA
+         * padding that the LMA stream does not reproduce, so the LMAs drift
+         * out of step with the copy and every section from .dmaram_data
+         * onwards is initialised from the wrong flash bytes (observed on
+         * RP2350 hardware: customDefaultsStart loaded as 0x00011103,
+         * hard-faulting in hasCustomDefaults()'s strncmp during init). */
+        . = ALIGN(32);
+        *(.dmaram_data*)
+        /* DMA_DATA_ZERO_INIT: GCC emits .dmaram_bss as a zero-filled
+         * PROGBITS section, not SHT_NOBITS, so it must ride along in the
+         * .data copy stream - placing it in .bss would turn the whole of
+         * .bss into PROGBITS and load ~77KB of zeros into flash. */
+        . = ALIGN(32);
+        *(.dmaram_bss*)
+        . = ALIGN(4);
+        KEEP(*(.custom_defaults_start_address))
+        KEEP(*(.custom_defaults_end_address))
+
         . = ALIGN(4);
         *(.after_data.*)
         . = ALIGN(4);
@@ -228,6 +251,7 @@ SECTIONS
 
         *(SORT_BY_ALIGNMENT(SORT_BY_NAME(.bss*)))
         *(COMMON)
+
         PROVIDE(__global_pointer$ = . + 2K);
         *(.sbss*)
         . = ALIGN(4);
