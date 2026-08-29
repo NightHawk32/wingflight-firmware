@@ -9,11 +9,15 @@
 ifneq ($(findstring RP2350A,$(TARGET)),)
 RP2350_TARGETS  += $(TARGET)
 DEVICE_FLAGS    += -DPICO_RP2350A=1
-# External QSPI flash (board dependent, 8MB default - override in board config.mk if different)
-MCU_FLASH_SIZE  := 8192
+# External QSPI flash (board dependent, 8MB default). Override for boards with a
+# different part, e.g. the Raspberry Pi Pico 2 (4MB W25Q32):
+#   make TARGET=RP2350A MCU_FLASH_SIZE=4096
+# PICO_FLASH_SIZE_BYTES is derived from it so the pico-sdk's flash range checks
+# and the linker's end-of-flash config/custom-defaults placement stay in sync.
+MCU_FLASH_SIZE  ?= 8192
 PICO_FLASH_DEFINES = \
                    -DPICO_FLASH_SPI_CLKDIV=2 \
-                   -DPICO_FLASH_SIZE_BYTES=8388608 \
+                   -DPICO_FLASH_SIZE_BYTES=$(shell echo $$(( $(MCU_FLASH_SIZE) * 1024 ))) \
                    -DPICO_BOOT_STAGE2_CHOOSE_W25Q080=1
 FEATURES        += VCP SDCARD_SPI ONBOARDFLASH
 endif
@@ -22,11 +26,15 @@ ifneq ($(findstring RP2350B,$(TARGET)),)
 RP2350_TARGETS  += $(TARGET)
 # In pico-sdk, PICO_RP2350A=0 means RP2350B family.
 DEVICE_FLAGS    += -DPICO_RP2350A=0
-# External QSPI flash (board dependent, 8MB default - override in board config.mk if different)
-MCU_FLASH_SIZE  := 8192
+# External QSPI flash (board dependent, 8MB default). Override for boards with a
+# different part, e.g. the Raspberry Pi Pico 2 (4MB W25Q32):
+#   make TARGET=RP2350A MCU_FLASH_SIZE=4096
+# PICO_FLASH_SIZE_BYTES is derived from it so the pico-sdk's flash range checks
+# and the linker's end-of-flash config/custom-defaults placement stay in sync.
+MCU_FLASH_SIZE  ?= 8192
 PICO_FLASH_DEFINES = \
                    -DPICO_FLASH_SPI_CLKDIV=2 \
-                   -DPICO_FLASH_SIZE_BYTES=8388608 \
+                   -DPICO_FLASH_SIZE_BYTES=$(shell echo $$(( $(MCU_FLASH_SIZE) * 1024 ))) \
                    -DPICO_BOOT_STAGE2_CHOOSE_W25Q080=1
 FEATURES        += VCP SDCARD_SPI ONBOARDFLASH
 endif

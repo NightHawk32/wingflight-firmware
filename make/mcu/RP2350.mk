@@ -57,6 +57,15 @@ TARGET_MCU_LIB_UPPER = RP2350
 VPATH       := $(VPATH):$(CMSIS_DIR)/Core/Include:$(CMSIS_DIR)/Device/$(TARGET_MCU_LIB_UPPER)/Include
 CMSIS_SRC   :=
 
+# pico_clib_interface/newlib_interface.c provides the real runtime_init().
+# Without it the link silently binds runtime_init to crt0.S's weak no-op stub,
+# so NO preinit/init array entry ever runs - including
+# runtime_init_per_core_enable_coprocessors(), which sets CPACR CP10/CP11.
+# ARCH_FLAGS uses -march=armv8-m.main+fp -mfloat-abi=softfp, so GCC emits
+# hardware FP instructions; with the FPU left disabled the first one executed
+# faults (observed on RP2350 hardware: NOCP UsageFault at the vpush entering
+# validateAndFixGyroConfig). Every syscall in that file is __weak, so
+# wingflight's own definitions still take precedence.
 PICO_LIB_SRC = \
             rp2_common/pico_crt0/crt0.S \
             rp2_common/hardware_sync_spin_lock/sync_spin_lock.c \
@@ -88,6 +97,7 @@ PICO_LIB_SRC = \
             rp2_common/pico_runtime_init/runtime_init_clocks.c \
             rp2_common/pico_runtime_init/runtime_init_stack_guard.c \
             rp2_common/pico_runtime/runtime.c \
+            rp2_common/pico_clib_interface/newlib_interface.c \
             rp2_common/hardware_ticks/ticks.c \
             rp2_common/hardware_xosc/xosc.c \
             common/pico_sync/sem.c \
