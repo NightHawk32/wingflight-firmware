@@ -68,6 +68,14 @@ mcuTypeId_e getMcuTypeId(void)
     return MCU_TYPE_H723_725;
 #elif defined(STM32G474xx)
     return MCU_TYPE_G474;
+#elif defined(RP2350A)
+    return MCU_TYPE_RP2350A;
+#elif defined(RP2350B)
+    return MCU_TYPE_RP2350B;
+#elif defined(RP2354A)
+    return MCU_TYPE_RP2354A;
+#elif defined(RP2354B)
+    return MCU_TYPE_RP2354B;
 #else
     return MCU_TYPE_UNKNOWN;
 #endif
