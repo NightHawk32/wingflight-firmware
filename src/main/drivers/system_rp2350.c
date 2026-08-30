@@ -62,7 +62,7 @@ void SystemCoreClockUpdate (void)
     SystemCoreClock = clock_get_hz(clk_sys);
 }
 
-void __attribute__((constructor)) SystemInit (void)
+void SystemInit (void)
 {
     // pico-sdk's real runtime_init() lives in pico_clib_interface/*.c, which is
     // not part of this build (those files are compiled against the SDK's own
@@ -79,9 +79,22 @@ void __attribute__((constructor)) SystemInit (void)
     // init(), so this is the earliest firmware-controlled point. This mirrors the
     // STM32 ports, which enable CP10/CP11 in their own SystemInit().
     //
-    // Note the constructor attribute above is inert for the same reason (nothing
-    // walks .init_array either); SystemInit() is called explicitly by systemInit().
+    // SystemInit() is called explicitly by systemInit(); it deliberately carries
+    // no constructor attribute, both because nothing would run it and because it
+    // must not appear in the .init_array it walks below.
     runtime_run_initializers();
+
+    // runtime_run_initializers() only walks the preinit array. The SDK's real
+    // runtime_init() also walks .init_array (the C constructors), and some SDK
+    // state is initialised only from there - notably pico_unique_id's
+    // _retrieve_unique_id_on_boot(), which is a constructor(1000). Skipping it
+    // left pico_get_unique_board_id() returning all zeros, which showed up on
+    // hardware as a USB serial number of 0000000000000000.
+    extern void (*__init_array_start)(void);
+    extern void (*__init_array_end)(void);
+    for (void (**p)(void) = &__init_array_start; p < &__init_array_end; ++p) {
+        (*p)();
+    }
 
     SystemCoreClockUpdate();
 }

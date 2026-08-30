@@ -31,6 +31,8 @@
 #define _STDIO_H_
 #include "tusb.h"
 
+#include "pico/unique_id.h"
+
 // Extern flag controlled by MSC start logic
 extern bool pico_msc_active;
 
@@ -107,7 +109,10 @@ static char const* string_desc_arr[] = {
   (const char[]){ 0x09, 0x04 }, // 0: English (0x0409)
   FC_FIRMWARE_NAME,             // 1: Manufacturer
   USBD_PRODUCT_STRING,          // 2: Product
-  "123456",                    // 3: Serial (placeholder)
+  // 3: Serial. This literal is never sent - tud_descriptor_string_cb() below
+  // substitutes the chip's unique ID. Kept so the array indices stay aligned
+  // with the descriptor string indices.
+  "",
   // Derived from FC_FIRMWARE_NAME (as the manufacturer string above already is)
   // rather than hardcoded, so the interface names cannot drift from the project
   // name again. These are what the host shows for the composite interfaces.
@@ -116,6 +121,30 @@ static char const* string_desc_arr[] = {
 };
 
 static uint16_t _desc_str[32];
+
+// USB string descriptor index of the serial number.
+//
+// This must be unique per board. The host keys its per-device state on the
+// (VID, PID, serial) triple - on Windows that includes the COM port assignment
+// and driver binding - so shipping a fixed placeholder made every board look
+// like the same physical device, and prevented two from being told apart or
+// used at once. Taken from the RP2350's factory-programmed unique ID (the same
+// source systemInit() uses for systemUniqueId).
+//
+// Populated by usbDescriptorsInitSerial() at init time, NOT lazily from
+// tud_descriptor_string_cb(). That callback runs in USB interrupt context, and
+// pico_get_unique_board_id_string() reads the ID off the QSPI flash, which takes
+// exclusive flash access and blocks. Doing that while answering a control
+// transfer means GET_DESCRIPTOR(string, 3) is never completed and the device
+// fails to enumerate at all - observed on hardware as no USB device appearing,
+// while the firmware itself kept running normally (systemState READY, no fault).
+#define USB_SERIAL_STRING_INDEX 3
+static char usbSerialString[2 * PICO_UNIQUE_BOARD_ID_SIZE_BYTES + 1];
+
+void usbDescriptorsInitSerial(void)
+{
+    pico_get_unique_board_id_string(usbSerialString, sizeof(usbSerialString));
+}
 
 uint16_t const* tud_descriptor_string_cb(uint8_t index, uint16_t langid)
 {
@@ -127,7 +156,12 @@ uint16_t const* tud_descriptor_string_cb(uint8_t index, uint16_t langid)
     chr_count = 1;
   } else {
     if (index >= sizeof(string_desc_arr)/sizeof(string_desc_arr[0])) return NULL;
-    const char* str = string_desc_arr[index];
+
+    // Serial comes from the pre-built buffer; everything else from the table.
+    // usbDescriptorsInitSerial() must have run before enumeration - see above.
+    const char* str = (index == USB_SERIAL_STRING_INDEX)
+                        ? usbSerialString
+                        : string_desc_arr[index];
     chr_count = (uint8_t) strlen(str);
     if (chr_count > 31) chr_count = 31;
     for (uint8_t i = 0; i < chr_count; i++) {

@@ -206,6 +206,11 @@ void cdc_usb_init(void)
         return;
     }
 
+    // Build the serial-number string before the stack can be asked for it: it
+    // reads the QSPI flash, which must not happen inside the descriptor
+    // callback's interrupt context.
+    usbDescriptorsInitSerial();
+
     // initialize TinyUSB, as user hasn't explicitly linked it
     tusb_init();
 
