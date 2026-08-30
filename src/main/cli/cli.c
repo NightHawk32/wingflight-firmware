@@ -3138,15 +3138,29 @@ static void cliFlashInfo(const char *cmdName, char *cmdline)
 #ifdef USE_FLASHFS
     const flashPartition_t *flashPartition = flashPartitionFindByType(FLASH_PARTITION_TYPE_FLASHFS);
 
-    cliPrintLinef("FlashFS size=%u, usedSize=%u",
-            FLASH_PARTITION_SECTOR_COUNT(flashPartition) * layout->sectorSize,
-            flashfsGetOffset()
-    );
+    // flashPartitionFindByType() returns NULL when no flash device was detected,
+    // which happens on any board whose target enables ONBOARDFLASH/USE_FLASHFS
+    // but has no dataflash chip fitted - e.g. a bare RP2350 board built from the
+    // unified target. FLASH_PARTITION_SECTOR_COUNT() dereferences the pointer
+    // unconditionally, and the compiler proves that path reachable and emits a
+    // trap for it (`udf #255`), so this was not a harmless NULL read: on RP2350
+    // hardware `flash_info` hard-faulted the firmware outright.
+    //
+    // Note NULL reads do not fault on RP2350 (address 0 is the readable bootrom),
+    // so nothing else catches this.
+    if (flashPartition) {
+        cliPrintLinef("FlashFS size=%u, usedSize=%u",
+                FLASH_PARTITION_SECTOR_COUNT(flashPartition) * layout->sectorSize,
+                flashfsGetOffset()
+        );
 #ifdef USE_FLASHFS_LOOP
-    cliPrintLinef("FlashFSLoop Head = 0x%08x, Tail = 0x%08x",
-            flashfsGetHeadAddress(),
-            flashfsGetTailAddress());
+        cliPrintLinef("FlashFSLoop Head = 0x%08x, Tail = 0x%08x",
+                flashfsGetHeadAddress(),
+                flashfsGetTailAddress());
 #endif
+    } else {
+        cliPrintLine("FlashFS not present");
+    }
 #endif
 }
 
@@ -3192,8 +3206,17 @@ static void cliFlashErase(const char *cmdName, char *cmdline)
 
 static void cliFlashFill(const char *cmdName, char *cmdline)
 {
-    UNUSED(cmdName);
     UNUSED(cmdline);
+    // No flash device detected (flashfsSize == 0). Everything below reaches
+    // flash.c's accessors, which dereference flashDevice.vTable without a NULL
+    // check - and a NULL read does not fault on RP2350 (address 0 is the readable
+    // bootrom), so the garbage read back is called as a function pointer. Guard
+    // here as cliFlashErase() already does, rather than branching to nowhere.
+    if (!flashfsIsSupported()) {
+        cliPrintErrorLinef(cmdName, "NO FLASH DEVICE");
+        return;
+    }
+
 
     cliPrintLine("Filling");
     flashfsFillEntireFlash();
@@ -3203,6 +3226,16 @@ static void cliFlashFill(const char *cmdName, char *cmdline)
 static void cliFlashVerify(const char *cmdName, char *cmdline)
 {
     UNUSED(cmdline);
+    // No flash device detected (flashfsSize == 0). Everything below reaches
+    // flash.c's accessors, which dereference flashDevice.vTable without a NULL
+    // check - and a NULL read does not fault on RP2350 (address 0 is the readable
+    // bootrom), so the garbage read back is called as a function pointer. Guard
+    // here as cliFlashErase() already does, rather than branching to nowhere.
+    if (!flashfsIsSupported()) {
+        cliPrintErrorLinef(cmdName, "NO FLASH DEVICE");
+        return;
+    }
+
 
     cliPrintLine("Verifying");
     if (flashfsVerifyEntireFlash()) {
@@ -3214,6 +3247,15 @@ static void cliFlashVerify(const char *cmdName, char *cmdline)
 
 static void cliFlashWrite(const char *cmdName, char *cmdline)
 {
+    // No flash device detected (flashfsSize == 0). Everything below reaches
+    // flash.c's accessors, which dereference flashDevice.vTable without a NULL
+    // check - and a NULL read does not fault on RP2350 (address 0 is the readable
+    // bootrom), so the garbage read back is called as a function pointer. Guard
+    // here as cliFlashErase() already does, rather than branching to nowhere.
+    if (!flashfsIsSupported()) {
+        cliPrintErrorLinef(cmdName, "NO FLASH DEVICE");
+        return;
+    }
     const uint32_t address = atoi(cmdline);
     const char *text = strchr(cmdline, ' ');
 
@@ -3230,6 +3272,15 @@ static void cliFlashWrite(const char *cmdName, char *cmdline)
 
 static void cliFlashRead(const char *cmdName, char *cmdline)
 {
+    // No flash device detected (flashfsSize == 0). Everything below reaches
+    // flash.c's accessors, which dereference flashDevice.vTable without a NULL
+    // check - and a NULL read does not fault on RP2350 (address 0 is the readable
+    // bootrom), so the garbage read back is called as a function pointer. Guard
+    // here as cliFlashErase() already does, rather than branching to nowhere.
+    if (!flashfsIsSupported()) {
+        cliPrintErrorLinef(cmdName, "NO FLASH DEVICE");
+        return;
+    }
     uint32_t address = atoi(cmdline);
 
     const char *nextArg = strchr(cmdline, ' ');
@@ -3263,8 +3314,16 @@ static void cliFlashRead(const char *cmdName, char *cmdline)
 
 static void cliFlashEraseSector(const char *cmdName, char *cmdline)
 {
-    UNUSED(cmdName);
 
+    // No flash device detected (flashfsSize == 0). Everything below reaches
+    // flash.c's accessors, which dereference flashDevice.vTable without a NULL
+    // check - and a NULL read does not fault on RP2350 (address 0 is the readable
+    // bootrom), so the garbage read back is called as a function pointer. Guard
+    // here as cliFlashErase() already does, rather than branching to nowhere.
+    if (!flashfsIsSupported()) {
+        cliPrintErrorLinef(cmdName, "NO FLASH DEVICE");
+        return;
+    }
     const char *ptr = cmdline;
     uint32_t address = atoi(ptr);
     ptr = nextArg(cmdline);
@@ -3308,8 +3367,17 @@ static void cliFlashEraseSector(const char *cmdName, char *cmdline)
 #ifdef USE_FLASHFS_LOOP
 static void cliFlashfsInitialErase(const char *cmdName, char *cmdline)
 {
-    UNUSED(cmdName);
     UNUSED(cmdline);
+    // No flash device detected (flashfsSize == 0). Everything below reaches
+    // flash.c's accessors, which dereference flashDevice.vTable without a NULL
+    // check - and a NULL read does not fault on RP2350 (address 0 is the readable
+    // bootrom), so the garbage read back is called as a function pointer. Guard
+    // here as cliFlashErase() already does, rather than branching to nowhere.
+    if (!flashfsIsSupported()) {
+        cliPrintErrorLinef(cmdName, "NO FLASH DEVICE");
+        return;
+    }
+
     flashfsInit();
 
     timeUs_t start = micros();
