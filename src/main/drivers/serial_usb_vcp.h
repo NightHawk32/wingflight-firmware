@@ -45,6 +45,12 @@ typedef struct {
     bool buffering;
 } vcpPort_t;
 
+// Brings up the USB device stack. Only the PICO port defines this - its
+// usbVcpOpen() merely installs the vtable, whereas the STM32 ports do the
+// device init inside usbVcpOpen() and need no separate call. Declared
+// unconditionally to match upstream; the call site in fc/init.c is guarded.
+void usbVcpInit(void);
+
 serialPort_t *usbVcpOpen(void);
 struct serialPort_s;
 uint32_t usbVcpGetBaudRate(struct serialPort_s *instance);
