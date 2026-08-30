@@ -108,8 +108,11 @@ static char const* string_desc_arr[] = {
   FC_FIRMWARE_NAME,             // 1: Manufacturer
   USBD_PRODUCT_STRING,          // 2: Product
   "123456",                    // 3: Serial (placeholder)
-  "Betaflight CDC",            // 4: CDC Interface
-  "Betaflight MSC",            // 5: MSC Interface
+  // Derived from FC_FIRMWARE_NAME (as the manufacturer string above already is)
+  // rather than hardcoded, so the interface names cannot drift from the project
+  // name again. These are what the host shows for the composite interfaces.
+  FC_FIRMWARE_NAME " CDC",      // 4: CDC Interface
+  FC_FIRMWARE_NAME " MSC",      // 5: MSC Interface
 };
 
 static uint16_t _desc_str[32];
