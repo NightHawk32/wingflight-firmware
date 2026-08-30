@@ -46,6 +46,7 @@
 #include "hardware/timer.h"
 #include "hardware/watchdog.h"
 #include "pico/bootrom.h"
+#include "pico/runtime.h"
 #include "pico/unique_id.h"
 // flash.h used by PICO QSPI helpers is included where needed in PICO bus/flash code
 
@@ -63,6 +64,25 @@ void SystemCoreClockUpdate (void)
 
 void __attribute__((constructor)) SystemInit (void)
 {
+    // pico-sdk's real runtime_init() lives in pico_clib_interface/*.c, which is
+    // not part of this build (those files are compiled against the SDK's own
+    // include set and collide with wingflight's headers - e.g. <time.h> resolves
+    // to src/main/common/time.h). The link therefore silently binds runtime_init
+    // to crt0.S's weak no-op stub, and NONE of the SDK's preinit entries run:
+    // clocks are left unconfigured (clock_get_hz() reports the uninitialised
+    // cached 0, so SystemCoreClock and usTicks below would both be 0) and CPACR
+    // CP10/CP11 stay clear, so the first hardware FP instruction taken faults.
+    // Observed on RP2350 hardware as a NOCP UsageFault escalated to HardFault at
+    // the `vpush {d8}` entering validateAndFixGyroConfig().
+    //
+    // Run the initializers here instead. systemInit() is the first statement in
+    // init(), so this is the earliest firmware-controlled point. This mirrors the
+    // STM32 ports, which enable CP10/CP11 in their own SystemInit().
+    //
+    // Note the constructor attribute above is inert for the same reason (nothing
+    // walks .init_array either); SystemInit() is called explicitly by systemInit().
+    runtime_run_initializers();
+
     SystemCoreClockUpdate();
 }
 

@@ -25,6 +25,14 @@ endif
 # Disabled only for RP2350/RP2354 builds - STM32/other targets are unaffected.
 EXTRA_FLAGS += -Wno-pedantic
 
+# pico-sdk sources are third-party and are not clean under wingflight's -Werror
+# set - e.g. newlib_interface.c's __assert_func() leaves all four parameters
+# unused once PICO's printf is compiled out. Scoped to pico-sdk objects via a
+# target-specific variable (OBJECT_DIR is defined in the root Makefile well
+# before this file is included) so wingflight's own code keeps the full
+# warning set, unlike the blanket EXTRA_FLAGS above.
+$(OBJECT_DIR)/$(TARGET)/rp2_common/%.o: CFLAGS += -Wno-unused-parameter
+
 # Run from SRAM. To disable, set environment variable RUN_FROM_RAM=0
 ifeq ($(RUN_FROM_RAM),)
 RUN_FROM_RAM = 1
@@ -57,15 +65,14 @@ TARGET_MCU_LIB_UPPER = RP2350
 VPATH       := $(VPATH):$(CMSIS_DIR)/Core/Include:$(CMSIS_DIR)/Device/$(TARGET_MCU_LIB_UPPER)/Include
 CMSIS_SRC   :=
 
-# pico_clib_interface/newlib_interface.c provides the real runtime_init().
-# Without it the link silently binds runtime_init to crt0.S's weak no-op stub,
-# so NO preinit/init array entry ever runs - including
-# runtime_init_per_core_enable_coprocessors(), which sets CPACR CP10/CP11.
-# ARCH_FLAGS uses -march=armv8-m.main+fp -mfloat-abi=softfp, so GCC emits
-# hardware FP instructions; with the FPU left disabled the first one executed
-# faults (observed on RP2350 hardware: NOCP UsageFault at the vpush entering
-# validateAndFixGyroConfig). Every syscall in that file is __weak, so
-# wingflight's own definitions still take precedence.
+# NOTE: pico_clib_interface/newlib_interface.c (which upstream Betaflight builds)
+# is deliberately NOT listed here - it is compiled against the SDK's own include
+# set and does not survive wingflight's (<time.h> resolves to src/main/common/
+# time.h, and its __assert_func() hits PICO's printf_not_implemented assertion).
+# It is the only definition of runtime_init(), so without it the link binds
+# runtime_init to crt0.S's weak no-op stub and no SDK initializer ever runs.
+# drivers/system_rp2350.c's SystemInit() calls runtime_run_initializers()
+# directly to compensate - see the comment there before removing that call.
 PICO_LIB_SRC = \
             rp2_common/pico_crt0/crt0.S \
             rp2_common/hardware_sync_spin_lock/sync_spin_lock.c \
@@ -97,7 +104,6 @@ PICO_LIB_SRC = \
             rp2_common/pico_runtime_init/runtime_init_clocks.c \
             rp2_common/pico_runtime_init/runtime_init_stack_guard.c \
             rp2_common/pico_runtime/runtime.c \
-            rp2_common/pico_clib_interface/newlib_interface.c \
             rp2_common/hardware_ticks/ticks.c \
             rp2_common/hardware_xosc/xosc.c \
             common/pico_sync/sem.c \
