@@ -149,11 +149,41 @@ void cycleCounterInit(void)
     PICO_DWT_CTRL |= M33_DWT_CTRL_CYCCNTENA_BITS;
 }
 
+// Enter the RP2350 ROM (BOOTSEL) bootloader if the previous boot requested it.
+//
+// cli.c's `bl rom`, MSP reboot and drivers/system.c all request the ROM
+// bootloader the same way: persist RESET_BOOTLOADER_REQUEST_ROM as the reset
+// reason, then reboot. Acting on that flag is the platform's job - every STM32
+// family has its own checkForBootLoaderRequest() (see system_stm32f4xx.c) - and
+// the PICO port had no equivalent, so the request was written and then silently
+// ignored on the next boot: `bl rom` just restarted the firmware.
+//
+// The persistent store lives in .uninitialized_data.persistent (RAM below
+// .text, so the PICO_COPY_TO_RAM startup copy does not clobber it) and survives
+// the watchdog reboot systemResetHard() performs.
+//
+// rom_reset_usb_boot_extra() does not return.
+static void checkForBootLoaderRequest(void)
+{
+    if (persistentObjectRead(PERSISTENT_OBJECT_RESET_REASON) != RESET_BOOTLOADER_REQUEST_ROM) {
+        return;
+    }
+
+    // Clear first: if the flag survived into the bootloader and back, a failed
+    // or cancelled flash would otherwise trap the board in a BOOTSEL loop.
+    persistentObjectWrite(PERSISTENT_OBJECT_RESET_REASON, RESET_NONE);
+
+    rom_reset_usb_boot_extra(-1, 0, false);
+    while (1);
+}
+
 void systemInit(void)
 {
     //TODO: implement
 
     SystemInit();
+
+    checkForBootLoaderRequest();
 
     cycleCounterInit();
 
