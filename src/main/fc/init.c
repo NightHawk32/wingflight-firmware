@@ -68,6 +68,7 @@
 #include "drivers/fbus_master.h"
 #include "drivers/sensor.h"
 #include "drivers/serial.h"
+#include "drivers/serial_usb_vcp.h"
 #include "drivers/serial_softserial.h"
 #include "drivers/serial_uart.h"
 #include "drivers/sdcard.h"
@@ -515,6 +516,23 @@ void init(void)
 
 #if defined(USE_UART) && !defined(SIMULATOR_BUILD)
     uartPinConfigure(serialPinConfig());
+#endif
+
+#if defined(PICO) && defined(USE_VCP)
+    // Bring up the USB CDC stack before serialInit() opens the VCP port.
+    // Unlike the STM32 ports, whose usbVcpOpen() performs the USB device init
+    // itself, PICO's usbVcpOpen() only installs the vtable - the actual
+    // tusb_init()/IRQ setup lives in usbVcpInit(). Without this call TinyUSB is
+    // never initialised and the board does not enumerate at all (no VID_2E8A
+    // device, no CDC), even though init() otherwise completes and the scheduler
+    // runs. Upstream Betaflight makes the equivalent call from main.c.
+    //
+    // Must run on core 0: cdc_usb_init() asserts it is on the core owning the
+    // default alarm pool, and all USB code including interrupts must stay there.
+    // Called exactly once here rather than from usbVcpOpen(), which can run
+    // again on a port reconfigure - cdc_usb_init() claims a user IRQ and adds
+    // handlers, so it is not idempotent.
+    usbVcpInit();
 #endif
 
 #if defined(AVOID_UART1_FOR_PWM_PPM)
