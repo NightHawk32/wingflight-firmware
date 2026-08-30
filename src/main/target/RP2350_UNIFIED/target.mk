@@ -9,12 +9,25 @@
 ifneq ($(findstring RP2350A,$(TARGET)),)
 RP2350_TARGETS  += $(TARGET)
 DEVICE_FLAGS    += -DPICO_RP2350A=1
-# External QSPI flash (board dependent, 8MB default). Override for boards with a
-# different part, e.g. the Raspberry Pi Pico 2 (4MB W25Q32):
-#   make TARGET=RP2350A MCU_FLASH_SIZE=4096
-# PICO_FLASH_SIZE_BYTES is derived from it so the pico-sdk's flash range checks
-# and the linker's end-of-flash config/custom-defaults placement stay in sync.
-MCU_FLASH_SIZE  ?= 8192
+# External QSPI flash - the part is board dependent and cannot be known at build
+# time, so this defaults to the smallest size in common use (4MB, as fitted to
+# the Raspberry Pi Pico 2) rather than the largest.
+#
+# The two directions are NOT equally safe. FLASH_CONFIG and FLASH_CUSTOM_DEFAULTS
+# are placed at the END of flash (src/link/pico_rp2350_memory.ld), so:
+#   - Under-declaring is harmless: config lands inside the chip and the space
+#     above it is simply unused.
+#   - Over-declaring is silently destructive: config_streamer.c's
+#     flash_range_erase()/flash_range_program() target addresses past the end of
+#     the physical device.
+# A default of 8MB therefore produced a broken image for a 4MB board from a plain
+# `make TARGET=RP2350A`, with no build-time diagnostic.
+#
+# Boards with a larger part should opt in explicitly to use it, e.g.:
+#   make TARGET=RP2350A MCU_FLASH_SIZE=8192
+# PICO_FLASH_SIZE_BYTES is derived from this so the pico-sdk's flash range checks
+# and the linker's end-of-flash placement stay in sync.
+MCU_FLASH_SIZE  ?= 4096
 PICO_FLASH_DEFINES = \
                    -DPICO_FLASH_SPI_CLKDIV=2 \
                    -DPICO_FLASH_SIZE_BYTES=$(shell echo $$(( $(MCU_FLASH_SIZE) * 1024 ))) \
@@ -26,12 +39,25 @@ ifneq ($(findstring RP2350B,$(TARGET)),)
 RP2350_TARGETS  += $(TARGET)
 # In pico-sdk, PICO_RP2350A=0 means RP2350B family.
 DEVICE_FLAGS    += -DPICO_RP2350A=0
-# External QSPI flash (board dependent, 8MB default). Override for boards with a
-# different part, e.g. the Raspberry Pi Pico 2 (4MB W25Q32):
-#   make TARGET=RP2350A MCU_FLASH_SIZE=4096
-# PICO_FLASH_SIZE_BYTES is derived from it so the pico-sdk's flash range checks
-# and the linker's end-of-flash config/custom-defaults placement stay in sync.
-MCU_FLASH_SIZE  ?= 8192
+# External QSPI flash - the part is board dependent and cannot be known at build
+# time, so this defaults to the smallest size in common use (4MB, as fitted to
+# the Raspberry Pi Pico 2) rather than the largest.
+#
+# The two directions are NOT equally safe. FLASH_CONFIG and FLASH_CUSTOM_DEFAULTS
+# are placed at the END of flash (src/link/pico_rp2350_memory.ld), so:
+#   - Under-declaring is harmless: config lands inside the chip and the space
+#     above it is simply unused.
+#   - Over-declaring is silently destructive: config_streamer.c's
+#     flash_range_erase()/flash_range_program() target addresses past the end of
+#     the physical device.
+# A default of 8MB therefore produced a broken image for a 4MB board from a plain
+# `make TARGET=RP2350A`, with no build-time diagnostic.
+#
+# Boards with a larger part should opt in explicitly to use it, e.g.:
+#   make TARGET=RP2350A MCU_FLASH_SIZE=8192
+# PICO_FLASH_SIZE_BYTES is derived from this so the pico-sdk's flash range checks
+# and the linker's end-of-flash placement stay in sync.
+MCU_FLASH_SIZE  ?= 4096
 PICO_FLASH_DEFINES = \
                    -DPICO_FLASH_SPI_CLKDIV=2 \
                    -DPICO_FLASH_SIZE_BYTES=$(shell echo $$(( $(MCU_FLASH_SIZE) * 1024 ))) \

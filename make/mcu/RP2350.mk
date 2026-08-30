@@ -25,13 +25,6 @@ endif
 # Disabled only for RP2350/RP2354 builds - STM32/other targets are unaffected.
 EXTRA_FLAGS += -Wno-pedantic
 
-# pico-sdk sources are third-party and are not clean under wingflight's -Werror
-# set - e.g. newlib_interface.c's __assert_func() leaves all four parameters
-# unused once PICO's printf is compiled out. Scoped to pico-sdk objects via a
-# target-specific variable (OBJECT_DIR is defined in the root Makefile well
-# before this file is included) so wingflight's own code keeps the full
-# warning set, unlike the blanket EXTRA_FLAGS above.
-$(OBJECT_DIR)/$(TARGET)/rp2_common/%.o: CFLAGS += -Wno-unused-parameter
 
 # Run from SRAM. To disable, set environment variable RUN_FROM_RAM=0
 ifeq ($(RUN_FROM_RAM),)
