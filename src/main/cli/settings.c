@@ -104,6 +104,7 @@
 #include "pg/freq.h"
 #include "pg/sbus_output.h"
 #include "pg/fbus_master.h"
+#include "pg/rx_sbus_input.h"
 #include "pg/sport_master.h"
 #include "pg/crsf_sensors.h"
 #include "pg/bus_servo.h"
@@ -1136,6 +1137,10 @@ const clivalue_t valueTable[] = {
     { "tv_iterm_relax_level",       VAR_UINT8  | MASTER_VALUE | MODE_ARRAY, .config.array.length = 3, PG_THRUST_VECTOR_PROFILE, offsetof(tvPidProfile_t, iterm_relax_level) },
     { "tv_iterm_relax_cutoff",      VAR_UINT8  | MASTER_VALUE | MODE_ARRAY, .config.array.length = 3, PG_THRUST_VECTOR_PROFILE, offsetof(tvPidProfile_t, iterm_relax_cutoff) },
 
+    { "tv_hold_gain",               VAR_UINT8  | MASTER_VALUE, .config.minmaxUnsigned = { 0, 250 }, PG_THRUST_VECTOR_PROFILE, offsetof(tvPidProfile_t, hold.gain) },
+    { "tv_hold_deadband",           VAR_UINT8  | MASTER_VALUE, .config.minmaxUnsigned = { 0, 100 }, PG_THRUST_VECTOR_PROFILE, offsetof(tvPidProfile_t, hold.deadband) },
+    { "tv_hold_max_rate",           VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 1800 }, PG_THRUST_VECTOR_PROFILE, offsetof(tvPidProfile_t, hold.max_rate) },
+
 
 // PG_TELEMETRY_CONFIG
 #ifdef USE_TELEMETRY
@@ -1460,6 +1465,11 @@ const clivalue_t valueTable[] = {
 #ifdef USE_CRSF_SENSORS
     { "crsf_sensors_timeout_ms",       VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { CRSF_SENSORS_TIMEOUT_MS_MIN, CRSF_SENSORS_TIMEOUT_MS_MAX }, PG_DRIVER_CRSF_SENSORS_CONFIG, offsetof(crsfSensorsConfig_t, sensorTimeoutMs) },
     { "crsf_sensors_use_baro",         VAR_UINT8 | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_OFF_ON }, PG_DRIVER_CRSF_SENSORS_CONFIG, offsetof(crsfSensorsConfig_t, useBaroAltitude) },
+#endif
+
+#ifdef USE_RX_SBUS_INPUT
+    { "sbus_input_pinswap",            VAR_UINT8 | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_OFF_ON}, PG_DRIVER_RX_SBUS_INPUT_CONFIG, offsetof(sbusInputConfig_t, pinSwap) },
+    { "sbus_input_inverted",           VAR_UINT8 | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_OFF_ON}, PG_DRIVER_RX_SBUS_INPUT_CONFIG, offsetof(sbusInputConfig_t, inverted) },
 #endif
 
 };

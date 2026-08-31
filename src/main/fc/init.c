@@ -67,6 +67,7 @@
 #include "drivers/sbus_output.h"
 #include "drivers/fbus_master.h"
 #include "drivers/crsf_sensors.h"
+#include "drivers/rx_sbus_input.h"
 #include "drivers/sensor.h"
 #include "drivers/serial.h"
 #include "drivers/serial_softserial.h"
@@ -99,6 +100,7 @@
 #include "flight/imu.h"
 #include "flight/mixer.h"
 #include "flight/pid.h"
+#include "flight/tv_hold.h"
 #include "flight/tv_pid.h"
 #include "flight/servos.h"
 #include "flight/rpm_filter.h"
@@ -705,6 +707,7 @@ void init(void)
     // stays valid even if FEATURE_THRUST_VECTOR is toggled without a reboot) -- only
     // its execution is gated by the feature flag, in subTaskPidController().
     tvPidInit(tvPidProfile());
+    tvHoldInit(tvPidProfile());
 
 #ifdef USE_SERVOS
     servoInit();
@@ -723,6 +726,10 @@ void init(void)
 #endif
 #ifdef USE_CRSF_SENSORS
     crsfSensorsInit();
+#endif
+
+#ifdef USE_RX_SBUS_INPUT
+    sbusInputInit();
 #endif
 
 #ifdef USE_PINIO

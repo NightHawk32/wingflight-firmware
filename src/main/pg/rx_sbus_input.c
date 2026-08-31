@@ -12,23 +12,23 @@
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
  * See the GNU General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this software.
- *
  * If not, see <http://www.gnu.org/licenses/>.
  */
 
-#pragma once
+#include "pg/pg_ids.h"
+#include "platform.h"
 
-#include <stdint.h>
-#include <stdbool.h>
+#include "pg/rx_sbus_input.h"
 
-#define EEPROM_CONF_VERSION 176
+#ifdef USE_RX_SBUS_INPUT
 
-bool isEEPROMVersionValid(void);
-bool isEEPROMStructureValid(void);
-bool loadEEPROM(void);
-void writeConfigToEEPROM(void);
+PG_REGISTER_WITH_RESET_FN(sbusInputConfig_t, sbusInputConfig,
+                          PG_DRIVER_RX_SBUS_INPUT_CONFIG, 0);
 
-uint16_t getEEPROMConfigSize(void);
-size_t getEEPROMStorageSize(void);
+void pgResetFn_sbusInputConfig(sbusInputConfig_t *config)
+{
+    config->inverted = 0;
+    config->pinSwap = 0;
+}
+
+#endif

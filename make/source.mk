@@ -82,6 +82,7 @@ COMMON_SRC = \
             drivers/fbus_sensor.c \
             drivers/fbus_xact.c \
             drivers/crsf_sensors.c \
+            drivers/rx_sbus_input.c \
             drivers/rx/rx_spi.c \
             drivers/rx/rx_xn297.c \
             drivers/rx/rx_pwm.c \
@@ -110,6 +111,7 @@ COMMON_SRC = \
             flight/leveling.c \
             flight/autohover.c \
             flight/atthold.c \
+            flight/tv_hold.c \
             flight/autotrim.c \
             flight/setpoint.c \
             flight/wiggle.c \
