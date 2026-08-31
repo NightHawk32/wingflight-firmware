@@ -1507,7 +1507,9 @@ static void cliSerialPassthrough(const char *cmdName, char *cmdline)
     bool enableBaudCb = false;
     int port1PinioDtr = 0;
     bool port1ResetOnDtr = false;
+#if defined(USE_PWM_OUTPUT) && defined(USE_TIMER)
     bool escSensorPassthrough = false;
+#endif
     char *saveptr;
     char* tok = strtok_r(cmdline, " ", &saveptr);
     int index = 0;
@@ -1516,9 +1518,27 @@ static void cliSerialPassthrough(const char *cmdName, char *cmdline)
         switch (index) {
         case 0:
             if (strcasestr(tok, "esc_sensor")) {
+#if defined(USE_PWM_OUTPUT) && defined(USE_TIMER)
                 escSensorPassthrough = true;
                 const serialPortConfig_t *portConfig = findSerialPortConfig(FUNCTION_ESC_SENSOR);
+                // NULL when no port is assigned FUNCTION_ESC_SENSOR, which is the
+                // default. Dereferencing it does not fault on RP2350 (address 0 is
+                // the readable bootrom), it just yields a garbage port id.
+                if (!portConfig) {
+                    cliPrintErrorLinef(cmdName, "NO ESC SENSOR PORT CONFIGURED");
+                    return;
+                }
                 ports[0].id = portConfig->identifier;
+#else
+                // esc_sensor mode must idle the motor outputs before handing the
+                // line over, which needs timerGetConfiguredByTag() from
+                // drivers/timer.c. PICO drives motors from PIO and excludes that
+                // file (MCU_EXCLUDES), and there is no timerHardware to read the
+                // output polarity from. Refuse explicitly rather than silently
+                // skipping the idling and handing over a still-driven pin.
+                cliPrintErrorLinef(cmdName, "ESC SENSOR PASSTHROUGH NOT SUPPORTED ON THIS TARGET");
+                return;
+#endif
             } else {
                 ports[0].id = atoi(tok);
             }
@@ -1662,7 +1682,7 @@ static void cliSerialPassthrough(const char *cmdName, char *cmdline)
     }
 
 // XXX Review ESC pass through under refactored motor handling
-#ifdef USE_PWM_OUTPUT
+#if defined(USE_PWM_OUTPUT) && defined(USE_TIMER)
     if (escSensorPassthrough) {
         // pwmDisableMotors();
         motorDisable();
@@ -3112,10 +3132,12 @@ static void cliFlashInfo(const char *cmdName, char *cmdline)
 
 static void cliFlashErase(const char *cmdName, char *cmdline)
 {
-    UNUSED(cmdName);
     UNUSED(cmdline);
 
+    // Reports the same error as the other flash_* commands rather than returning
+    // silently, so an absent flash device is not mistaken for a completed erase.
     if (!flashfsIsSupported()) {
+        cliPrintErrorLinef(cmdName, "NO FLASH DEVICE");
         return;
     }
 
@@ -4370,10 +4392,11 @@ static void cliExit(const char *cmdName, char *cmdline)
 #ifdef USE_GPS
 static void cliGpsPassthrough(const char *cmdName, char *cmdline)
 {
-    UNUSED(cmdName);
     UNUSED(cmdline);
 
-    gpsEnablePassthrough(cliPort);
+    if (!gpsEnablePassthrough(cliPort)) {
+        cliPrintErrorLinef(cmdName, "GPS PORT NOT CONFIGURED");
+    }
 }
 #endif
 

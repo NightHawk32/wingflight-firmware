@@ -521,6 +521,18 @@ static void serializeDataflashReadReply(sbuf_t *dst, uint32_t address, const uin
 {
     STATIC_ASSERT(MSP_PORT_DATAFLASH_INFO_SIZE >= 16, MSP_PORT_DATAFLASH_INFO_SIZE_invalid);
 
+    // Bail out when no flash device is present. serializeDataflashSummaryReply()
+    // already reports unsupported in that case, but a client is free to issue
+    // MSP_DATAFLASH_READ regardless. flashfsGetSize() is then 0, so the
+    // `readLen > flashfsSize - address` truncation below underflows (unsigned)
+    // and fails to clamp, and the read reaches flash.c with no device behind it.
+    if (!flashfsIsSupported()) {
+        sbufWriteU32(dst, address);
+        sbufWriteU16(dst, 0);
+        sbufWriteU8(dst, 0); // compression format
+        return;
+    }
+
     uint16_t readLen = size;
     const int bytesRemainingInBuf = sbufBytesRemaining(dst) - MSP_PORT_DATAFLASH_INFO_SIZE;
     if (readLen > bytesRemainingInBuf) {

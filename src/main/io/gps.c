@@ -1760,8 +1760,21 @@ static void gpsHandlePassthrough(uint8_t data)
 
  }
 
-void gpsEnablePassthrough(serialPort_t *gpsPassthroughPort)
+// Returns false if there is no GPS port to pass through to.
+//
+// gpsPort stays NULL until gpsInit() finds a serial port assigned FUNCTION_GPS,
+// so this is reachable simply by running `gpspassthrough` on a board with no GPS
+// configured. Every line below dereferences it, starting with the
+// waitForSerialPortToFinishTransmitting() call, and a NULL read does not fault on
+// RP2350 (address 0 is the readable bootrom) - the garbage read back is used as a
+// serialPort vTable and called. Observed on hardware as a precise bus fault
+// (BFAR 0xF0000014) inside isSerialTransmitBufferEmpty(), taking the board down.
+bool gpsEnablePassthrough(serialPort_t *gpsPassthroughPort)
 {
+    if (!gpsPort) {
+        return false;
+    }
+
     waitForSerialPortToFinishTransmitting(gpsPort);
     waitForSerialPortToFinishTransmitting(gpsPassthroughPort);
 
@@ -1775,6 +1788,8 @@ void gpsEnablePassthrough(serialPort_t *gpsPassthroughPort)
 #endif
 
     serialPassthrough(gpsPort, gpsPassthroughPort, &gpsHandlePassthrough, NULL);
+
+    return true;
 }
 
 float GPS_scaleLonDown = 1.0f;  // this is used to offset the shrinking longitude as we go towards the poles

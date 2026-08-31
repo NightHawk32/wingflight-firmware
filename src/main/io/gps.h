@@ -135,7 +135,7 @@ bool gpsNewFrame(uint8_t c);
 bool gpsIsHealthy(void); // Check for healthy communications
 bool gpsUsesFbusTransport(void);
 struct serialPort_s;
-void gpsEnablePassthrough(struct serialPort_s *gpsPassthroughPort);
+bool gpsEnablePassthrough(struct serialPort_s *gpsPassthroughPort);
 void onGpsNewData(void);
 void GPS_reset_home_position(void);
 void GPS_calc_longitude_scaling(int32_t lat);

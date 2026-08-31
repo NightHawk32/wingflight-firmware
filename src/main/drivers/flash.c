@@ -230,30 +230,51 @@ bool flashDeviceInit(const flashConfig_t *flashConfig)
     return false;
 }
 
+// True once a flash device has actually been detected and its vTable installed.
+//
+// Every accessor below must check this before dereferencing flashDevice.vTable.
+// Boards whose target enables ONBOARDFLASH but have no dataflash chip fitted -
+// e.g. a bare RP2350 board built from the unified target - leave vTable NULL, and
+// a NULL read does NOT fault on RP2350 (address 0 is the readable bootrom). The
+// garbage read back is then called as a function pointer, so the failure mode is
+// a wild jump rather than a clean fault. Guarding at the call sites is not
+// sufficient: CLI, MSP (MSP_DATAFLASH_READ), blackbox and MSC all reach here.
+//
+// Note flashIsReady()/flashWaitForReady() must report *true* when absent. Callers
+// such as cli.c's `while (!flashfsIsReady())` would otherwise spin forever, which
+// would trade a crash for a hang.
+static bool flashDeviceIsPresent(void)
+{
+    return flashDevice.vTable != NULL;
+}
+
 bool flashIsReady(void)
 {
-    return flashDevice.vTable->isReady(&flashDevice);
+    return flashDeviceIsPresent() ? flashDevice.vTable->isReady(&flashDevice) : true;
 }
 
 bool flashWaitForReady(void)
 {
-    return flashDevice.vTable->waitForReady(&flashDevice);
+    return flashDeviceIsPresent() ? flashDevice.vTable->waitForReady(&flashDevice) : true;
 }
 
 void flashEraseSector(uint32_t address)
 {
+    if (!flashDeviceIsPresent()) {
+        return;
+    }
     flashDevice.callback = NULL;
     flashDevice.vTable->eraseSector(&flashDevice, address);
 }
 
 bool flashEraseCompletelySupported(void)
 {
-    return flashDevice.vTable->eraseCompletely != NULL;
+    return flashDeviceIsPresent() && flashDevice.vTable->eraseCompletely != NULL;
 }
 
 void flashEraseCompletely(void)
 {
-    if (flashDevice.vTable->eraseCompletely) {
+    if (flashDeviceIsPresent() && flashDevice.vTable->eraseCompletely) {
         flashDevice.callback = NULL;
         flashDevice.vTable->eraseCompletely(&flashDevice);
     }
@@ -264,11 +285,18 @@ void flashEraseCompletely(void)
  */
 void flashPageProgramBegin(uint32_t address, void (*callback)(uint32_t length))
 {
+    if (!flashDeviceIsPresent()) {
+        return;
+    }
     flashDevice.vTable->pageProgramBegin(&flashDevice, address, callback);
 }
 
 uint32_t flashPageProgramContinue(const uint8_t **buffers, uint32_t *bufferSizes, uint32_t bufferCount)
 {
+    if (!flashDeviceIsPresent()) {
+        return 0;
+    }
+
     uint32_t maxBytesToWrite = flashDevice.geometry.pageSize - (flashDevice.currentWriteAddress % flashDevice.geometry.pageSize);
 
     if (bufferCount == 0) {
@@ -290,50 +318,59 @@ uint32_t flashPageProgramContinue(const uint8_t **buffers, uint32_t *bufferSizes
 
 void flashPageProgramFinish(void)
 {
+    if (!flashDeviceIsPresent()) {
+        return;
+    }
     flashDevice.vTable->pageProgramFinish(&flashDevice);
 }
 
 void flashPageProgram(uint32_t address, const uint8_t *data, uint32_t length, void (*callback)(uint32_t length))
 {
+    if (!flashDeviceIsPresent()) {
+        return;
+    }
     flashDevice.vTable->pageProgram(&flashDevice, address, data, length, callback);
 }
 
 int flashReadBytes(uint32_t address, uint8_t *buffer, uint32_t length)
 {
+    if (!flashDeviceIsPresent()) {
+        return 0;
+    }
     flashDevice.callback = NULL;
     return flashDevice.vTable->readBytes(&flashDevice, address, buffer, length);
 }
 
 void flashFlush(void)
 {
-    if (flashDevice.vTable->flush) {
+    if (flashDeviceIsPresent() && flashDevice.vTable->flush) {
         flashDevice.vTable->flush(&flashDevice);
     }
 }
 
 bool flashSuspendSupported(void)
 {
-    return flashDevice.vTable->suspend && flashDevice.vTable->resume &&
+    return flashDeviceIsPresent() && flashDevice.vTable->suspend && flashDevice.vTable->resume &&
            flashDevice.vTable->isSuspended;
 }
 
 void flashSuspend(void)
 {
-    if (flashDevice.vTable->suspend) {
+    if (flashDeviceIsPresent() && flashDevice.vTable->suspend) {
         flashDevice.vTable->suspend(&flashDevice);
     }
 }
 
 void flashResume(void)
 {
-    if (flashDevice.vTable->resume) {
+    if (flashDeviceIsPresent() && flashDevice.vTable->resume) {
         flashDevice.vTable->resume(&flashDevice);
     }
 }
 
 bool flashIsSuspended(void)
 {
-    if (flashDevice.vTable->isSuspended) {
+    if (flashDeviceIsPresent() && flashDevice.vTable->isSuspended) {
         return flashDevice.vTable->isSuspended(&flashDevice);
     }
     return false;
