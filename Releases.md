@@ -1,3 +1,11 @@
+# 0.0.17
+
+Add Thrust Vector Attitude Hold.
+Add SBUS-In Fallback Receiver (Serial Rx (Backup, SBUS)).
+Fix servo-center snap when continuously slewing a SERVO_TRIM_* adjustment.
+Add bus servo PWM-clone mode (`bus_servo_clone_pwm`, default ON) so bus servo channels mirror the matching PWM output without separate mixer rules.
+Fix an init glitch on the Spektrum satellite receiver bind pin.
+
 # 0.0.16
 
 Add XACT servo programming support: multi-servo discovery over FBUS, per-servo background reads, and a field set aligned to FrSky's own configuration tool.
