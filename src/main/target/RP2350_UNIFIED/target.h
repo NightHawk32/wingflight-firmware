@@ -329,7 +329,12 @@
 // which PICO now implements - only Bit_RESET (serial_4way.c) and motor-pin
 // registration/function-restore (dshot_pico.c/pwm_motor_pico.c) needed
 // PICO-specific handling.
-#undef USE_SERIAL_PASSTHROUGH
+// USE_SERIAL_PASSTHROUGH stays ENABLED (common_pre.h default). It was previously
+// #undef'd here with no stated reason; cliSerialPassthrough() needs only the
+// generic serial API (openSerialPort/serialSetBaudRate/serialPassthrough) plus
+// IOGetByTag/IOConfigGPIO, all of which PICO implements - the same basis on which
+// ESC 4-way programming is kept enabled above. Verified on RP2350 hardware: a
+// GP0<->GP1 loopback through the passthrough echoes back byte-for-byte.
 #undef USE_MULTI_GYRO
 
 #undef USE_RANGEFINDER_HCSR04
