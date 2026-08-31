@@ -1649,6 +1649,7 @@ static bool mspProcessOutCommand(int16_t cmdMSP, sbuf_t *dst)
 #endif
     case MSP_MIXER_CONFIG:
         sbufWriteU8(dst, mixerConfig()->model_type);
+        sbufWriteU8(dst, busServoConfig()->cloneFromPwm);
         break;
 
     case MSP_MIXER_INPUTS:
@@ -3588,6 +3589,7 @@ static mspResult_e mspProcessInCommand(mspDescriptor_t srcDesc, int16_t cmdMSP, 
 
     case MSP_SET_MIXER_CONFIG:
         mixerConfigMutable()->model_type = sbufReadU8(src);
+        busServoConfigMutable()->cloneFromPwm = sbufReadU8(src);
         break;
 
     case MSP_SET_MIXER_INPUT:

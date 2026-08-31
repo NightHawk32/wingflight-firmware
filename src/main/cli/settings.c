@@ -1456,6 +1456,10 @@ const clivalue_t valueTable[] = {
     { "fbus_master_forwarded_sensors", VAR_UINT8 | MASTER_VALUE | MODE_ARRAY, .config.array.length = FBUS_MASTER_MAX_FORWARDED_SENSORS, PG_DRIVER_FBUS_MASTER_CONFIG, offsetof(fbusMasterConfig_t, forwardedSensors) },
 #endif
 
+#if defined(USE_SBUS_OUTPUT) || defined(USE_FBUS_MASTER) || defined(USE_BUS_SERVO)
+    { "bus_servo_clone_pwm",           VAR_UINT8 | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_OFF_ON}, PG_BUS_SERVO_CONFIG, offsetof(busServoConfig_t, cloneFromPwm) },
+#endif
+
 #ifdef USE_SPORT_MASTER
     { "sport_master_pinswap",          VAR_UINT8 | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_OFF_ON}, PG_DRIVER_SPORT_MASTER_CONFIG, offsetof(sportMasterConfig_t, pinSwap) },
     { "sport_master_inverted",         VAR_UINT8 | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_OFF_ON}, PG_DRIVER_SPORT_MASTER_CONFIG, offsetof(sportMasterConfig_t, inverted) },
