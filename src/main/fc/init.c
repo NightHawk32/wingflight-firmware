@@ -67,7 +67,7 @@
 #include "drivers/sbus_output.h"
 #include "drivers/fbus_master.h"
 #include "drivers/crsf_sensors.h"
-#include "drivers/rx_sbus_input.h"
+#include "drivers/rx_input_backup.h"
 #include "drivers/sensor.h"
 #include "drivers/serial.h"
 #include "drivers/serial_softserial.h"
@@ -728,8 +728,8 @@ void init(void)
     crsfSensorsInit();
 #endif
 
-#ifdef USE_RX_SBUS_INPUT
-    sbusInputInit();
+#ifdef USE_RX_INPUT_BACKUP
+    rxInputBackupInit();
 #endif
 
 #ifdef USE_PINIO

@@ -350,6 +350,8 @@ the actual values are calculated automatically (#332).
 
 `smartfuel_sag_gain` scales sag compensation from cyclic and collective stick load while airborne. Range 0..100, default 40.
 
+`bus_servo_clone_pwm` parameter added (ON/OFF). When ON, bus servo channel N mirrors PWM servo output S(N+1) one-to-one for every bus channel that has a physical PWM counterpart, so a PWM-only mixer setup (e.g. a named model type built via the configurator wizard) drives bus servos too without separate mixer rules. Bus channels beyond the physical PWM servo count are unaffected and always use their own mixer rule. `MSP_MIXER_CONFIG`/`MSP_SET_MIXER_CONFIG` gain a second byte carrying this value.
+
 
 ## Defaults
 
@@ -384,6 +386,8 @@ the actual values are calculated automatically (#332).
 `blackbox_log_governor` default is changed to ON (#412).
 
 `blackbox_rolling_erase` default is changed to ON (#412).
+
+`bus_servo_clone_pwm` defaults to ON.
 
 `roll_srate` default is changed to 12 (#413).
 
