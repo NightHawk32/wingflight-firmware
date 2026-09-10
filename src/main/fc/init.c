@@ -935,6 +935,19 @@ void init(void)
 #endif
 #endif
 
+    // PICO asks for this late slot via USE_SPI_DMA_ENABLE_LATE (see
+    // RP2350_UNIFIED/target.h), the same per-target opt-in upstream Betaflight
+    // uses instead of the STM32 family tests above. Neither of those blocks
+    // matches PICO, so spiInitBusDMA() was previously unreachable on RP2350
+    // outside the USB-MSC reboot path: bus->useDMA stayed false, every
+    // transaction took the polled branch of spiSequenceStart(), and the whole
+    // DMA path was dead code. Late (after motorPostInit()) matters because
+    // DSHOT claims its own DMA channels first, and spiInitBusDMA() simply
+    // gives up on a bus once none are left.
+#if defined(PICO) && defined(USE_SPI) && defined(USE_SPI_DMA_ENABLE_LATE)
+    spiInitBusDMA();
+#endif
+
     swdPinsInit();
 
     unusedPinsInit();
