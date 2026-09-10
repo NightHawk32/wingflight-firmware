@@ -202,6 +202,15 @@ static void configureSPIAndQuadSPI(void)
 #ifdef USE_SPI
     spiPreinit();
 
+// PICO numbers its two SPI peripherals spi0/spi1, so the first bus is
+// SPIDEV_0 (CLI bus 1) - see bus_spi.h's SPIDevice enum and the SPIDEV_0
+// case in spiInit(). Without this call that bus is never initialised: the
+// PL022 stays at its reset defaults (SSPCR1.SSE clear, SSPCR0.DSS 0) and
+// the first transaction spins forever in spi_write_blocking() waiting on a
+// BSY flag that never clears. STM32 has no device 0, hence the guard.
+#ifdef USE_SPI_DEVICE_0
+    spiInit(SPIDEV_0);
+#endif
 #ifdef USE_SPI_DEVICE_1
     spiInit(SPIDEV_1);
 #endif
