@@ -517,10 +517,21 @@ serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallb
 
     if (bidir) {
         // Single-wire half duplex: only the TX pin is used (matches the
-        // STM32 half-duplex convention in serial_softserial.c) - both
-        // directions are mandatory, since there'd be nothing to hand the
-        // wire back and forth between otherwise.
-        if ((mode & MODE_RXTX) != MODE_RXTX || !tagTx) {
+        // STM32 half-duplex convention in serial_softserial.c).
+        //
+        // MODE_RX is required but MODE_TX is not. This used to demand
+        // MODE_RXTX, which silently refused the most common SERIAL_BIDIR
+        // consumer in the firmware: sbusInit() opens its port with MODE_RX
+        // alone unless it is shared with telemetry, so `set
+        // serialrx_halfduplex = ON` on a soft-serial port made this return
+        // NULL and the port never opened. The hardware-UART path had the
+        // identical bug; see the matching note in serial_uart_pico.c.
+        //
+        // TX-only is still refused: the idle and post-transmission state of a
+        // single-wire port is listening, and both softSerialBidirSwitchToTx()
+        // and ...ToRx() use s->rxSm / s->rxIO unconditionally, so there has to
+        // be an RX program to hand the wire back to. No caller asks for it.
+        if (!tagTx || !(mode & MODE_RX)) {
             return NULL;
         }
     } else {
@@ -576,6 +587,15 @@ serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallb
     s->txSm = -1;
     s->rxSm = -1;
     s->bidirTxActive = false;
+
+    if (bidir && !(mode & MODE_TX)) {
+        // Listen-only single-wire port: the TX pin is still the wire, since
+        // that is the one a bidir port uses in both directions. Resolve and
+        // own it here because the MODE_TX block below - which normally does
+        // it - is skipped, and the RX program reads s->txIO via s->rxIO.
+        s->txIO = IOGetByTag(tagTx);
+        IOInit(s->txIO, OWNER_SERIAL_TX, RESOURCE_INDEX(pinCfgIndex));
+    }
 
     if (mode & MODE_TX) {
         const int sm = pio_claim_unused_sm(softSerialPio, false);

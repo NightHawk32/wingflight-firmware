@@ -266,7 +266,12 @@ static void uartBidirSwitchToRx(int device)
     while (uart_is_readable(uartInstance)) {
         (void)uart_get_hw(uartInstance)->dr;
     }
-    uart_set_irqs_enabled(uartInstance, true, false);
+    // A port opened for TX only has no rxCallback and no reader; leave its RX
+    // interrupt masked rather than harvesting the wire back into a ring buffer
+    // nobody drains. uartReconfigure() gates on MODE_RX the same way.
+    if (uartDevmap[device]->port.port.mode & MODE_RX) {
+        uart_set_irqs_enabled(uartInstance, true, false);
+    }
 
     b->txActive = false;
 }
@@ -351,11 +356,26 @@ uartPort_t *serialUART(UARTDevice_e device, uint32_t baudRate, portMode_e mode, 
         return NULL;
     }
 
+    // SERIAL_BIDIR is honoured whatever direction(s) the caller asked for,
+    // matching the STM32 drivers (serial_uart_stm32f4xx.c / f7xx.c both take
+    // their BIDIR branch without consulting `mode` at all).
+    //
+    // This used to demand MODE_RXTX, on the reasoning that there is nothing to
+    // hand the wire back and forth between otherwise. That was wrong, and it
+    // broke the single most common use of SERIAL_BIDIR in the firmware:
+    // half-duplex serial RX. sbusInit() opens its port with MODE_RX unless it
+    // is shared with telemetry, so `set serialrx_halfduplex = ON` made
+    // serialUART() return NULL and the port silently never opened - the PL011
+    // stayed at its UARTCR reset value 0x300 (TXE/RXE set, UARTEN clear), both
+    // pins stayed on SIO, and the SERIAL_BIDIR_EN switch pin was never driven.
+    // Verified on a Raspberry Pi Pico 2 with UART1 on GPIO12/13.
+    //
+    // A single-direction bidir port simply never hands the wire over: an
+    // RX-only port sits in the listening state the open path already sets up,
+    // and a TX-only port takes the wire on its first write and gives it back
+    // after (see uartBidirSwitchToRx(), which leaves RX interrupts masked for
+    // a port that was not opened for RX).
     const bool bidir = (options & SERIAL_BIDIR) != 0;
-    if (bidir && (mode & MODE_RXTX) != MODE_RXTX) {
-        // Nothing to hand the wire back and forth between otherwise.
-        return NULL;
-    }
 
     uartPort_t *s = &(uart->port);
     s->port.vTable = uartVTable;
