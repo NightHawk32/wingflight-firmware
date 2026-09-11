@@ -40,6 +40,10 @@
 #include "pico/critical_section.h"
 #include "hardware/irq.h"
 
+#ifdef USE_MULTICORE
+#include "platform/multicore.h"
+#endif
+
 #ifndef CDC_USB_TASK_INTERVAL_US
 #define CDC_USB_TASK_INTERVAL_US 1000
 #endif
@@ -66,6 +70,22 @@ static critical_section_t one_shot_timer_crit_sec;
 static volatile bool one_shot_timer_pending;
 static uint8_t low_priority_irq_num;
 
+// Which core owns the USB device stack. TinyUSB guards its internal state with
+// dcd_int_disable()/dcd_int_enable(), and those mask USBCTRL_IRQ on the calling
+// core's NVIC only - so tud_task() is safe on exactly one core: the one the USB
+// interrupt is unmasked on. Everything else (reads, writes) still works from
+// either core because this file's mutex covers it; only the stack pump is
+// pinned. Zero unless cdc_usb_init() hands ownership to core 1.
+static uint8_t cdc_usb_core_num;
+
+// tud_task(), but only where it is allowed to run.
+static void cdc_usb_service(void)
+{
+    if (get_core_num() == cdc_usb_core_num) {
+        tud_task();
+    }
+}
+
 static int64_t timer_task(alarm_id_t id, void *user_data)
 {
     UNUSED(id);
@@ -88,11 +108,30 @@ static int64_t timer_task(alarm_id_t id, void *user_data)
     }
 }
 
-static void low_priority_worker_irq(void)
+// Pump the stack if nothing else holds it. Safe to call repeatedly; does
+// nothing on a core that does not own the stack.
+void cdc_usb_background_task(void)
 {
+    if (get_core_num() != cdc_usb_core_num) {
+        return;
+    }
     if (mutex_try_enter(&cdc_usb_mutex, NULL)) {
         tud_task();
         mutex_exit(&cdc_usb_mutex);
+    }
+}
+
+static void low_priority_worker_irq(void)
+{
+    if (mutex_try_enter(&cdc_usb_mutex, NULL)) {
+        cdc_usb_service();
+        mutex_exit(&cdc_usb_mutex);
+    } else if (cdc_usb_core_num != 0) {
+        // Core 1 owns the stack and pumps it from its own loop every pass
+        // (cdc_usb_background_task()), so a contended wake-up needs no
+        // rescue timer - and could not arm one anyway, since the default
+        // alarm pool's callbacks run on core 0 where this IRQ is masked.
+        return;
     } else {
         // if the mutex is already owned, then we are in non IRQ code in this file.
         //
@@ -138,13 +177,13 @@ int cdc_usb_write(const uint8_t *buf, unsigned length)
             if (n > avail) n = avail;
             if (n) {
                 uint32_t n2 = tud_cdc_write(buf + i, n);
-                tud_task();
+                cdc_usb_service();
                 tud_cdc_write_flush();
                 i += n2;
                 written = i;
                 last_avail_time = time_us_64();
             } else {
-                tud_task();
+                cdc_usb_service();
                 tud_cdc_write_flush();
                 if (!cdc_usb_connected() || (!tud_cdc_write_available() && time_us_64() > last_avail_time + CDC_USB_WRITE_TIMEOUT_US)) {
                     break;
@@ -165,7 +204,7 @@ void cdc_usb_write_flush(void)
         return;
     }
     do {
-        tud_task();
+        cdc_usb_service();
     } while (tud_cdc_write_flush());
     mutex_exit(&cdc_usb_mutex);
 }
@@ -190,7 +229,7 @@ int cdc_usb_read(uint8_t *buf, unsigned length)
             rc = count ? (int)count : PICO_ERROR_NO_DATA;
         } else {
             // because our mutex use may starve out the background task, run tud_task here (we own the mutex)
-            tud_task();
+            cdc_usb_service();
         }
         mutex_exit(&cdc_usb_mutex);
     }
@@ -235,6 +274,33 @@ void cdc_usb_init(void)
 
     configured = rc;
 }
+
+#ifdef USE_MULTICORE
+bool cdc_usb_move_to_core1(void)
+{
+    // Hand the whole device stack to core 1: its interrupt, its worker, and
+    // with them every tud_task() call. Servicing USB is bursty and paced by
+    // the host, which is exactly the kind of work the flight loop should not
+    // be sharing a core with. It has to move as a unit - dcd_int_disable()
+    // masks USBCTRL_IRQ only on the core that calls it, so a stack split
+    // across cores has no critical section at all.
+    //
+    // Only meaningful once the USB interrupt is shared (the branch in
+    // cdc_usb_init() above); the periodic-timer fallback drives the worker
+    // from the default alarm pool, whose callbacks run on core 0.
+    if (!irq_has_shared_handler(USBCTRL_IRQ)) {
+        return false;
+    }
+    if (!multicoreEnableIrqOnCore1(USBCTRL_IRQ) || !multicoreEnableIrqOnCore1(low_priority_irq_num)) {
+        return false;
+    }
+
+    irq_set_enabled(USBCTRL_IRQ, false);
+    irq_set_enabled(low_priority_irq_num, false);
+    cdc_usb_core_num = 1;
+    return true;
+}
+#endif
 
 bool cdc_usb_deinit(void)
 {

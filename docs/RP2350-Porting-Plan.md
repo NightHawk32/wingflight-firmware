@@ -402,7 +402,8 @@ framebuffer support dropped from scope per Phase 0 decision).
       backend, not the MSC adapter layer itself - once a `flashVTable_t`
       SPI-flash driver or `sdcard_spi.c` is wired up for a real PICO SPI bus,
       re-enabling `MSC_SRC` should be close to mechanical.
-- [ ] Port multicore support in two parts:
+- [x] Port multicore support in two parts (done; enabled by default and
+      measured on hardware in the nineteenth iteration):
       1. **Straight port** (low risk): `platform/multicore.h`, `multicore.c`
          (queue-based `multicoreExecute()`/`multicoreExecuteBlocking()` RPC to
          core 1), and the `DMA_IRQ_CORE_NUM 1` wiring in the ported `dma.c` so
@@ -419,7 +420,8 @@ framebuffer support dropped from scope per Phase 0 decision).
          telemetry decode. Keep gyro sampling → filtering → PID → mixer →
          motor output entirely on core 0 — that chain is serially
          data-dependent and must not be split across cores.
-      - [ ] Decide whether to also enable `ENABLE_MULTICORE_INIT` (running FC
+      - [x] Decide whether to also enable `ENABLE_MULTICORE_INIT` (**no** -
+            boot-time only, no runtime benefit; left off) (running FC
             init phases 1/2 on core 1 during boot, per `target_RP2350.h`) —
             boot-time only, not a runtime performance factor.
 
@@ -1636,3 +1638,106 @@ monitor from upstream not ported (documented in `serial_uart_pico.c`);
 `SERIAL_BIDIR` - previously listed here - is implemented now, see the
 soft-serial section above.) RAM on RP2350B is now ~82% with everything
 enabled.
+
+### Nineteenth iteration (2026-09-11) — multicore turned on, and the first
+### measurement on real hardware
+
+First iteration validated on a board rather than by inspection: an RP2350A
+with a BMI270 over SPI, FBUS master on UART1 (half duplex, 460800 baud,
+inverted), CLI/MSP over USB VCP. Numbers below are `status`/`tasks` off that
+board, flashed over SWD and, for the last one, through `bl rom` + chunked UF2.
+
+**What the hardware showed first: core 0 was spending a fifth of itself in an
+interrupt storm.** `tasks` reported FBUS_MASTER at 961us average, 20.5% load,
+and late on *every* one of its 3092 runs - and the gyro/PID chain capped at
+2582Hz instead of its 3200Hz target. The task body is trivial (16 channel
+conversions and a ~39-byte frame), so the cost was not in the task at all: it
+was `serial_uart_pico.c` handing the half-duplex wire back. The PL011 has no
+"transmission complete" interrupt, and the driver waited for UARTFR.BUSY by
+re-arming the level-triggered TX-FIFO interrupt as a retrigger - which
+re-enters the handler back to back for the whole drain of a 32-entry FIFO,
+about 700us per frame at 460800 baud, 214 times a second.
+
+Fixed by predicting the end instead of polling for it: once the FIFO has data
+the PL011 shifts continuously, so the burst ends one character time per queued
+character after it started. The driver tracks that and takes a single one-shot
+timer interrupt at the predicted instant; BUSY is still the authority, and an
+early prediction re-checks a few microseconds later. Measured on target
+(temporary counters read over SWD): exactly one timer arm per frame, the
+callback landing with BUSY already clear after ~3 poll iterations, zero
+late turnarounds, zero timer targets set in the past. Turnaround timing is
+therefore unchanged; only the CPU cost is gone.
+
+Second, `uartWrite()` kicks the TX pump once per character, so a 39-byte frame
+cost 39 mask/fill/unmask round trips - and made the turnaround logic see the
+ring run dry between every one of them. Added a PICO `writeBuf` to `uartVTable`
+that fills the ring first and kicks once.
+
+| | before | after storm fix | + writeBuf |
+|---|---|---|---|
+| CPU (status) | 23% | 11% | 2-6% |
+| FBUS_MASTER avg | 961us | 114us | 31us |
+| FBUS_MASTER load | 20.5% | 5.6% | 1.5% |
+| FBUS_MASTER late | 3092 of 3092 | 3 of 8940 | 1 of 4039 |
+| gyro / PID rate | 2582Hz | 3204Hz | 3204Hz |
+
+**Then multicore.** `USE_MULTICORE` is now on by default in
+`RP2350_UNIFIED/target.h` (`ENABLE_MULTICORE_INIT` stays off - boot-time only).
+That activates the DMA_IRQ_CORE_NUM 1 affinity that has been written but dead
+since the seventeenth iteration, and the consumer machinery that had no
+producer.
+
+- **Core 1 never launched after a warm reset.** `multicore_launch_core1()`
+  handshakes with the bootrom wait loop over the inter-core FIFO, and a core 1
+  already running `core1_main()` never reads that FIFO. Any reset that restarts
+  only core 0 - a debugger's SYSRESETREQ, or any path that does not go through
+  `systemResetHard()` - therefore deadlocked the *next* boot inside
+  `systemInit()`, before any flight code ran. `multicoreStart()` now resets
+  core 1 first. This was found the hard way: every reflash after the first
+  multicore image bricked the board until the next power cycle.
+- **IRQ affinity generalised.** `multicoreEnableIrqOnCore1(irqNum)` replaces the
+  bespoke `dmaCore1IrqInit()` pattern - core 0 registers, core 1 unmasks on its
+  own NVIC (at startup, or on its next loop pass for late registrations).
+- **The USB device stack moved to core 1, as a unit.** TinyUSB guards its state
+  with `dcd_int_disable()`, which masks USBCTRL_IRQ only on the calling core -
+  so a stack split across cores has no critical section at all. The first
+  attempt (writes from core 1, interrupt still on core 0) enumerated but would
+  not open: a real race, not a configuration mistake. Both USBCTRL_IRQ and the
+  low-priority worker IRQ are now unmasked on core 1 only, every `tud_task()`
+  call is gated on the owning core, and core 1's loop pumps the stack each pass
+  so a contended worker wake-up needs no rescue timer (it could not arm one -
+  the default alarm pool's callbacks run on core 0).
+- **First real work-buffer producer.** VCP transmission goes through a 2KB
+  lock-free SPSC ring (`multicore_ringbuffer.h`, extended with bulk
+  push/peek/consume - byte-at-a-time was never going to carry a CLI dump);
+  core 0 copies and returns, core 1 drains into the endpoint only as far as it
+  will take right now, so `cdc_usb_write()` never spins with the mutex held.
+  Backpressure is progress-based: the clock restarts on every byte accepted, so
+  a dump that outruns the host stalls exactly as it used to instead of losing a
+  block, and only a host that has actually gone away hits the 250ms limit.
+  Registration failing (single-core build, full consumer table) falls back to
+  the previous inline write.
+- `status` now prints core 1's loop counter and average rate. Core 0 never
+  waits on core 1, so a wedged helper core is otherwise invisible.
+
+Result on the same board: SERIAL task peak 676-806us -> ~300us, core 0 total
+5.5-5.8%, core 1 looping at ~420kHz.
+
+**Validated on hardware:** `dump all` byte-identical across 6 consecutive runs
+(the losses seen at first were the PowerShell test reader, not the firmware -
+on-target counters showed offered == queued, zero dropped); `set` + `save`
+round trip, i.e. `flash_safe_execute()` parking core 1 for a config write;
+recovery from a core-0-only SYSRESETREQ; `bl rom` into BOOTSEL and a chunked
+UF2 reflash, booting with core 1 alive.
+
+**Not validated:** no FrSky receiver or sensor was attached, so the FBUS
+*receive* direction was never exercised end to end - the turnaround instant was
+verified directly instead (see above), and the RX path itself is unchanged. No
+ESC attached, so DSHOT with its DMA completions now landing on core 1 is
+untested on hardware. Servo/mixer output likewise.
+
+**Isolation held.** STM32F405 builds byte-identical (481502/10600/111972) with
+and without this work, verified against a stashed tree; G4/H7 unchanged in data
+and bss. All four RP2350/RP2354 targets build, and so does a `USE_MULTICORE`-off
+configuration. RAM on RP2350A 83.4% -> 84.3% (the VCP ring); core 1's stack was
+already reserved in SCRATCH_X and costs nothing new.

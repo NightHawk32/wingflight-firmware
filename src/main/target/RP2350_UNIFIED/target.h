@@ -56,10 +56,13 @@
 #error "No RP2350/RP2354 variant defined. TARGET must be one of RP2350A, RP2350B, RP2354A, RP2354B."
 #endif
 
-// USE_MULTICORE turns on the multicore API (core 1 + dispatch).
-// ENABLE_MULTICORE_INIT additionally runs the FC init phases on core 1 (the
-// RP2350 core-allocation policy); enable both for testing multicore.
-//#define USE_MULTICORE
+// USE_MULTICORE turns on the multicore API (core 1 + dispatch). Core 0 stays
+// the single-threaded flight-control loop; core 1 takes the asynchronous work
+// that would otherwise jitter it - DMA completion interrupts (DMA_IRQ_CORE_NUM
+// below) and the USB device stack - plus any registered work-buffer consumers.
+// ENABLE_MULTICORE_INIT additionally runs the FC init phases on core 1; that
+// is boot-time only, brings no runtime benefit, and stays off.
+#define USE_MULTICORE
 //#define ENABLE_MULTICORE_INIT
 
 // RP2350 has 2 real hardware UART peripherals: uart0/uart1, mapped here to

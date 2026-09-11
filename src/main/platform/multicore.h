@@ -53,6 +53,21 @@ void multicoreExecuteBlocking(core1_func_t *func);
 typedef void (multicoreConsumerDrainFn_t)(void *ctx);
 bool multicoreRegisterConsumer(multicoreConsumerDrainFn_t *drainFn, void *ctx);
 
+// Peripheral interrupt affinity. Each Cortex-M33 has its own NVIC, so
+// irq_set_enabled() only ever unmasks an interrupt on the core that calls it -
+// a handler registered during core-0 peripheral init will never fire on core 1
+// no matter what the vector table says. Register the IRQ here instead and
+// core 1 unmasks it for itself; calls made before core 1 launches are applied
+// at startup, later ones on its next loop pass. The handler itself must still
+// be installed the usual way (irq_set_exclusive_handler/irq_add_shared_handler),
+// which writes the single shared vector table and can be done from either core.
+//
+// Anything driven by such an interrupt then belongs to core 1 exclusively:
+// SDK code that masks an interrupt for critical sections (TinyUSB's
+// dcd_int_disable(), for one) only masks it on its own core, so core 0 must
+// not also call into that peripheral's stack.
+bool multicoreEnableIrqOnCore1(uint irqNum);
+
 // Incremented once per core-1 main-loop pass. Core 0 can poll this (e.g.
 // once a second) to detect a wedged core 1 (per the design's "failure
 // isolation" requirement) and degrade gracefully without affecting flight

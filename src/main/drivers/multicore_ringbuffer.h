@@ -86,3 +86,69 @@ static inline bool multicoreRingBufferPop(multicoreRingBuffer_t *rb, uint8_t *ou
     rb->tail++;
     return true;
 }
+
+static inline uint16_t multicoreRingBufferBytesFree(const multicoreRingBuffer_t *rb)
+{
+    return (uint16_t)(rb->capacity - multicoreRingBufferBytesUsed(rb));
+}
+
+// Bulk variants of the two calls above. Byte-at-a-time works for a trickle of
+// characters but not for a stream (a CLI dump, an MSP reply): each byte would
+// otherwise cost its own fence pair, and the consumer could not hand a
+// contiguous block to whatever it is feeding. These move one contiguous run -
+// up to where the index wraps - so a caller drains a full buffer in at most
+// two calls, with exactly one index publish each.
+
+// Copies as much of data[] as fits, and returns how many bytes were taken.
+static inline uint16_t multicoreRingBufferPushBuf(multicoreRingBuffer_t *rb, const uint8_t *data, uint16_t count)
+{
+    const uint16_t free = multicoreRingBufferBytesFree(rb);
+    if (count > free) {
+        count = free;
+    }
+
+    const uint16_t head = rb->head & rb->mask;
+    const uint16_t firstRun = (count > (uint16_t)(rb->capacity - head)) ? (uint16_t)(rb->capacity - head) : count;
+
+    for (uint16_t i = 0; i < firstRun; i++) {
+        rb->buffer[head + i] = data[i];
+    }
+    for (uint16_t i = firstRun; i < count; i++) {
+        rb->buffer[i - firstRun] = data[i];
+    }
+
+    // Release: as in multicoreRingBufferPush(), the bytes must be visible to
+    // the consumer core before the head that publishes them.
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    rb->head += count;
+    return count;
+}
+
+// Hands back a pointer into the buffer covering the next contiguous run of
+// readable bytes (never wrapping), without consuming it - so the consumer can
+// pass it straight to a write call and only commit what was accepted.
+// Returns 0 when empty.
+static inline uint16_t multicoreRingBufferPeekRun(const multicoreRingBuffer_t *rb, const uint8_t **out)
+{
+    const uint16_t used = multicoreRingBufferBytesUsed(rb);
+    if (used == 0) {
+        return 0;
+    }
+    // Acquire: pairs with the producer's release, so the bytes behind the
+    // observed head are the ones it published.
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+
+    const uint16_t tail = rb->tail & rb->mask;
+    const uint16_t run = (used > (uint16_t)(rb->capacity - tail)) ? (uint16_t)(rb->capacity - tail) : used;
+    *out = &rb->buffer[tail];
+    return run;
+}
+
+// Releases count bytes previously returned by multicoreRingBufferPeekRun().
+static inline void multicoreRingBufferConsume(multicoreRingBuffer_t *rb, uint16_t count)
+{
+    // Release: the bytes must be fully read before the slots are handed back
+    // to the producer via the new tail.
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    rb->tail += count;
+}

@@ -25,6 +25,7 @@
 #include "pico/multicore.h"
 #include "pico/util/queue.h"
 #include "pico/flash.h"
+#include "hardware/irq.h"
 
 // dma_pico.c: unmasks DMA_IRQ_1 on core 1's own NVIC once core 1 is running
 // (see the core-affinity note in dma_pico.c's dmaSetHandler()).
@@ -54,6 +55,40 @@ static multicoreConsumerEntry_t multicoreConsumers[MAX_MULTICORE_CONSUMERS];
 static volatile uint8_t multicoreConsumerCount;
 
 static volatile uint32_t multicoreHeartbeat;
+
+// IRQs core 1 must unmask on its own NVIC - see multicoreEnableIrqOnCore1().
+#define MAX_MULTICORE_CORE1_IRQS 8
+
+static volatile uint8_t multicoreCore1Irqs[MAX_MULTICORE_CORE1_IRQS];
+static volatile uint8_t multicoreCore1IrqCount;
+static uint8_t multicoreCore1IrqsApplied;
+
+bool multicoreEnableIrqOnCore1(uint irqNum)
+{
+    if (multicoreCore1IrqCount >= MAX_MULTICORE_CORE1_IRQS) {
+        return false;
+    }
+    multicoreCore1Irqs[multicoreCore1IrqCount] = (uint8_t)irqNum;
+    // Release fence, as in multicoreRegisterConsumer(): core 1 polls the
+    // count, and must not see it before the entry it refers to.
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    multicoreCore1IrqCount++;
+    return true;
+}
+
+// Core 1 only. Unmasks anything registered since the last pass.
+static void multicoreApplyCore1Irqs(void)
+{
+    const uint8_t count = multicoreCore1IrqCount;
+    if (count == multicoreCore1IrqsApplied) {
+        return;
+    }
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    while (multicoreCore1IrqsApplied < count) {
+        irq_set_enabled(multicoreCore1Irqs[multicoreCore1IrqsApplied], true);
+        multicoreCore1IrqsApplied++;
+    }
+}
 
 bool multicoreRegisterConsumer(multicoreConsumerDrainFn_t *drainFn, void *ctx)
 {
@@ -92,6 +127,9 @@ static void core1_main(void)
     // here, but core 0's dmaSetHandler() calls can only unmask the IRQ on
     // core 0's own NVIC - core 1 must do it for itself. See dma_pico.c.
     dmaCore1IrqInit();
+
+    // Anything else core 0 asked to be serviced here (USB, for one).
+    multicoreApplyCore1Irqs();
 
     // This loop is run on the second core. For now the RPC consumer below IS
     // core 1's task loop; dedicated lock-free ring-buffer consumers for
@@ -150,6 +188,8 @@ static void core1_main(void)
             }
         }
 
+        multicoreApplyCore1Irqs();
+
         multicoreHeartbeat++;
 
         tight_loop_contents();
@@ -158,6 +198,17 @@ static void core1_main(void)
 
 void multicoreStart(void)
 {
+    // Put core 1 back in the bootrom's wait loop before handing it a new
+    // entry point. multicore_launch_core1()'s handshake talks to that wait
+    // loop over the inter-core FIFO, and a core 1 already running
+    // core1_main() never reads the FIFO - so the launch blocks forever.
+    // That is not hypothetical: a reset that restarts only core 0 (a
+    // debugger's SYSRESETREQ, or any reset path that does not go through
+    // systemResetHard()) leaves core 1 running the previous image, and the
+    // next boot then deadlocks in systemInit() before the flight code has
+    // started. Resetting first is idempotent when core 1 was never launched.
+    multicore_reset_core1();
+
     // Initialize the queue with a size of 4 (to be determined based on expected load)
     queue_init(&core1_queue, sizeof(core_message_t), 4);
 
@@ -190,6 +241,12 @@ bool multicoreRegisterConsumer(multicoreConsumerDrainFn_t *drainFn, void *ctx)
     UNUSED(drainFn);
     UNUSED(ctx);
     return false; // no core 1 to run it on
+}
+
+bool multicoreEnableIrqOnCore1(uint irqNum)
+{
+    UNUSED(irqNum);
+    return false; // no core 1 to service it
 }
 
 uint32_t multicoreGetHeartbeat(void)

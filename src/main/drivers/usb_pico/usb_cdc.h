@@ -30,6 +30,15 @@ void cdc_usb_write_flush(void);
 int cdc_usb_write(const uint8_t *buf, unsigned length);
 int cdc_usb_read(uint8_t *buf, unsigned length);
 void cdc_usb_init(void);
+// Pumps the TinyUSB device stack. Does nothing unless called on the core that
+// owns it (see cdc_usb_core_num in usb_cdc.c).
+void cdc_usb_background_task(void);
+#ifdef USE_MULTICORE
+// Moves the device stack (interrupt, worker and every tud_task() call) to
+// core 1. Call only once something on core 1 is going to pump it. Returns
+// false if the move was refused, leaving the stack on core 0.
+bool cdc_usb_move_to_core1(void);
+#endif
 // Implemented in usb_descriptors.c. Must be called before tusb_init().
 void usbDescriptorsInitSerial(void);
 bool cdc_usb_deinit(void);
