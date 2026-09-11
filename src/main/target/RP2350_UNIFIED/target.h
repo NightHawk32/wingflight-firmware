@@ -57,9 +57,10 @@
 #endif
 
 // USE_MULTICORE turns on the multicore API (core 1 + dispatch). Core 0 stays
-// the single-threaded flight-control loop; core 1 takes the asynchronous work
-// that would otherwise jitter it - DMA completion interrupts (DMA_IRQ_CORE_NUM
-// below) and the USB device stack - plus any registered work-buffer consumers.
+// the single-threaded flight-control loop, interrupts included; core 1 takes
+// the asynchronous, host-paced work that would otherwise jitter it - the USB
+// device stack and its transmit queue - plus any registered work-buffer
+// consumers.
 // ENABLE_MULTICORE_INIT additionally runs the FC init phases on core 1; that
 // is boot-time only, brings no runtime benefit, and stays off.
 #define USE_MULTICORE
@@ -240,7 +241,15 @@
 #define FLASH_CONFIG_STREAMER_BUFFER_SIZE   256
 
 /* DMA Settings */
-#define DMA_IRQ_CORE_NUM 1 // Use core 1 for DMA IRQs
+// DMA completion interrupts stay on core 0. Every DMA user here is part of
+// the control path (gyro SPI, DShot, LED strip), and the shared SPI bus queue
+// in bus_spi.c serialises spiSequence() against its completion handler with
+// ATOMIC_BLOCK - BASEPRI masking, which only holds off interrupts on the core
+// that sets it. Completing transfers on core 1 would let a transaction be
+// queued on core 0 while core 1 consumes the link it is being appended to.
+// Core 1's job is the host-paced, non-control work: USB and its transmit
+// queue (see USE_MULTICORE above).
+#define DMA_IRQ_CORE_NUM 0
 #undef USE_DMA_SPEC // not yet required - possibly won't be used at all
 
 #define USE_DSHOT

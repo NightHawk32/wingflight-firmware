@@ -67,6 +67,7 @@
 
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
+#include "hardware/sync.h"
 #include "hardware/timer.h"
 #include "hardware/uart.h"
 #include "hardware/structs/uart.h"
@@ -683,18 +684,25 @@ void uartEnableTxInterrupt(uartPort_t *uartPort)
     }
 
     const int device = uartDeviceIndex(uartPort);
+    uart_inst_t *uartInstance = UART_INST(uartPort->USARTx);
+    uart_hw_t *uartHw = uart_get_hw(uartInstance);
+
+    // Interrupts off across the direction check and the push: the turnaround
+    // timer's handler can otherwise hand the wire to RX between "TX is live"
+    // being observed here and the bytes going into the FIFO, which would shift
+    // the whole frame into a released pin. It also keeps sendBufferToUART()
+    // from racing the UART's own handler. Microseconds, once per frame.
+    const uint32_t irqState = save_and_disable_interrupts();
+
     if (device >= 0 && uartBidir[device].active && !uartBidir[device].txActive) {
         uartBidirSwitchToTx(device);
     }
 
-    uart_inst_t *uartInstance = UART_INST(uartPort->USARTx);
-    uart_hw_t *uartHw = uart_get_hw(uartInstance);
-
-    // Temporarily disable the TX interrupt mask so sendBufferToUART() below
-    // can't race with the IRQ handler also calling it.
     hw_clear_bits(&(uartHw->imsc), UART_UARTIMSC_TXIM_BITS);
     sendBufferToUART(uartPort, device);
     hw_set_bits(&(uartHw->imsc), UART_UARTIMSC_TXIM_BITS);
+
+    restore_interrupts(irqState);
 }
 
 void uartTryStartTxDMA(uartPort_t *s)

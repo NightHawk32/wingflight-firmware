@@ -27,10 +27,6 @@
 #include "pico/flash.h"
 #include "hardware/irq.h"
 
-// dma_pico.c: unmasks DMA_IRQ_1 on core 1's own NVIC once core 1 is running
-// (see the core-affinity note in dma_pico.c's dmaSetHandler()).
-void dmaCore1IrqInit(void);
-
 #ifdef USE_MULTICORE
 
 // Define a structure for the message we'll pass through the queue
@@ -122,13 +118,8 @@ static void core1_main(void)
     // layout) mid-erase would bus-fault or hang.
     flash_safe_execute_core_init();
 
-    // Each Cortex-M33 core has its own independent NVIC: DMA_IRQ_CORE_NUM 1
-    // (RP2350_UNIFIED/target.h) means DMA completions should be serviced
-    // here, but core 0's dmaSetHandler() calls can only unmask the IRQ on
-    // core 0's own NVIC - core 1 must do it for itself. See dma_pico.c.
-    dmaCore1IrqInit();
-
-    // Anything else core 0 asked to be serviced here (USB, for one).
+    // Each Cortex-M33 core has its own independent NVIC, so anything core 0
+    // asked to have serviced here (USB, for one) has to be unmasked from here.
     multicoreApplyCore1Irqs();
 
     // This loop is run on the second core. For now the RPC consumer below IS
