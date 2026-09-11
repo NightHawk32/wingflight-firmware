@@ -67,8 +67,10 @@
 
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
+#include "hardware/timer.h"
 #include "hardware/uart.h"
 #include "hardware/structs/uart.h"
+#include "pico/time.h"
 
 const uartHardware_t uartHardware[] = {
 #ifdef USE_UART1
@@ -189,6 +191,13 @@ typedef struct picoUartBidir_s {
     uint32_t txPin;
     uint32_t rxPin;
     portOptions_e options;
+
+    // --- shift-out completion tracking (see uartBidirArmDrainAlarm()) ---
+    bool drainPending;      // last byte queued; waiting for the wire to go idle
+    uint32_t byteTimeNs;    // time one character frame occupies on the wire
+    uint64_t txStartUs;     // timer time at which the current TX burst started
+    uint32_t txBytesQueued; // characters pushed into the FIFO since txStartUs
+    uint64_t drainDueUs;    // predicted instant the shift register goes idle
 } picoUartBidir_t;
 
 static picoUartBidir_t uartBidir[UARTDEV_COUNT_MAX];
@@ -218,12 +227,121 @@ static void uartBidirReleasePin(uint32_t pin)
     gpio_set_pulls(pin, false, false);
 }
 
+// --- Half-duplex shift-out completion, without burning the CPU -----------
+//
+// Handing the shared wire back to the receiver must wait until the last
+// character has actually left the shift register (UARTFR.BUSY), and the
+// PL011 has no "transmission complete" interrupt to signal that. The
+// obvious workaround - re-arming the level-triggered TX-FIFO interrupt as a
+// retrigger and re-checking BUSY each time - re-enters the handler back to
+// back for the *entire* drain of a full 32-entry FIFO. On the FBUS master
+// port (460800 baud, ~39-byte frames) that measured ~960us of solid
+// interrupt storm per frame at 214 frames/s: about a fifth of core 0, and
+// enough to make the PID task late on every single cycle.
+//
+// Instead, predict when the wire goes idle. Once the FIFO has data the
+// PL011 shifts continuously, so the burst finishes byteTime after the
+// character that started it - track when the burst began and how many
+// characters were queued into it, then take a single one-shot timer
+// interrupt at that instant. BUSY is still the authority: if the estimate
+// was early the handler simply re-arms a few microseconds out, so the
+// turnaround stays as prompt as the spin was.
+// A timer target that has already passed is silently dropped by the SDK
+// (hardware_alarm_set_target() reports it as missed and never calls back), so
+// never arm one closer than this - settle those on the spot instead.
+#define UART_BIDIR_DRAIN_MIN_LEAD_US 3
+
+static int uartBidirDrainAlarm = -1;
+
+
+static void uartBidirSwitchToRx(int device);
+
+// Hand the wire back on every half-duplex port whose burst has finished, and
+// leave the timer armed for whichever port is still shifting.
+static void uartBidirServiceDrains(void)
+{
+    for (;;) {
+        uint64_t earliest = 0;
+
+        for (int i = 0; i < UARTDEV_COUNT_MAX; i++) {
+            picoUartBidir_t *b = &uartBidir[i];
+            if (!b->drainPending || !uartDevmap[i]) {
+                continue;
+            }
+
+            uartPort_t *port = &uartDevmap[i]->port;
+            if (port->port.txBufferTail != port->port.txBufferHead) {
+                // More was queued after the countdown started: the TX
+                // interrupt owns the wire again and will re-arm the
+                // turnaround once the ring runs dry for real.
+                b->drainPending = false;
+                continue;
+            }
+
+            uart_hw_t *uartHw = uart_get_hw(UART_INST(port->USARTx));
+            const uint64_t now = time_us_64();
+
+            if (b->drainDueUs > now + UART_BIDIR_DRAIN_MIN_LEAD_US) {
+                if (!earliest || b->drainDueUs < earliest) {
+                    earliest = b->drainDueUs;
+                }
+                continue;
+            }
+
+            // Due now: the wire is at most one character short of idle, so
+            // close it out here rather than arming a timer that would be
+            // reported as missed and never call back. BUSY remains the
+            // authority; the bound only stops a stuck flag spinning forever.
+            const uint64_t spinUntil = now + (b->byteTimeNs / 1000) + 8;
+            while ((uartHw->fr & UART_UARTFR_BUSY_BITS) && time_us_64() < spinUntil) {
+                // shift register emptying
+            }
+            uartBidirSwitchToRx(i);
+        }
+
+        if (!earliest || uartBidirDrainAlarm < 0) {
+            return;
+        }
+        if (!hardware_alarm_set_target(uartBidirDrainAlarm, from_us_since_boot(earliest))) {
+            return; // armed; the callback will finish the turnaround
+        }
+        // Lost the race against the deadline - go round again, which now
+        // takes the "due now" path above and settles it directly.
+    }
+}
+
+static void uartBidirDrainAlarmHandler(uint alarmNum)
+{
+    UNUSED(alarmNum);
+    uartBidirServiceDrains();
+}
+
+static void uartBidirDrainAlarmInit(void)
+{
+    if (uartBidirDrainAlarm >= 0) {
+        return;
+    }
+    const int alarm = hardware_alarm_claim_unused(false);
+    if (alarm < 0) {
+        // No spare timer alarm: fall back to the old retrigger behaviour in
+        // the IRQ handler rather than never handing the wire back.
+        return;
+    }
+    hardware_alarm_set_callback(alarm, uartBidirDrainAlarmHandler);
+    uartBidirDrainAlarm = alarm;
+}
+
 static void uartBidirSwitchToTx(int device)
 {
     picoUartBidir_t *b = &uartBidir[device];
     if (b->txActive) {
         return;
     }
+
+    // A queued byte supersedes any turnaround still waiting on the timer.
+    b->drainPending = false;
+    b->txStartUs = 0;
+    b->txBytesQueued = 0;
 
     uart_inst_t *uartInstance = UART_INST(uartDevmap[device]->port.USARTx);
 
@@ -244,6 +362,7 @@ static void uartBidirSwitchToTx(int device)
 static void uartBidirSwitchToRx(int device)
 {
     picoUartBidir_t *b = &uartBidir[device];
+    b->drainPending = false;
     if (!b->txActive) {
         return;
     }
@@ -276,16 +395,30 @@ static void uartBidirSwitchToRx(int device)
     b->txActive = false;
 }
 
-static void sendBufferToUART(uartPort_t *s)
+static void sendBufferToUART(uartPort_t *s, int device)
 {
     uart_inst_t *uartInstance = UART_INST(s->USARTx);
     uart_hw_t *uartHw = uart_get_hw(uartInstance);
+
+    // Half-duplex ports time their turnaround off the start of the current
+    // transmit burst (see uartBidirArmDrainAlarm()). A burst begins whenever
+    // the wire is genuinely idle - FIFO drained *and* the shift register
+    // empty; a FIFO that merely ran low is still part of the same burst, so
+    // the character count keeps accumulating against the original start.
+    picoUartBidir_t *b = (device >= 0) ? &uartBidir[device] : NULL;
+    if (b && b->active && (uartHw->fr & UART_UARTFR_TXFE_BITS) && !(uartHw->fr & UART_UARTFR_BUSY_BITS)) {
+        b->txStartUs = time_us_64();
+        b->txBytesQueued = 0;
+    }
 
     // Fill the TX FIFO; an interrupt fires again once the FIFO empties below threshold.
     while (uart_is_writable(uartInstance)) {
         if (s->port.txBufferTail != s->port.txBufferHead) {
             uartHw->dr = s->port.txBuffer[s->port.txBufferTail];
             s->port.txBufferTail = (s->port.txBufferTail + 1) % s->port.txBufferSize;
+            if (b && b->active) {
+                b->txBytesQueued++;
+            }
         } else {
             hw_clear_bits(&(uartHw->imsc), UART_UARTIMSC_TXIM_BITS);
             break;
@@ -314,21 +447,26 @@ static void uartIrqHandler_pico(UARTDevice_e device)
     }
 
     if ((misr & UART_UARTIMSC_TXIM_BITS) != 0 && (uartHw->imsc & UART_UARTIMSC_TXIM_BITS) != 0) {
-        sendBufferToUART(s);
+        sendBufferToUART(s, device);
 
         picoUartBidir_t *b = &uartBidir[device];
         if (b->active && b->txActive && s->port.txBufferTail == s->port.txBufferHead) {
-            if (uartHw->fr & UART_UARTFR_BUSY_BITS) {
-                // Ring drained but the last frame is still shifting out of
-                // the hardware FIFO/shift register - sendBufferToUART() just
-                // masked TXIM (nothing left to feed it), so re-arm it purely
-                // as a retrigger: it's level-triggered on FIFO-below-
-                // threshold, true with an empty FIFO, so this handler is
-                // called again immediately and re-checks BUSY. Bounded by
-                // however long the last few queued bytes take at this baud.
-                hw_set_bits(&(uartHw->imsc), UART_UARTIMSC_TXIM_BITS);
-            } else {
+            if (!(uartHw->fr & UART_UARTFR_BUSY_BITS)) {
                 uartBidirSwitchToRx(device);
+            } else if (uartBidirDrainAlarm >= 0) {
+                // Ring drained but the queued characters are still shifting
+                // out. sendBufferToUART() has masked TXIM, so nothing more
+                // will interrupt us here - hand the turnaround to the timer,
+                // which wakes once at the predicted end of the burst.
+                b->drainPending = true;
+                b->drainDueUs = b->txStartUs + ((uint64_t)b->txBytesQueued * b->byteTimeNs) / 1000;
+                uartBidirServiceDrains();
+            } else {
+                // No timer alarm was available at open time: fall back to
+                // re-arming the level-triggered TX source as a retrigger, so
+                // the wire is still handed back (at the cost of spinning in
+                // this handler until BUSY clears).
+                hw_set_bits(&(uartHw->imsc), UART_UARTIMSC_TXIM_BITS);
             }
         }
     }
@@ -408,6 +546,10 @@ uartPort_t *serialUART(UARTDevice_e device, uint32_t baudRate, portMode_e mode, 
         b->txPin = IO_Pin(txIO);
         b->rxPin = IO_Pin(rxIO);
         b->options = options;
+
+        // Claim the shared turnaround timer the first time any port opens
+        // half duplex; uartReconfigure() fills in byteTimeNs for this baud.
+        uartBidirDrainAlarmInit();
 
         IOInit(txIO, OWNER_SERIAL_TX, RESOURCE_INDEX(device));
         IOInit(rxIO, OWNER_SERIAL_RX, RESOURCE_INDEX(device));
@@ -516,6 +658,15 @@ void uartReconfigure(uartPort_t *uartPort)
     const int device = uartDeviceIndex(uartPort);
     const bool bidirTx = device >= 0 && uartBidir[device].active && uartBidir[device].txActive;
 
+    if (device >= 0 && uartBidir[device].active) {
+        // Character frame length on the wire, used to predict when a
+        // half-duplex burst finishes shifting out. 1 start + 8 data + an
+        // optional parity bit + 1 or 2 stop bits.
+        const uint32_t bits = 1 + 8 + ((uartPort->port.options & SERIAL_PARITY_EVEN) ? 1 : 0) + (twoStop ? 2 : 1);
+        const uint32_t baud = uartPort->port.baudRate ? uartPort->port.baudRate : 9600;
+        uartBidir[device].byteTimeNs = (uint32_t)((1000000000ULL * bits) / baud);
+    }
+
     if (bidirTx) {
         hw_set_bits(&(uart_get_hw(uartInstance)->imsc), UART_UARTIMSC_TXIM_BITS);
     } else if (uartPort->port.mode & MODE_RX) {
@@ -542,7 +693,7 @@ void uartEnableTxInterrupt(uartPort_t *uartPort)
     // Temporarily disable the TX interrupt mask so sendBufferToUART() below
     // can't race with the IRQ handler also calling it.
     hw_clear_bits(&(uartHw->imsc), UART_UARTIMSC_TXIM_BITS);
-    sendBufferToUART(uartPort);
+    sendBufferToUART(uartPort, device);
     hw_set_bits(&(uartHw->imsc), UART_UARTIMSC_TXIM_BITS);
 }
 

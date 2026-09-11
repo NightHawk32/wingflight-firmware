@@ -296,6 +296,39 @@ static void uartWrite(serialPort_t *instance, uint8_t ch)
     }
 }
 
+#if defined(PICO)
+// The PL011 driver pumps its TX ring from an interrupt, and uartWrite() kicks
+// that pump once per character - so a 39-byte frame costs 39 mask/fill/unmask
+// round trips, and the half-duplex turnaround logic sees the ring run dry
+// between every one of them. Filling the ring first and kicking once at the
+// end collapses that to a single entry, and leaves exactly one "nothing left
+// to send" edge per frame for uartBidirServiceDrains() to act on.
+static void uartWriteBuf(serialPort_t *instance, const void *data, int count)
+{
+    uartPort_t *uartPort = (uartPort_t *)instance;
+    const uint8_t *p = (const uint8_t *)data;
+
+    while (count > 0) {
+        if (uartPort->port.txBufferHead == (uartPort->port.txBufferTail + uartPort->port.txBufferSize - 1) % uartPort->port.txBufferSize) {
+            // Ring full - run the pump and wait for it to make room, matching
+            // the generic serialWriteBuf() fallback this replaces.
+            uartEnableTxInterrupt(uartPort);
+            continue;
+        }
+
+        uartPort->port.txBuffer[uartPort->port.txBufferHead] = *p++;
+        if (uartPort->port.txBufferHead + 1 >= uartPort->port.txBufferSize) {
+            uartPort->port.txBufferHead = 0;
+        } else {
+            uartPort->port.txBufferHead++;
+        }
+        count--;
+    }
+
+    uartEnableTxInterrupt(uartPort);
+}
+#endif
+
 const struct serialPortVTable uartVTable[] = {
     {
         .serialWrite = uartWrite,
@@ -307,7 +340,11 @@ const struct serialPortVTable uartVTable[] = {
         .setMode = uartSetMode,
         .setCtrlLineStateCb = NULL,
         .setBaudRateCb = NULL,
+#if defined(PICO)
+        .writeBuf = uartWriteBuf,
+#else
         .writeBuf = NULL,
+#endif
         .beginWrite = NULL,
         .endWrite = NULL,
     }

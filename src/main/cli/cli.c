@@ -172,6 +172,9 @@ bool cliMode = false;
 #include "pg/timerio.h"
 #include "pg/timerup.h"
 #include "pg/usb.h"
+#ifdef USE_MULTICORE
+#include "platform/multicore.h"
+#endif
 #include "pg/freq.h"
 
 #include "rx/rx_bind.h"
@@ -4925,6 +4928,17 @@ static void cliStatus(const char *cmdName, char *cmdline)
     cliPrintLinef(", Vref=%d.%2dV, Core temp=%ddegC", vrefintMv / 1000, (vrefintMv % 1000) / 10, coretemp);
 #else
     cliPrintLinefeed();
+#endif
+
+#ifdef USE_MULTICORE
+    // Core-1 liveness. Core 0 never waits on core 1, so a wedged helper core
+    // is otherwise invisible: the loop counter stalling between two `status`
+    // calls is what gives it away.
+    {
+        const uint32_t core1Loops = multicoreGetHeartbeat();
+        const uint32_t uptimeMs = millis();
+        cliPrintLinef("Core 1: %u loops, avg %u kHz", core1Loops, uptimeMs ? (core1Loops / uptimeMs) : 0);
+    }
 #endif
 
     // Stack and config sizes and usages
