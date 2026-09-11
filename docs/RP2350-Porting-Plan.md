@@ -1683,9 +1683,9 @@ that fills the ring first and kicks once.
 
 **Then multicore.** `USE_MULTICORE` is now on by default in
 `RP2350_UNIFIED/target.h` (`ENABLE_MULTICORE_INIT` stays off - boot-time only).
-That activates the DMA_IRQ_CORE_NUM 1 affinity that has been written but dead
-since the seventeenth iteration, and the consumer machinery that had no
-producer.
+That activates the consumer machinery that had no producer - and, at first,
+the DMA_IRQ_CORE_NUM 1 affinity written in the seventeenth iteration, which
+turned out to be unsafe and is now off (see the twentieth iteration).
 
 - **Core 1 never launched after a warm reset.** `multicore_launch_core1()`
   handshakes with the bootrom wait loop over the inter-core FIFO, and a core 1
@@ -1741,3 +1741,31 @@ and without this work, verified against a stashed tree; G4/H7 unchanged in data
 and bss. All four RP2350/RP2354 targets build, and so does a `USE_MULTICORE`-off
 configuration. RAM on RP2350A 83.4% -> 84.3% (the VCP ring); core 1's stack was
 already reserved in SCRATCH_X and costs nothing new.
+
+### Twentieth iteration (2026-09-11) — review of the multicore split
+
+A defect pass over the previous iteration, on the same board.
+
+- **DMA completions moved back to core 0.** `bus_spi.c` serialises
+  `spiSequence()` against its completion handler with `ATOMIC_BLOCK`, which is
+  BASEPRI masking - core-local. With `DMA_IRQ_CORE_NUM 1` the handler that
+  advances `curSegment`, consumes a linked transaction and marks the bus free
+  ran on core 1 while core 0 appended to that very link under a guard that
+  held nothing off. Every DMA user is control-path anyway (gyro SPI, DShot,
+  LED strip), so they belong with the loop; the one measurement that could
+  have justified the move (gyro task time) showed no difference either way.
+  The bespoke `dmaCore1IrqInit()` is gone; a target that wants completions on
+  core 1 goes through `multicoreEnableIrqOnCore1()` like everything else, and
+  must first make the SPI queue cross-core safe.
+- **Half-duplex turnaround race closed.** The drain timer could hand the wire
+  to RX between `uartEnableTxInterrupt()` observing "TX live" and the bytes
+  reaching the FIFO, shifting a whole frame into a released pin.
+  `uartEnableTxInterrupt()` now runs the direction check and the push with
+  interrupts masked - microseconds, once per frame.
+
+Where that leaves the split: core 0 owns the scheduler, every task, and every
+peripheral interrupt including DMA; core 1 owns the USB device stack, the VCP
+transmit queue, and the consumer loop. Nothing else is cheap to move: the UART
+receive callbacks, the FBUS frame, DShot and the gyro read are all either
+control-path or protected by core-local `ATOMIC_BLOCK`s, and the remaining
+core-0 load (about 6%) is the control chain itself.
