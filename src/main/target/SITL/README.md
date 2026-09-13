@@ -2,7 +2,9 @@
 
 This is the current, actively-maintained way to fly Wingflight's `SITL` target with
 real flight dynamics: [JSBSim](https://jsbsim.sourceforge.net/) computes the physics
-(fixed-wing aircraft models, e.g. the bundled `c172p`), and
+(by default `wingflight_3d_2m`, a generic 2 m 12S 3D aerobatic plane, see
+[SITL 3D Aircraft Model](../../../docs/development/SITL%203D%20Aircraft%20Model.md);
+JSBSim's bundled `c172p` still works with `-Aircraft c172p`), and
 [FlightGear](https://www.flightgear.org/) optionally renders it. JSBSim and FlightGear
 are the only supported simulator backends; the Gazebo 8 workflow inherited from
 Betaflight has been removed.
@@ -30,7 +32,8 @@ make mingw_sdk_install                                        # native C toolcha
 # For interactive flying/visualization instead of a one-shot validation run, use the
 # JSBSim + FlightGear launcher (-Joystick needs a USB joystick; without an RC source
 # the mixer just sits at failsafe. FlightGear is optional and not vendored - install
-# it manually, see the plan doc's install instructions):
+# it manually, see the plan doc's install instructions; -SetupFgAircraft once for the
+# 2 m Edge 540 visual):
 .\scripts\sitl-jsbsim-flightgear-launch.ps1 -BuildSitl -Trim -Joystick -FlightGear `
     -FgfsPath "C:\Program Files\FlightGear 2024.1\bin\fgfs.exe" -StopOnExit
 ```

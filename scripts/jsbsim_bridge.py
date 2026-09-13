@@ -73,6 +73,23 @@ DEFAULT_THROTTLE_MOTOR_INDEX = 0
 # FlightGear scenery), which renders as a featureless blue void.
 DEFAULT_LAT_DEG = 37.6136
 DEFAULT_LON_DEG = -122.3572
+# ...which is KSFO's runway 28R threshold (FlightGear apt.dat: 37.61352,
+# -122.35717); 28R's true heading is 297.9 deg, so the aircraft starts flying
+# down the runway centreline.
+DEFAULT_HEADING_DEG = 297.9
+
+# Wingflight's own JSBSim models (scripts/jsbsim/aircraft/<name>/<name>.xml).
+# A name found there wins over the models bundled with the jsbsim package.
+REPO_AIRCRAFT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jsbsim", "aircraft")
+DEFAULT_AIRCRAFT = "wingflight_3d_2m"
+
+# Per-aircraft initial altitude (ft MSL) and calibrated airspeed (kts) when
+# --altitude-ft / --airspeed-kts aren't given. KSFO's field elevation is 13 ft.
+AIRCRAFT_IC_DEFAULTS = {
+    "wingflight_3d_2m": (200.0, 40.0),  # ~57 m AGL over the runway, ~20 m/s cruise
+    "c172p": (3000.0, 90.0),
+}
+FALLBACK_IC_DEFAULTS = (3000.0, 90.0)
 
 
 def euler_to_quat(phi, theta, psi):
@@ -296,12 +313,100 @@ def state_is_sane(fdm, min_altitude_ft):
     return fdm.get_property_value("position/h-agl-ft") > min_altitude_ft
 
 
+def _solve_linear(a, b):
+    """Gaussian elimination with partial pivoting; None if singular."""
+    n = len(b)
+    m = [row[:] + [b[i]] for i, row in enumerate(a)]
+    for c in range(n):
+        p = max(range(c, n), key=lambda r: abs(m[r][c]))
+        if abs(m[p][c]) < 1e-12:
+            return None
+        m[c], m[p] = m[p], m[c]
+        for r in range(n):
+            if r != c:
+                f = m[r][c] / m[c][c]
+                for k in range(c, n + 1):
+                    m[r][k] -= f * m[c][k]
+    return [m[i][n] / m[i][i] for i in range(n)]
+
+
+def settle_trim(fdm, spinup_s=0.5, iterations=12):
+    """Straight-and-level trim that also works for electric motors.
+
+    JSBSim's do_trim() can't settle a brushless_dc_motor's RPM (it reports
+    "udot doesn't appear to be trimmable"). Here every evaluation spins the
+    motor up in a short free-flight run, then re-runs the same initial
+    conditions - prop RPM and actuator positions carry over run_ic() - and
+    reads the net forces/moments. Newton on alpha, elevator, throttle,
+    aileron and rudder drives body X/Z force (incl. gravity) and the roll,
+    pitch and yaw moments to zero, so the motor's torque is trimmed out too.
+    Returns (converged, [alpha_deg, elevator, throttle, aileron, rudder]).
+    """
+    steps = max(1, int(spinup_s / fdm.get_delta_t()))
+    weight = fdm.get_property_value("inertia/weight-lbs")
+    cbar = fdm.get_property_value("metrics/cbarw-ft")
+    span = fdm.get_property_value("metrics/bw-ft")
+
+    def apply(x):
+        fdm["ic/alpha-deg"] = x[0]
+        fdm["ic/gamma-deg"] = 0.0
+        fdm.run_ic()
+        fdm["fcs/elevator-cmd-norm"] = x[1]
+        fdm["fcs/throttle-cmd-norm"] = x[2]
+        fdm["fcs/aileron-cmd-norm"] = x[3]
+        fdm["fcs/rudder-cmd-norm"] = x[4]
+
+    def residual(x):
+        apply(x)
+        for _ in range(steps):
+            fdm.run()
+        fdm.run_ic()
+        theta = math.radians(fdm.get_property_value("attitude/theta-deg"))
+        return [
+            (fdm.get_property_value("forces/fbx-total-lbs") - weight * math.sin(theta)) / weight,
+            (fdm.get_property_value("forces/fbz-total-lbs") + weight * math.cos(theta)) / weight,
+            fdm.get_property_value("moments/m-total-lbsft") / (weight * cbar),
+            fdm.get_property_value("moments/l-total-lbsft") / (weight * span),
+            fdm.get_property_value("moments/n-total-lbsft") / (weight * span),
+        ]
+
+    x = [2.0, 0.0, 0.5, 0.0, 0.0]
+    delta = [0.5, 0.05, 0.05, 0.05, 0.05]
+    lo = [-10.0, -1.0, 0.0, -1.0, -1.0]
+    hi = [20.0, 1.0, 1.0, 1.0, 1.0]
+    r = residual(x)
+    for _ in range(iterations):
+        if max(abs(v) for v in r[:2]) < 1e-3 and max(abs(v) for v in r[2:]) < 1e-4:
+            break
+        jac = [[0.0] * 5 for _ in range(5)]
+        for j in range(5):
+            xp = list(x)
+            xp[j] += delta[j]
+            rp = residual(xp)
+            for i in range(5):
+                jac[i][j] = (rp[i] - r[i]) / delta[j]
+        dx = _solve_linear(jac, [-v for v in r])
+        if dx is None:
+            break
+        x = [min(hi[i], max(lo[i], x[i] + dx[i])) for i in range(5)]
+        r = residual(x)
+    converged = max(abs(v) for v in r[:2]) < 5e-3 and max(abs(v) for v in r[2:]) < 5e-4
+    apply(x)
+    return converged, x
+
+
 def apply_initial_conditions(fdm, args):
-    fdm["ic/lat-gc-deg"] = args.lat_deg
+    # Geodetic, like GPS, FlightGear and airport data. JSBSim's geocentric
+    # latitude differs by up to ~0.19 deg (~21 km north at KSFO).
+    fdm["ic/lat-geod-deg"] = args.lat_deg
+    # JSBSim's ground is flat at this elevation; match the FlightGear runway so
+    # gear contact (and the crash auto-reset) happens where the scenery is.
+    fdm["ic/terrain-elevation-ft"] = args.terrain_elevation_ft
     fdm["ic/long-gc-deg"] = args.lon_deg
     fdm["ic/psi-true-deg"] = args.heading_deg
     fdm["ic/h-sl-ft"] = args.altitude_ft
     fdm["ic/vc-kts"] = args.airspeed_kts
+    fdm["ic/alpha-deg"] = 0.0
     fdm["ic/gamma-deg"] = 0.0
     fdm.run_ic()
 
@@ -315,8 +420,13 @@ def apply_initial_conditions(fdm, args):
         try:
             fdm.do_trim(args.trim_mode)
             print(f"[jsbsim-bridge] trimmed (mode {args.trim_mode})")
+            return
         except Exception as exc:  # JSBSim raises a plain RuntimeError on failure
-            print(f"[jsbsim-bridge] WARNING: trim failed ({exc}); continuing untrimmed")
+            print(f"[jsbsim-bridge] JSBSim trim failed ({exc}); trying settle trim (electric motors) ...")
+        converged, x = settle_trim(fdm)
+        state = "trimmed" if converged else "WARNING: settle trim did not converge, best effort"
+        print(f"[jsbsim-bridge] {state}: alpha {x[0]:.2f} deg, elevator {x[1]:+.3f}, throttle {x[2]:.3f}, "
+              f"aileron {x[3]:+.3f}, rudder {x[4]:+.3f}")
 
 
 def write_flightgear_output_directive(host, port, rate):
@@ -341,15 +451,22 @@ def parse_args(argv=None):
     parser.add_argument("--host", default="127.0.0.1", help="Wingflight SITL host (default: 127.0.0.1)")
     parser.add_argument("--recv-port", type=int, default=9002, help="Port to receive servo_packet on (default: 9002)")
     parser.add_argument("--send-port", type=int, default=9003, help="Port to send fdm_packet to (default: 9003)")
-    parser.add_argument("--aircraft", default="c172p", help="JSBSim aircraft model name (default: c172p)")
+    parser.add_argument("--aircraft", default=DEFAULT_AIRCRAFT,
+                        help=f"JSBSim aircraft model name (default: {DEFAULT_AIRCRAFT}, the generic 2 m 3D model in "
+                             "scripts/jsbsim/aircraft; c172p and the other jsbsim-package models also work)")
     parser.add_argument("--rate", type=float, default=120.0, help="Simulation/send rate in Hz (default: 120)")
-    parser.add_argument("--altitude-ft", type=float, default=3000.0, help="Initial altitude, ft MSL (default: 3000)")
-    parser.add_argument("--airspeed-kts", type=float, default=90.0, help="Initial calibrated airspeed, kts (default: 90)")
+    parser.add_argument("--altitude-ft", type=float, default=None,
+                        help="Initial altitude, ft MSL (default: per aircraft - 200 for wingflight_3d_2m, 3000 otherwise)")
+    parser.add_argument("--airspeed-kts", type=float, default=None,
+                        help="Initial calibrated airspeed, kts (default: per aircraft - 40 for wingflight_3d_2m, 90 otherwise)")
     parser.add_argument("--lat-deg", type=float, default=DEFAULT_LAT_DEG,
                         help=f"Initial latitude, deg (default: {DEFAULT_LAT_DEG}, KSFO - FlightGear ships scenery there)")
     parser.add_argument("--lon-deg", type=float, default=DEFAULT_LON_DEG,
                         help=f"Initial longitude, deg (default: {DEFAULT_LON_DEG})")
-    parser.add_argument("--heading-deg", type=float, default=0.0, help="Initial true heading, deg (default: 0)")
+    parser.add_argument("--heading-deg", type=float, default=DEFAULT_HEADING_DEG,
+                        help=f"Initial true heading, deg (default: {DEFAULT_HEADING_DEG}, along KSFO runway 28R)")
+    parser.add_argument("--terrain-elevation-ft", type=float, default=13.0,
+                        help="Ground elevation JSBSim assumes, ft MSL (default: 13 = KSFO field elevation)")
     parser.add_argument("--trim", action="store_true",
                         help="Trim the aircraft for steady flight at the initial conditions before running")
     parser.add_argument("--no-engine-start", action="store_true",
@@ -385,7 +502,18 @@ def parse_args(argv=None):
     parser.add_argument("--fg-host", default="127.0.0.1", help="FlightGear host (default: 127.0.0.1)")
     parser.add_argument("--fg-port", type=int, default=5550, help="FlightGear --native-fdm UDP port (default: 5550)")
     parser.add_argument("--fg-rate", type=float, default=30.0, help="FlightGear output rate in Hz (default: 30)")
+    parser.add_argument("--fg-aircraft", default=None,
+                        help="FlightGear aircraft shown in the printed fgfs command (visual only; default: "
+                             "Edge540RC for wingflight_3d_2m, else the JSBSim aircraft name)")
     args = parser.parse_args(argv)
+
+    default_alt, default_kts = AIRCRAFT_IC_DEFAULTS.get(args.aircraft, FALLBACK_IC_DEFAULTS)
+    if args.altitude_ft is None:
+        args.altitude_ft = default_alt
+    if args.airspeed_kts is None:
+        args.airspeed_kts = default_kts
+    if args.fg_aircraft is None:
+        args.fg_aircraft = "Edge540RC" if args.aircraft == "wingflight_3d_2m" else args.aircraft
 
     args.aileron_sign = -1.0 if args.invert_aileron else 1.0
     args.elevator_sign = -1.0 if args.invert_elevator else 1.0
@@ -419,12 +547,16 @@ def main():
         print(
             f"[jsbsim-bridge] FlightGear output enabled -> {args.fg_host}:{args.fg_port} "
             f"@ {args.fg_rate}Hz. Launch FlightGear with:\n"
-            f"  fgfs --aircraft={args.aircraft} --fdm=null "
+            f"  fgfs --aircraft={args.fg_aircraft} --fdm=null "
             f"--native-fdm=socket,in,{int(args.fg_rate)},,{args.fg_port},udp "
             f"--lat={args.lat_deg} --lon={args.lon_deg} --altitude={args.altitude_ft} "
             f"--timeofday=noon --disable-real-weather-fetch --disable-clouds3d"
         )
 
+    if os.path.isfile(os.path.join(REPO_AIRCRAFT_DIR, args.aircraft, args.aircraft + ".xml")):
+        # Engine/prop files live in the model's own Engines/ folder, which
+        # JSBSim searches next to the aircraft - only the aircraft path changes.
+        fdm.set_aircraft_path(REPO_AIRCRAFT_DIR)
     if not fdm.load_model(args.aircraft):
         sys.exit(f"Failed to load JSBSim aircraft model '{args.aircraft}'")
 

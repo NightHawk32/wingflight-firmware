@@ -29,15 +29,28 @@
     Build SITL (make TARGET=SITL DEBUG=GDB -j 8) before launching.
 
 .PARAMETER Aircraft
-    JSBSim aircraft model name (default: c172p).
+    JSBSim aircraft model name (default: wingflight_3d_2m, the generic 2 m 12S 3D
+    aerobatic model in scripts/jsbsim/aircraft). The models bundled with the
+    jsbsim package (e.g. c172p) still work.
+
+.PARAMETER AltitudeFt / AirspeedKts
+    Initial altitude (ft MSL) and calibrated airspeed (kts). Default per
+    aircraft: 200 ft / 40 kts (~57 m above the runway, ~20 m/s) for
+    wingflight_3d_2m, 3000 ft / 90 kts otherwise.
 
 .PARAMETER Rate
     JSBSim step/send rate in Hz (default: 120).
 
-.PARAMETER LatDeg / LonDeg
-    Initial position. Defaults to KSFO (37.6136 / -122.3572), which the
-    FlightGear base package ships scenery for. JSBSim's own default is lat/lon
-    0/0 - open ocean with no scenery, which renders as a blue void in FlightGear.
+.PARAMETER LatDeg / LonDeg / HeadingDeg
+    Initial position and true heading. Defaults to the threshold of KSFO runway
+    28R (37.6136 / -122.3572, heading 297.9 deg), so the aircraft starts over the
+    runway centreline flying along it - KSFO scenery ships with FlightGear.
+    JSBSim's own default is lat/lon 0/0 - open ocean with no scenery, which
+    renders as a blue void in FlightGear.
+
+.PARAMETER FgView
+    FlightGear view to start in (default: 2 = Chase view, third person behind
+    the aircraft; 0 = cockpit, 1 = helicopter, 3 = tower). Cycle with V in-sim.
 
 .PARAMETER Trim
     Trim the aircraft for steady flight at the initial conditions before running
@@ -50,6 +63,16 @@
 .PARAMETER FgfsPath
     Path to fgfs.exe. If given (and -FlightGear is set), FlightGear is launched
     automatically instead of just printing the command to run it manually.
+
+.PARAMETER FgAircraft
+    FlightGear aircraft used as the visual (FlightGear runs no physics of its
+    own). Default: Edge540RC for wingflight_3d_2m - FGAddon's Edge 540 scaled
+    to 2 m span (scripts/flightgear/Aircraft/Edge540RC) - falling back to c172p
+    if the Edge 540 isn't installed; otherwise the JSBSim aircraft name.
+
+.PARAMETER SetupFgAircraft
+    Download FGAddon's ZivkoEdge (Edge 540, GPL) into tools/flightgear-aircraft
+    for the Edge540RC visual, then continue. Safe to re-run.
 
 .PARAMETER FgExtraArgs
     Extra arguments appended verbatim to the fgfs command line.
@@ -99,16 +122,19 @@
 param(
     [switch]$SetupVenv,
     [switch]$BuildSitl,
-    [string]$Aircraft = "c172p",
+    [string]$Aircraft = "wingflight_3d_2m",
     [double]$Rate = 120.0,
-    [double]$AltitudeFt = 3000.0,
-    [double]$AirspeedKts = 90.0,
+    [Nullable[double]]$AltitudeFt = $null,
+    [Nullable[double]]$AirspeedKts = $null,
     [double]$LatDeg = 37.6136,
     [double]$LonDeg = -122.3572,
-    [double]$HeadingDeg = 0.0,
+    [double]$HeadingDeg = 297.9,
+    [int]$FgView = 2,
     [switch]$Trim,
     [switch]$FlightGear,
     [string]$FgfsPath = "",
+    [string]$FgAircraft = "",
+    [switch]$SetupFgAircraft,
     [int]$FgPort = 5550,
     [double]$FgRate = 30.0,
     [string[]]$FgExtraArgs = @(),
@@ -158,6 +184,44 @@ $bridgeScript = Join-Path $root "scripts\jsbsim_bridge.py"
 $joystickScript = Join-Path $root "scripts\sitl-joystick-rc.py"
 if (-not $ConfiguratorDir) {
     $ConfiguratorDir = Join-Path (Split-Path $root -Parent) "wingflight-configurator"
+}
+
+# Initial conditions: per-aircraft defaults, kept in sync with AIRCRAFT_IC_DEFAULTS
+# in jsbsim_bridge.py (FlightGear's pre-positioning needs the altitude too).
+if ($null -eq $AltitudeFt) { $AltitudeFt = $(if ($Aircraft -eq "wingflight_3d_2m") { 200.0 } else { 3000.0 }) }
+if ($null -eq $AirspeedKts) { $AirspeedKts = $(if ($Aircraft -eq "wingflight_3d_2m") { 40.0 } else { 90.0 }) }
+
+# FlightGear visual: Edge540RC (repo wrapper) needs FGAddon's ZivkoEdge next to it.
+$fgWrapperDir = Join-Path $root "scripts\flightgear\Aircraft"
+$fgDownloadDir = Join-Path $root "tools\flightgear-aircraft"
+$fgEdgeDir = Join-Path $fgDownloadDir "ZivkoEdge"
+if ($SetupFgAircraft) {
+    if (Test-Path (Join-Path $fgEdgeDir "ZivkoEdge540-set.xml")) {
+        Write-Host "[launch] FGAddon ZivkoEdge already installed in $fgEdgeDir"
+    } else {
+        New-Item -ItemType Directory -Force $fgDownloadDir | Out-Null
+        $zip = Join-Path $fgDownloadDir "ZivkoEdge.zip"
+        Write-Host "[launch] Downloading FGAddon ZivkoEdge (Edge 540, GPL) ..."
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri "https://fgaddon.b-cdn.net/Aircraft-2024/ZivkoEdge.zip" -OutFile $zip -UseBasicParsing
+        Expand-Archive -Path $zip -DestinationPath $fgDownloadDir -Force
+        Remove-Item $zip
+        Write-Host "[launch] Installed $fgEdgeDir"
+    }
+}
+if (-not $FgAircraft) {
+    if ($Aircraft -eq "wingflight_3d_2m") {
+        if (Test-Path (Join-Path $fgEdgeDir "ZivkoEdge540-set.xml")) {
+            $FgAircraft = "Edge540RC"
+        } else {
+            $FgAircraft = "c172p"
+            if ($FlightGear) {
+                Write-Warning "Edge 540 visual not installed - FlightGear shows a c172p instead. Run once with -SetupFgAircraft to get the 2 m Edge 540."
+            }
+        }
+    } else {
+        $FgAircraft = $Aircraft
+    }
 }
 
 if ($SetupVenv) {
@@ -257,7 +321,8 @@ if ($FlightGear -and -not [string]::IsNullOrWhiteSpace($FgfsPath)) {
         # immediately, but without them FlightGear loads scenery in the wrong
         # place (or none at all).
         $fgArgs = @(
-            "--aircraft=$Aircraft",
+            "--fg-aircraft=`"$fgWrapperDir;$fgDownloadDir`"",
+            "--aircraft=$FgAircraft",
             "--fdm=null",
             "--native-fdm=socket,in,$([int]$FgRate),,$FgPort,udp",
             "--lat=$LatDeg",
@@ -265,6 +330,7 @@ if ($FlightGear -and -not [string]::IsNullOrWhiteSpace($FgfsPath)) {
             "--altitude=$AltitudeFt",
             "--heading=$HeadingDeg",
             "--timeofday=noon",
+            "--prop:/sim/current-view/view-number=$FgView",
             "--disable-real-weather-fetch",
             "--disable-clouds3d"
         ) + $FgExtraArgs
@@ -307,7 +373,7 @@ $bridgeArgs = @(
 )
 if ($Trim) { $bridgeArgs += "--trim" }
 if ($FlightGear) {
-    $bridgeArgs += @("--flightgear", "--fg-port", $FgPort, "--fg-rate", $FgRate)
+    $bridgeArgs += @("--flightgear", "--fg-port", $FgPort, "--fg-rate", $FgRate, "--fg-aircraft", $FgAircraft)
 }
 
 Write-Host "[launch] Starting JSBSim bridge ..."

@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<!--
+  Visual-only FlightGear aircraft for Wingflight SITL: the Zivko Edge 540 from
+  FGAddon (GPL, by Torsten Dreyer) shown at 2 m RC scale. The flight dynamics
+  come from scripts/jsbsim/aircraft/wingflight_3d_2m over FlightGear's
+  native-FDM protocol (fgfs flight-model "null"), which also drives the
+  control-surface and propeller animations.
+
+  Needs FGAddon's "ZivkoEdge" directory in another fg-aircraft path;
+  scripts/sitl-jsbsim-flightgear-launch.ps1 -SetupFgAircraft installs it into
+  tools/flightgear-aircraft.
+-->
+<PropertyList>
+  <sim>
+    <description>Edge 540 at 2 m RC scale (Wingflight SITL visual)</description>
+    <author>Wingflight (wrapper), Torsten Dreyer (Edge 540 model)</author>
+    <status>alpha</status>
+    <flight-model>null</flight-model>
+    <model>
+      <path>Aircraft/Edge540RC/Models/Edge540RC.xml</path>
+      <livery>
+        <file type="string"/>
+      </livery>
+    </model>
+    <!-- The default chase view sits 25 m behind a full-size aircraft. -->
+    <chase-distance-m type="double">-6</chase-distance-m>
+  </sim>
+</PropertyList>

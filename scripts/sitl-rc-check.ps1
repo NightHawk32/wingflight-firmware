@@ -59,8 +59,20 @@
     JSBSim aircraft model for -Mode jsbsim (default: c172p).
 
 .PARAMETER JsbsimSettleMs
-    How long to hold each RC extreme before reading MSP_ATTITUDE, in
-    milliseconds, for -Mode jsbsim (default: 1500).
+    How long to hold neutral RC before the -Mode jsbsim measurements, in
+    milliseconds (default: 1500).
+
+.PARAMETER JsbsimHoldMs
+    How long to hold each RC extreme (and the neutral drift baseline) before
+    reading MSP_ATTITUDE, for -Mode jsbsim. Default: 300 for wingflight_3d_2m,
+    whose ~400 deg/s roll rate would wrap the roll angle (or loop the pitch)
+    over a long hold and read as an inverted control; JsbsimSettleMs otherwise.
+
+.PARAMETER JsbsimRateThresholdDps
+    Minimum signed body-rate difference (deg/s, from MSP_RAW_IMU) between
+    high/low RC extremes for -Mode jsbsim (default: 10). A roll/pitch axis
+    passes on either the rate or the attitude criterion; a strongly negative
+    rate always fails as an inverted control.
 
 .PARAMETER JsbsimAttitudeThresholdDeg
     Minimum roll/pitch attitude delta (degrees) between high/low RC extremes
@@ -92,8 +104,10 @@ param(
     [string]$SitlArgs = "",
     [string]$BridgeAircraft = "c172p",
     [int]$JsbsimSettleMs = 1500,
+    [int]$JsbsimHoldMs = 0,
     [double]$JsbsimAttitudeThresholdDeg = 3.0,
     [double]$JsbsimDriftMarginFactor = 2.0,
+    [double]$JsbsimRateThresholdDps = 10.0,
     [int]$ThrottleTestUs = 1800,
     [int]$ThrottleHoldMs = 6000,
     [switch]$EnableRxMspIfMissing,
@@ -104,6 +118,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($JsbsimHoldMs -le 0) {
+    $JsbsimHoldMs = $(if ($BridgeAircraft -eq "wingflight_3d_2m") { 300 } else { $JsbsimSettleMs })
+}
 
 $MSP_API_VERSION = 1
 $MSP_SET_MODE_RANGE = 35
@@ -116,6 +134,7 @@ $MSP_RC = 105
 $MSP_RAW_GPS = 106
 $MSP_RX_CHANNELS = 114
 $MSP_ATTITUDE = 108
+$MSP_RAW_IMU = 102
 $MSP_SET_RAW_RC = 200
 $MSP_SET_MIXER_OVERRIDE = 191
 $MSP_MIXER_OVERRIDE = 190
@@ -812,7 +831,37 @@ function Hold-RcAndReadAttitude {
     $att = Get-Attitude -Stream $Stream -TimeoutSeconds $TimeoutSeconds
     if ($null -eq $att) { return $null }
     $att | Add-Member -NotePropertyName AckOk -NotePropertyValue $allAcked -Force
+    $rates = Get-GyroRates -Stream $Stream -TimeoutSeconds $TimeoutSeconds
+    foreach ($axis in @("Roll", "Pitch", "Yaw")) {
+        $value = if ($null -ne $rates) { $rates.$axis } else { [double]::NaN }
+        $att | Add-Member -NotePropertyName ("Rate" + $axis) -NotePropertyValue $value -Force
+    }
     return $att
+}
+
+function Get-GyroRates {
+    # Reads the gyro part of MSP_RAW_IMU and returns deg/s. Body rates don't
+    # depend on attitude, unlike Euler angles, so they stay a reliable
+    # control-direction signal for aircraft fast enough to roll past 180 deg
+    # or go over the top within one hold. gyroRateDps() divides the already
+    # deg/s gyroADCf by the sensor scale once more, so the wire value is raw
+    # LSB: 16.4 per deg/s for SITL's fake gyro (GYRO_SCALE_2000DPS).
+    # $null on failure.
+    param([System.IO.Stream]$Stream, [int]$TimeoutSeconds)
+
+    $activeStream = Get-ActiveStream -Stream $Stream -TimeoutSeconds $TimeoutSeconds
+    if ($null -eq $activeStream) { return $null }
+
+    Send-Msp -Stream $activeStream -Command $MSP_RAW_IMU
+    $resp = Receive-MspMatch -Stream $activeStream -ExpectedCommand $MSP_RAW_IMU -TimeoutSeconds $TimeoutSeconds
+    if ($null -eq $resp -or $resp.Payload.Length -lt 12) { return $null }
+
+    $lsbPerDps = 16.4
+    return [pscustomobject]@{
+        Roll  = [BitConverter]::ToInt16($resp.Payload, 6) / $lsbPerDps
+        Pitch = [BitConverter]::ToInt16($resp.Payload, 8) / $lsbPerDps
+        Yaw   = [BitConverter]::ToInt16($resp.Payload, 10) / $lsbPerDps
+    }
 }
 
 function Start-JsbsimBridge {
@@ -1284,7 +1333,7 @@ try {
         # -JsbsimDriftMarginFactor, so "the elevator worked" can be
         # distinguished from "the aircraft was diverging anyway".
         Write-Host "[SITL-RC] Measuring control-neutral drift baseline ..."
-        $neutralB = Hold-RcAndReadAttitude -Stream $stream -Roll 1500 -Pitch 1500 -Yaw 1500 -DurationMs $JsbsimSettleMs -TimeoutSeconds $TimeoutSeconds
+        $neutralB = Hold-RcAndReadAttitude -Stream $stream -Roll 1500 -Pitch 1500 -Yaw 1500 -DurationMs $JsbsimHoldMs -TimeoutSeconds $TimeoutSeconds
 
         $rollDrift = 0.0
         $pitchDrift = 0.0
@@ -1293,24 +1342,24 @@ try {
             $pitchDrift = [math]::Abs($neutralB.Pitch - $neutral.Pitch)
             $result.axisDeltas["jsbsim_roll_drift_deg"] = [math]::Round($rollDrift, 1)
             $result.axisDeltas["jsbsim_pitch_drift_deg"] = [math]::Round($pitchDrift, 1)
-            Write-Host ("[SITL-RC] Control-neutral drift over {0}ms: roll={1}deg pitch={2}deg" -f $JsbsimSettleMs, [math]::Round($rollDrift, 1), [math]::Round($pitchDrift, 1))
+            Write-Host ("[SITL-RC] Control-neutral drift over {0}ms: roll={1}deg pitch={2}deg" -f $JsbsimHoldMs, [math]::Round($rollDrift, 1), [math]::Round($pitchDrift, 1))
         } else {
             Write-Warning "[SITL-RC] Could not measure drift baseline - falling back to the fixed threshold only."
         }
 
         Write-Host "[SITL-RC] Driving roll extremes through JSBSim ..."
-        $rollHigh = Hold-RcAndReadAttitude -Stream $stream -Roll 1900 -Pitch 1500 -Yaw 1500 -DurationMs $JsbsimSettleMs -TimeoutSeconds $TimeoutSeconds
-        $rollLow  = Hold-RcAndReadAttitude -Stream $stream -Roll 1100 -Pitch 1500 -Yaw 1500 -DurationMs $JsbsimSettleMs -TimeoutSeconds $TimeoutSeconds
+        $rollHigh = Hold-RcAndReadAttitude -Stream $stream -Roll 1900 -Pitch 1500 -Yaw 1500 -DurationMs $JsbsimHoldMs -TimeoutSeconds $TimeoutSeconds
+        $rollLow  = Hold-RcAndReadAttitude -Stream $stream -Roll 1100 -Pitch 1500 -Yaw 1500 -DurationMs $JsbsimHoldMs -TimeoutSeconds $TimeoutSeconds
         $null = Hold-RcAndReadAttitude -Stream $stream -Roll 1500 -Pitch 1500 -Yaw 1500 -DurationMs ([int]($JsbsimSettleMs / 2)) -TimeoutSeconds $TimeoutSeconds
 
         Write-Host "[SITL-RC] Driving pitch extremes through JSBSim ..."
-        $pitchHigh = Hold-RcAndReadAttitude -Stream $stream -Roll 1500 -Pitch 1900 -Yaw 1500 -DurationMs $JsbsimSettleMs -TimeoutSeconds $TimeoutSeconds
-        $pitchLow  = Hold-RcAndReadAttitude -Stream $stream -Roll 1500 -Pitch 1100 -Yaw 1500 -DurationMs $JsbsimSettleMs -TimeoutSeconds $TimeoutSeconds
+        $pitchHigh = Hold-RcAndReadAttitude -Stream $stream -Roll 1500 -Pitch 1900 -Yaw 1500 -DurationMs $JsbsimHoldMs -TimeoutSeconds $TimeoutSeconds
+        $pitchLow  = Hold-RcAndReadAttitude -Stream $stream -Roll 1500 -Pitch 1100 -Yaw 1500 -DurationMs $JsbsimHoldMs -TimeoutSeconds $TimeoutSeconds
         $null = Hold-RcAndReadAttitude -Stream $stream -Roll 1500 -Pitch 1500 -Yaw 1500 -DurationMs ([int]($JsbsimSettleMs / 2)) -TimeoutSeconds $TimeoutSeconds
 
         Write-Host "[SITL-RC] Driving yaw extremes through JSBSim (informational only) ..."
-        $yawHigh = Hold-RcAndReadAttitude -Stream $stream -Roll 1500 -Pitch 1500 -Yaw 1900 -DurationMs $JsbsimSettleMs -TimeoutSeconds $TimeoutSeconds
-        $yawLow  = Hold-RcAndReadAttitude -Stream $stream -Roll 1500 -Pitch 1500 -Yaw 1100 -DurationMs $JsbsimSettleMs -TimeoutSeconds $TimeoutSeconds
+        $yawHigh = Hold-RcAndReadAttitude -Stream $stream -Roll 1500 -Pitch 1500 -Yaw 1900 -DurationMs $JsbsimHoldMs -TimeoutSeconds $TimeoutSeconds
+        $yawLow  = Hold-RcAndReadAttitude -Stream $stream -Roll 1500 -Pitch 1500 -Yaw 1100 -DurationMs $JsbsimHoldMs -TimeoutSeconds $TimeoutSeconds
 
         # SIGNED responses. MSP_ATTITUDE conventions (imuUpdateEulerAngles):
         # roll positive = right wing down, pitch positive = nose up. RC 1900
@@ -1348,14 +1397,38 @@ try {
         $result.axisDeltas["jsbsim_roll_gate_deg"] = [math]::Round($rollGate, 1)
         $result.axisDeltas["jsbsim_pitch_gate_deg"] = [math]::Round($pitchGate, 1)
 
-        Write-Host ("[SITL-RC] JSBSim signed attitude response (high - low): roll={0}deg (gate +{1}) pitch={2}deg (gate +{3}) yaw={4}deg (informational)" -f `
+        Write-Host ("[SITL-RC] JSBSim signed attitude response (high - low): roll={0}deg (gate +{1}) pitch={2}deg (gate +{3}) yaw={4}deg" -f `
             $result.axisDeltas["jsbsim_roll_deg"], $rollGate, $result.axisDeltas["jsbsim_pitch_deg"], $pitchGate, $result.axisDeltas["jsbsim_yaw_deg"])
 
+        # SIGNED body rates at the end of each hold (high - low). Same sign
+        # convention as the attitude check above (verified on c172p, where both
+        # agree), but unlike Euler angles they can't wrap past 180 deg or fold
+        # at +-90 deg pitch, so they stay valid for aerobatic models such as
+        # wingflight_3d_2m that roll ~400 deg/s. Either method passing counts
+        # (see controlResponsive below); only a strongly NEGATIVE rate - which
+        # can't be an attitude artefact - flags an inverted control.
+        $rateSigned = @{}
+        foreach ($pair in @(@("roll", $rollHigh, $rollLow, "RateRoll"), @("pitch", $pitchHigh, $pitchLow, "RatePitch"), @("yaw", $yawHigh, $yawLow, "RateYaw"))) {
+            $value = [double]::NaN
+            if ($null -ne $pair[1] -and $null -ne $pair[2]) {
+                $value = $pair[1].($pair[3]) - $pair[2].($pair[3])
+            }
+            $rateSigned[$pair[0]] = $value
+            $result.axisDeltas["jsbsim_" + $pair[0] + "_rate_dps"] = $(if ([double]::IsNaN($value)) { -999 } else { [math]::Round($value, 0) })
+        }
+        $rateGate = [math]::Max($JsbsimRateThresholdDps, 0.0)
+        if ($null -ne $neutralB -and -not [double]::IsNaN($neutralB.RateRoll)) {
+            $rateGate = [math]::Max($rateGate, [math]::Max([math]::Abs($neutralB.RateRoll), [math]::Abs($neutralB.RatePitch)) * $JsbsimDriftMarginFactor)
+        }
+        $result.axisDeltas["jsbsim_rate_gate_dps"] = [math]::Round($rateGate, 0)
+        Write-Host ("[SITL-RC] JSBSim signed body-rate response (high - low): roll={0}dps pitch={1}dps (gate +{2}) yaw={3}dps" -f `
+            $result.axisDeltas["jsbsim_roll_rate_dps"], $result.axisDeltas["jsbsim_pitch_rate_dps"], [math]::Round($rateGate, 0), $result.axisDeltas["jsbsim_yaw_rate_dps"])
+
         foreach ($axis in @(
-            @{ Name = "roll (aileron)"; Signed = $rollSigned; Gate = $rollGate; Fix = "--invert-aileron" },
-            @{ Name = "pitch (elevator)"; Signed = $pitchSigned; Gate = $pitchGate; Fix = "--invert-elevator" })) {
-            if ($axis.Signed -le -$axis.Gate) {
-                Write-Warning ("[SITL-RC] {0} responds strongly but in the WRONG direction ({1}deg) - the loop is alive but the control-surface sign convention is inverted; launch the bridge with {2}." -f $axis.Name, [math]::Round($axis.Signed, 1), $axis.Fix)
+            @{ Name = "roll (aileron)"; Rate = $rateSigned["roll"]; Fix = "--invert-aileron" },
+            @{ Name = "pitch (elevator)"; Rate = $rateSigned["pitch"]; Fix = "--invert-elevator" })) {
+            if ($axis.Rate -le -$rateGate) {
+                Write-Warning ("[SITL-RC] {0} responds strongly but in the WRONG direction ({1}dps) - the loop is alive but the control-surface sign convention is inverted; launch the bridge with {2}." -f $axis.Name, [math]::Round($axis.Rate, 0), $axis.Fix)
             }
         }
 
@@ -1364,7 +1437,9 @@ try {
             if ($null -eq $sample -or -not $sample.AckOk) { $allAcked = $false }
         }
         $result.rcInjectOk = $allAcked
-        $result.controlResponsive = ($rollSigned -ge $rollGate -and $pitchSigned -ge $pitchGate)
+        $rollOk = ($rateSigned["roll"] -ge $rateGate) -or ($rollSigned -ge $rollGate -and -not ($rateSigned["roll"] -le -$rateGate))
+        $pitchOk = ($rateSigned["pitch"] -ge $rateGate) -or ($pitchSigned -ge $pitchGate -and -not ($rateSigned["pitch"] -le -$rateGate))
+        $result.controlResponsive = ($rollOk -and $pitchOk)
     }
 
     if ($Mode -eq "throttle") {
@@ -1567,7 +1642,9 @@ try {
 
         # Near the KSFO initial conditions (within ~0.5 deg), moving at a
         # plausible glide speed, and the position actually changes.
-        $nearIc = ([math]::Abs($gpsA.LatDeg - 37.6136) -lt 0.5) -and ([math]::Abs($gpsA.LonDeg - (-122.3572)) -lt 0.5)
+        # 0.02 deg ~ 2 km: tight enough to catch a geocentric/geodetic latitude
+        # mix-up (~21 km at KSFO), loose enough for a few seconds of flight.
+        $nearIc = ([math]::Abs($gpsA.LatDeg - 37.6136) -lt 0.02) -and ([math]::Abs($gpsA.LonDeg - (-122.3572)) -lt 0.02)
         $moving = ($movedM -ge 50.0) -and ($gpsB.SpeedCms -gt 500)
 
         $result.axisDeltas["gps_numsat"] = [int]$gpsA.NumSat
