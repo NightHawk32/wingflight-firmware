@@ -54,6 +54,9 @@ Key pieces:
   override and asserts JSBSim's resulting `MSP_ATTITUDE` actually changes, proving
   the entire simulation loop (RC → mixer → bridge → JSBSim physics → fake IMU → MSP)
   is alive, not just Wingflight's own servo output.
+- To configure/tune SITL from the Wingflight Configurator (it connects over MSP on
+  `tcp://127.0.0.1:5761`, sharing the TCP MSP ports with the tools above), see
+  [docs/development/SITL Configurator Connection.md](../../../docs/development/SITL%20Configurator%20Connection.md).
 - For manual/interactive control (USB joystick/gamepad instead of the automated RC
   checks above), see the joystick section further down — it works the same way
   regardless of which physics backend (Gazebo or JSBSim) is driving the simulation.
