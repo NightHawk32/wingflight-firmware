@@ -1,11 +1,11 @@
-## SITL with JSBSim + FlightGear (Wingflight, recommended)
+## SITL with JSBSim + FlightGear
 
 This is the current, actively-maintained way to fly Wingflight's `SITL` target with
 real flight dynamics: [JSBSim](https://jsbsim.sourceforge.net/) computes the physics
 (fixed-wing aircraft models, e.g. the bundled `c172p`), and
-[FlightGear](https://www.flightgear.org/) optionally renders it. The legacy Gazebo 8
-workflow below still exists as an alternative, but is unmaintained/untested against
-current Wingflight.
+[FlightGear](https://www.flightgear.org/) optionally renders it. JSBSim and FlightGear
+are the only supported simulator backends; the Gazebo 8 workflow inherited from
+Betaflight has been removed.
 
 For full details (toolchain install, protocol design, gotchas, and version pinning),
 see [docs/development/SITL JSBSim FlightGear Plan.md](../../../docs/development/SITL%20JSBSim%20FlightGear%20Plan.md).
@@ -44,8 +44,7 @@ Key pieces:
 - [scripts/jsbsim_bridge.py](../../../scripts/jsbsim_bridge.py) — Python bridge:
   receives Wingflight's `servo_packet` (control surfaces + motor speed) over UDP,
   drives the corresponding JSBSim FCS properties, steps the simulation, and sends
-  JSBSim's resulting state back as an `fdm_packet` (same wire format the legacy
-  Gazebo path used, see the note below). Optional `--flightgear` flag additionally
+  JSBSim's resulting state back as an `fdm_packet` (see Ports below). Optional `--flightgear` flag additionally
   makes JSBSim emit its own native FlightGear UDP FDM stream for visualization.
 - [scripts/sitl-jsbsim-flightgear-launch.ps1](../../../scripts/sitl-jsbsim-flightgear-launch.ps1) —
   one-shot launcher for SITL + the bridge + (optionally) FlightGear.
@@ -55,71 +54,34 @@ Key pieces:
   the entire simulation loop (RC → mixer → bridge → JSBSim physics → fake IMU → MSP)
   is alive, not just Wingflight's own servo output.
 - To configure/tune SITL from the Wingflight Configurator (it connects over MSP on
-  `tcp://127.0.0.1:5761`, sharing the TCP MSP ports with the tools above), see
+  its own port, `tcp://127.0.0.1:5763`, so it runs alongside the joystick; the
+  launcher's `-Configurator` switch starts it for you), see
   [docs/development/SITL Configurator Connection.md](../../../docs/development/SITL%20Configurator%20Connection.md).
 - For manual/interactive control (USB joystick/gamepad instead of the automated RC
-  checks above), see the joystick section further down — it works the same way
-  regardless of which physics backend (Gazebo or JSBSim) is driving the simulation.
+  checks above), see the joystick section below.
 
 Pinned versions that are known to work together (JSBSim, MinGW-w64, Python venv) are
 recorded in the plan doc's §9 — update them there if you upgrade any component.
 
-## Legacy: SITL in gazebo 8 with ArduCopterPlugin
-SITL (software in the loop) simulator allows you to run betaflight/cleanflight without any hardware.
-Currently only tested on Ubuntu 16.04, x86_64, gcc (Ubuntu 5.4.0-6ubuntu1~16.04.4) 5.4.0 20160609.
-
-### install gazebo 8
-see here: [Installation](http://gazebosim.org/tutorials?cat=install)
-
-### copy & modify world
-for Ubunutu 16.04:
-`cp /usr/share/gazebo-8/worlds/iris_arducopter_demo.world .`
-
-change `real_time_update_rate` in `iris_arducopter_demo.world`:
-`<real_time_update_rate>0</real_time_update_rate>`
-to
-`<real_time_update_rate>100</real_time_update_rate>`
-***this suggest set to non-zero***
-
-`100` mean what speed your computer should run in (Hz).
-Faster computer can set to a higher rate.
-see [here](http://gazebosim.org/tutorials?tut=modifying_world&cat=build_world#PhysicsProperties) for detail.
-`max_step_size` should NOT higher than `0.0025` as I tested.
-smaller mean more accurate, but need higher speed CPU to run as realtime.
-
-### build betaflight
-run `make TARGET=SITL`
-
-### settings
-to avoid simulation speed slow down, suggest to set some settings belows:
-
-In `configuration` page:
-
-1. `ESC/Motor`: `PWM`, disable `Motor PWM speed Sparted from PID speed`
-2. `PID loop frequency` as high as it can.
-
-### start and run
-1. start betaflight: `./obj/main/betaflight_SITL.elf`
-2. start gazebo: `gazebo --verbose ./iris_arducopter_demo.world`
-4. connect your transmitter and fly/test, I used a app to send `MSP_SET_RAW_RC`, code available [here](https://github.com/cs8425/msp-controller).
-
-### flying with a USB joystick/gamepad (Wingflight)
+### Flying with a USB joystick/gamepad
 For a documented, ready-to-use tool that reads a USB joystick/gamepad and feeds it
 into SITL as RC input (with a GUI for binding axes/buttons to RC channels), see
 [docs/development/SITL Joystick RC Input.md](../../../docs/development/SITL%20Joystick%20RC%20Input.md)
-and [scripts/sitl-joystick-rc.py](../../../scripts/sitl-joystick-rc.py).
+and [scripts/sitl-joystick-rc.py](../../../scripts/sitl-joystick-rc.py). The launcher's
+`-Joystick` switch starts it for you.
 
-### note
-Wingflight	->	sim (gazebo or the JSBSim bridge)	`udp://127.0.0.1:9002`
-sim (gazebo or the JSBSim bridge)	->	Wingflight	`udp://127.0.0.1:9003`
+### Ports
+| Direction | Address | Payload |
+|---|---|---|
+| Wingflight -> JSBSim bridge | `udp://127.0.0.1:9002` | `servo_packet`: `motor_speed[4]` (M1-M4) + `servo[8]` (S1-S8, us) |
+| JSBSim bridge -> Wingflight | `udp://127.0.0.1:9003` | `fdm_packet`: IMU, attitude quaternion, velocity, NED position |
+| JSBSim -> FlightGear | `udp://127.0.0.1:5550` | FlightGear native FDM (only with `--flightgear`) |
+| UARTx <-> MSP clients | `tcp://127.0.0.1:576x` | one client per port; 5761 = RC client (joystick), 5762 = bridge `--msp-gps`, 5763 = Configurator |
 
-The wire format on these two ports (`servo_packet` out / `fdm_packet` in) is shared
-by both physics backends — [scripts/jsbsim_bridge.py](../../../scripts/jsbsim_bridge.py)
-speaks the exact same protocol Gazebo's `ArduCopterPlugin` did, so nothing in
-`target.c`/`udplink.c` needed to change to add JSBSim support.
+Both structs are defined in [target.h](target.h). `motor_speed[i]` carries M(i+1),
+so the wing throttle M1 is `motor_speed[0]`.
 
-UARTx will bind on `tcp://127.0.0.1:576x` when port been open.
-
+### eeprom.bin
 `eeprom.bin` (in the working directory SITL is started from) holds the saved
 config. Its size is `EEPROM_SIZE` (32768 bytes) in
 [src/main/target/SITL/target.h](target.h). Note: on a fresh/missing `eeprom.bin`,
@@ -127,3 +89,9 @@ SITL's first launch writes the default config and exits - run it again. A stale
 `eeprom.bin` saved by an older build can also mask config-default fixes (e.g.
 report `servoCount=0` forever); delete it or use `sitl-rc-check.ps1 -FreshEeprom`
 to re-exercise the defaults.
+
+"Save and reboot" from the Configurator writes `eeprom.bin` and then **exits** SITL
+(there is no in-process restart), so start it again yourself. Features SITL doesn't
+compile in (LED_STRIP, OSD, SOFTSERIAL, RANGEFINDER, DYN_NOTCH, RPM_FILTER, ...) are
+cleared when you save. SITL prints `[config] features 0x... not supported by this build`
+on stderr when that happens.

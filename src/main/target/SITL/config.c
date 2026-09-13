@@ -41,13 +41,18 @@
 //   MSP connection, because SITL's per-port TCP MSP server (dyad) accepts one
 //   client at a time and UART1 (5761) is already taken by the RC/telemetry
 //   client (sitl-joystick-rc.py or sitl-rc-check.ps1).
+// - Third MSP port on UART3 (TCP 127.0.0.1:5763), reserved for the Configurator,
+//   so it can stay connected alongside the joystick RC and the GPS feed. Three
+//   MSP ports is MAX_MSP_PORT_COUNT.
 void targetConfiguration(void)
 {
     gpsConfigMutable()->provider = GPS_MSP;
 
-    serialPortConfig_t *uart2Config = serialFindPortConfigurationMutable(SERIAL_PORT_USART2);
-    if (uart2Config) {
-        uart2Config->functionMask = FUNCTION_MSP;
+    for (serialPortIdentifier_e id = SERIAL_PORT_USART2; id <= SERIAL_PORT_USART3; id++) {
+        serialPortConfig_t *portConfig = serialFindPortConfigurationMutable(id);
+        if (portConfig) {
+            portConfig->functionMask = FUNCTION_MSP;
+        }
     }
 }
 #endif

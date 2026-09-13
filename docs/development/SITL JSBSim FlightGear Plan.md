@@ -1,7 +1,8 @@
 # SITL → JSBSim → FlightGear Integration Plan
 
 Status: **Phases 0–4 implemented; Phase 5 (gap review, 2026-08-27) applied;
-Phase 6 (2026-08-28, §12) closed every remaining §10.15 gap.**
+Phase 6 (2026-08-28, §12) closed every remaining §10.15 gap. Gazebo support was
+dropped on 2026-09-13 (§13): JSBSim + FlightGear are the only simulator backends.**
 The native MinGW-w64 toolchain is vendored under `tools/mingw64`, the
 `pwmOutConfig`/servo link gap is fixed, `make TARGET=SITL` builds and runs, RC
 injection and servo output are confirmed end-to-end via `sitl-rc-check.ps1`, and
@@ -161,8 +162,8 @@ surfaces (S1–S4) and throttle (M1) actually connected end-to-end.
   two remain manual installs using their official Windows installer `.exe` files** —
   only the MinGW-w64 native compiler toolchain (which ships as a clean portable zip) is
   vendored/automated like the ARM SDK.
-- Reworking the Gazebo workflow described in the existing SITL README — it can stay
-  documented as a legacy/alternative path, not removed.
+- Gazebo. The inherited Gazebo 8 workflow is no longer supported and was removed
+  from the SITL README and code comments on 2026-09-13 (§13).
 - Any change to real-hardware targets' PWM/servo code paths.
 
 ## 4. Proposed Toolchain Setup (Phase 0)
@@ -327,8 +328,8 @@ user's decision above.
     with roll Δ68.1°, pitch Δ36°, yaw Δ28° (all far above the 3° threshold), exit
     code 0.
 - [x] Update [src/main/target/SITL/README.md](../../src/main/target/SITL/README.md)
-  with the new JSBSim/FlightGear workflow (keep the Gazebo section as a legacy
-  alternative). **Done**.
+  with the new JSBSim/FlightGear workflow. **Done** (the Gazebo section, kept at
+  first as a legacy alternative, was removed on 2026-09-13, §13).
 - [x] Record the final, working versions of JSBSim/FlightGear/MinGW-w64 used, since
   none of these are pinned by a lockfile today. **Done** — see §9.
 
@@ -573,8 +574,8 @@ from `timerioTagGetByUsage(TIM_USE_MOTOR, ...)`, so every motor ioTag resolved t
 the wing's throttle) was never written by anything, ever.
 
 Fixed by extending the table to four `TIM_USE_MOTOR` + four `TIM_USE_SERVO`
-entries (`USABLE_TIMER_CHANNEL_COUNT` 8 to match). Four motors rather than one
-keeps the legacy Gazebo quad path working; `motorPwmDevInit()` rejects more.
+entries (`USABLE_TIMER_CHANNEL_COUNT` 8 to match). Four motors match
+`servo_packet.motor_speed[4]`; `motorPwmDevInit()` rejects more.
 
 ### 10.3 The bridge read the wrong motor channel (fixed)
 
@@ -588,9 +589,10 @@ pwmPkt.motor_speed[0] = motorsPwm[1] / outScale;   // M2 - unused on a 1-motor w
 ```
 
 so even after 10.2 the bridge would have been reading a channel a fixed-wing
-build never populates. The bridge now defaults to `motor_speed[3]`, with
-`--throttle-motor-index` to override. `target.c` keeps the remap so the legacy
-Gazebo path is unaffected.
+build never populates. The bridge was switched to `motor_speed[3]`, with
+`--throttle-motor-index` to override. **Superseded 2026-09-13 (§13):** the remap
+was removed from `target.c`, M1 is now `motor_speed[0]`, and the bridge default
+followed.
 
 ### 10.4 The JSBSim engine was never started (fixed)
 
@@ -986,8 +988,8 @@ And three non-bug discoveries worth remembering:
 
 ### 12.4 GPS: bridge `--msp-gps` feed + `-Mode gps`
 
-`fdm_packet` carries no geodetic position, so instead of breaking the shared
-Gazebo wire format, GPS goes in through the front door:
+`fdm_packet` carries no geodetic position, so instead of changing the UDP wire
+format, GPS goes in through the front door:
 [scripts/jsbsim_bridge.py](../../scripts/jsbsim_bridge.py) `--msp-gps` opens
 its own MSP TCP connection and pushes `MSP_SET_RAW_GPS` frames (fix, 10 sats,
 geodetic lat/lon, altitude, ground speed) at `--msp-gps-rate` (5 Hz default),
@@ -1033,3 +1035,38 @@ sitl-jsbsim-flightgear-launch.ps1 -> FlightGear-first ordering validated; bridge
                                      warm), whole flight renders from 3000 ft
 ```
 
+
+## 13. Gazebo dropped (2026-09-13)
+
+The project no longer pursues the Gazebo 8 workflow inherited from Betaflight.
+JSBSim (physics) and FlightGear (visualization) are the only supported backends.
+Cleanup applied:
+
+- [src/main/target/SITL/README.md](../../src/main/target/SITL/README.md): the
+  "Legacy: SITL in gazebo 8 with ArduCopterPlugin" section is gone. The still
+  relevant parts (joystick pointer, UDP/TCP port map, `eeprom.bin` notes) were
+  kept and rewritten for JSBSim/FlightGear.
+- [target.c](../../src/main/target/SITL/target.c): `refreshPwmPacket()` no longer
+  applies the ArduCopterPlugin motor remap (M1 to `motor_speed[3]`, M2-M4 to
+  `[0..2]`). `motor_speed[i]` now carries M(i+1), so the wing throttle is
+  `motor_speed[0]`. This retires the §10.3 trap instead of documenting around it.
+- [scripts/jsbsim_bridge.py](../../scripts/jsbsim_bridge.py): the
+  `--throttle-motor-index` default changed from 3 to 0 to match. The flag stays
+  for experiments.
+- Gazebo mentions removed from comments in `target.c`, `jsbsim_bridge.py`,
+  `sitl-rc-check.ps1` and `sitl-jsbsim-flightgear-launch.ps1`.
+
+The `fdm_packet`/`servo_packet` layout is unchanged apart from the motor index
+order. Its origin in the Gazebo plugin (§2.4) is historical only; there is no
+compatibility obligation to Gazebo any more, so it can be extended freely if
+JSBSim needs more fields (e.g. absolute MSL altitude, §10.12).
+
+Validated after the change (2026-09-13):
+
+```
+make TARGET=SITL DEBUG=GDB -j 8     -> links, obj/main/wingflight_SITL.elf
+sitl-rc-check.ps1 -Mode throttle    -> PASS  armed, MSP_MOTOR 1827us, JSBSim thr=0.84, IAS +17.5kt
+```
+
+Sections 1-12 are kept as the historical record; their Gazebo references
+describe the state at the time they were written.

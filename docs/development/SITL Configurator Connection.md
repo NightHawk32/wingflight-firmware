@@ -111,26 +111,34 @@ So the tools have to be divided across ports:
 | `scripts/sitl-joystick-rc.py` | 5761 (UART1) | `--port` / `--port-candidates` |
 | `scripts/sitl-rc-check.ps1` | 5761 (UART1) | `-PortCandidates` |
 | `scripts/jsbsim_bridge.py --msp-gps` | 5762 (UART2) | `--msp-gps-port` |
-| Configurator | your choice | the manual `tcp://` address |
+| Configurator | 5763 (UART3) | the manual `tcp://` address |
 
-Pick one of these:
+SITL's config default enables MSP on UART1, UART2 and UART3. That is three ports,
+which is also `MAX_MSP_PORT_COUNT`. So the **Configurator always uses
+`tcp://127.0.0.1:5763`**, and the joystick and GPS feed keep their ports.
 
-- **Configurator only** (no joystick, no RC check): use `tcp://127.0.0.1:5761`.
-- **Configurator + joystick, no GPS feed**: leave the joystick on 5761 and give
-  the configurator `tcp://127.0.0.1:5762`.
-- **Configurator + joystick + `--msp-gps`**: all three need a port, so open a
-  third one. In the configurator CLI (or any MSP client), enable MSP on UART3:
+To start everything together:
 
-  ```
-  serial 2 1 115200 57600 0 115200
-  save
-  ```
+```powershell
+.\scripts\sitl-jsbsim-flightgear-launch.ps1 -Trim -Joystick -Configurator -StopOnExit
+```
 
-  (`2` = `SERIAL_PORT_USART3`, `1` = `FUNCTION_MSP`; see
-  [src/main/io/serial.h](../../src/main/io/serial.h#L88).) After restarting SITL,
-  connect the configurator to `tcp://127.0.0.1:5763` and keep 5761/5762 for the
-  joystick and the GPS feed. Note this is a *saved config* change, so it lives in
-  `eeprom.bin` and is lost if you delete it or run with `-FreshEeprom`.
+`-Configurator` runs `pnpm start` in `..\wingflight-configurator` (change it with
+`-ConfiguratorDir`) and checks that SITL is listening on 5763.
+
+**Older `eeprom.bin`:** config defaults apply only when the config is reset, so
+an `eeprom.bin` created before the Configurator port existed has no 5763, and the
+launcher warns about it. Either delete `obj\main\eeprom.bin` (this resets saved
+settings), or connect the Configurator once to `tcp://127.0.0.1:5762` and run this
+in its CLI:
+
+```
+serial 2 1 115200 57600 0 115200
+save
+```
+
+(`2` = `SERIAL_PORT_USART3`, `1` = `FUNCTION_MSP`; see
+[src/main/io/serial.h](../../src/main/io/serial.h#L88).) Then restart SITL.
 
 Freeing a port is just disconnecting the client that holds it — SITL's accept
 thread picks up the next waiting client immediately (`[CLS]UART1` then

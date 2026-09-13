@@ -62,8 +62,8 @@ Useful flags:
 
 | Flag | Meaning |
 |---|---|
-| `--list-joysticks` | List detected joysticks/gamepads (index, axes/buttons/hats) and exit |
-| `--joystick N` | Use joystick index `N` (default `0`) |
+| `--list-joysticks` | List detected joysticks/gamepads (index, name, axes/buttons/hats, GUID) and exit |
+| `--joystick N\|NAME` | Use joystick index `N`, or the first device whose name contains `NAME` (case-insensitive, e.g. `--joystick frsky`). Default: the device named in the mapping file, else index `0` |
 | `--channels N` | Number of RC channels to send/show, 4-18 (default `8`) |
 | `--mapping PATH` | Mapping JSON file to load/save (default `scripts/sitl-joystick-mapping.json`, gitignored — it's per-user hardware config) |
 | `--host` / `--port` / `--port-candidates` | Override MSP connection target (same auto-detect ports as `sitl-rc-check.ps1`) |
@@ -71,6 +71,25 @@ Useful flags:
 
 On exit, the tool sends a few neutral RC frames (throttle low, everything else
 centered) before closing the connection.
+
+### Several devices enumerate as joysticks
+
+Many USB gadgets (3Dconnexion drivers, keyboard/mouse emulators, radios in
+"joystick" mode) show up as joysticks, so index `0` isn't always the right one.
+To pick one:
+
+- Pass `--joystick <name part>` (e.g. `--joystick frsky`). The launcher takes the
+  same thing as `-JoystickDevice frsky`.
+- Or use the **<** / **>** buttons at the top right of the window to cycle
+  through devices. **Save** writes the device name into the mapping file, and
+  later runs pick that device automatically.
+
+Mappings store control indices, so rebind channels after switching to a
+different device. Unplugging or replugging devices while the tool is running is
+handled; it stays on the same device if that device is still connected.
+
+The joystick is read even when the tool's window isn't focused (for example
+while FlightGear has focus).
 
 ## Channel order (important)
 

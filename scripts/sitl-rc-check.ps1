@@ -1371,7 +1371,7 @@ try {
         # A disarmed FC forces motor output to motor-stop regardless of RC
         # (drivers/motor.c), so unlike roll/pitch this HAS to arm. Chain under
         # test: RC throttle -> mixer -> motorsPwm[0] -> servo_packet
-        # motor_speed[3] (target.c's Gazebo remap) -> jsbsim_bridge.py ->
+        # motor_speed[0] -> jsbsim_bridge.py ->
         # fcs/throttle-cmd-norm -> engine thrust (IAS).
 
         # 1. Put ARM on AUX1 (1700-2100us): MSP_SET_MODE_RANGE payload =

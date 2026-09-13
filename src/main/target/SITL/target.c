@@ -53,9 +53,9 @@
 // motorCount by counting non-zero motorConfig()->dev.ioTags, and a motorCount of
 // 0 means motorDevInit() never wires up the motor device - so
 // pwmCompleteMotorUpdate() below, the *only* place a servo_packet is ever sent to
-// the simulator, is never called and JSBSim/Gazebo receive nothing at all.
-// Four motor channels (rather than just M1) keep the legacy Gazebo quad path
-// working; motorPwmDevInit() rejects anything above four.
+// the simulator, is never called and the JSBSim bridge receives nothing at all.
+// Four motor channels match servo_packet.motor_speed[4]; a fixed-wing mixer only
+// drives M1. motorPwmDevInit() rejects anything above four.
 #define SITL_TIMER_MOTOR_COUNT 4
 #define SITL_TIMER_SERVO_COUNT 4
 const timerHardware_t timerHardware[SITL_TIMER_MOTOR_COUNT + SITL_TIMER_SERVO_COUNT] = {
@@ -562,16 +562,15 @@ bool pwmIsMotorEnabled(uint8_t index) {
 
 static void refreshPwmPacket(bool motorsActive)
 {
-    // for gazebo8 ArduCopterPlugin remap, normal range = [0.0, 1.0], 3D range = [-1.0, 1.0].
-    // NOTE the remap: motorsPwm[0] (M1, the fixed-wing throttle) lands in
-    // motor_speed[3], not [0]. scripts/jsbsim_bridge.py mirrors this.
+    // Normal range = [0.0, 1.0], 3D range = [-1.0, 1.0]. motor_speed[i] carries
+    // M(i+1), so M1 (the fixed-wing throttle) is motor_speed[0];
+    // scripts/jsbsim_bridge.py reads it from there.
     const double outScale = 1000.0;
 
     if (motorsActive) {
-        pwmPkt.motor_speed[3] = motorsPwm[0] / outScale;
-        pwmPkt.motor_speed[0] = motorsPwm[1] / outScale;
-        pwmPkt.motor_speed[1] = motorsPwm[2] / outScale;
-        pwmPkt.motor_speed[2] = motorsPwm[3] / outScale;
+        for (uint8_t i = 0; i < ARRAYLEN(pwmPkt.motor_speed); i++) {
+            pwmPkt.motor_speed[i] = motorsPwm[i] / outScale;
+        }
     } else {
         // Motor device disabled (disarmed): motorsPwm[] is stale, and the real
         // output is motor-stop regardless of RC.
@@ -656,9 +655,15 @@ void FLASH_Unlock(void) {
         size_t lSize = ftell(eepromFd);
         rewind(eepromFd);
 
+        // A file of a different size is still usable: the config is validated by
+        // its header/CRC, and FLASH_Lock() rewrites it at exactly EEPROM_SIZE.
         size_t n = fread(eepromData, 1, sizeof(eepromData), eepromFd);
-        if (n == lSize) {
+        if (n == sizeof(eepromData) || n == lSize) {
             printf("[FLASH_Unlock] loaded '%s', size = %zu / %zu\n", EEPROM_FILENAME, lSize, sizeof(eepromData));
+            if (lSize != sizeof(eepromData)) {
+                fprintf(stderr, "[FLASH_Unlock] '%s' is %zu bytes, expected %zu - it is rewritten at the expected size on the next save\n",
+                    EEPROM_FILENAME, lSize, sizeof(eepromData));
+            }
         } else {
             fprintf(stderr, "[FLASH_Unlock] failed to load '%s'\n", EEPROM_FILENAME);
             return;
@@ -678,11 +683,18 @@ void FLASH_Unlock(void) {
 void FLASH_Lock(void) {
     // flush & close
     if (eepromFd != NULL) {
-        fseek(eepromFd, 0, SEEK_SET);
-        fwrite(eepromData, 1, sizeof(eepromData), eepromFd);
+        // Reopen truncating, so an oversized file from elsewhere shrinks to EEPROM_SIZE.
         fclose(eepromFd);
         eepromFd = NULL;
-        printf("[FLASH_Lock] saved '%s'\n", EEPROM_FILENAME);
+        FILE *out = fopen(EEPROM_FILENAME, "wb");
+        if (out == NULL || fwrite(eepromData, sizeof(eepromData), 1, out) != 1) {
+            fprintf(stderr, "[FLASH_Lock] failed to save '%s': %s\n", EEPROM_FILENAME, strerror(errno));
+        } else {
+            printf("[FLASH_Lock] saved '%s'\n", EEPROM_FILENAME);
+        }
+        if (out != NULL) {
+            fclose(out);
+        }
     } else {
         fprintf(stderr, "[FLASH_Lock] eeprom is not unlocked\n");
     }

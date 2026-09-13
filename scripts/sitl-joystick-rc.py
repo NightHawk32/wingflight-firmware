@@ -17,9 +17,17 @@ full setup guide.
 import argparse
 import json
 import os
+import select
 import socket
 import sys
+import threading
 import time
+
+# Keep reading the joystick while another window (FlightGear, the
+# configurator) has focus; SDL drops joystick input for unfocused windows by
+# default. Must be set before pygame/SDL initializes.
+os.environ.setdefault("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1")
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
 try:
     import pygame
@@ -106,6 +114,125 @@ def try_connect(host, port_candidates, explicit_port, timeout=0.5):
     return None, 0
 
 
+class MspLink(threading.Thread):
+    """Owns the SITL MSP socket: (re)connects and streams RC frames.
+
+    Runs off the GUI thread because connecting blocks: a refused or silent
+    candidate port costs up to the connect/MSP timeout each attempt, which
+    froze the GUI (and joystick polling) for ~1 s out of every second.
+    """
+
+    def __init__(self, host, port_candidates, explicit_port, rate, neutral):
+        super().__init__(daemon=True)
+        self.host = host
+        self.port_candidates = port_candidates
+        self.explicit_port = explicit_port
+        self.interval = 1.0 / rate
+        self.neutral = list(neutral)
+        self.outputs = list(neutral)
+        self.port = 0
+        self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+
+    def set_outputs(self, outputs):
+        with self.lock:
+            self.outputs = list(outputs)
+
+    @property
+    def connected(self):
+        return self.port != 0
+
+    def stop(self):
+        self.stop_event.set()
+        self.join(timeout=2.0)
+
+    def run(self):
+        sock = None
+        next_send = time.monotonic()
+        while not self.stop_event.is_set():
+            if sock is None:
+                sock, port = try_connect(self.host, self.port_candidates, self.explicit_port)
+                if sock is None:
+                    self.stop_event.wait(1.0)
+                    continue
+                sock.settimeout(0.5)
+                self.port = port
+                print(f"[joystick-rc] Connected to SITL MSP on {self.host}:{port}")
+            try:
+                # discard replies so SITL's send buffer never fills up
+                while select.select([sock], [], [], 0)[0]:
+                    if not sock.recv(4096):
+                        raise OSError("connection closed")
+                with self.lock:
+                    outputs = self.outputs
+                send_msp(sock, MSP_SET_RAW_RC, pack_channels(outputs))
+            except OSError:
+                print("[joystick-rc] Lost connection to SITL, will retry")
+                sock.close()
+                sock = None
+                self.port = 0
+                continue
+            next_send += self.interval
+            delay = next_send - time.monotonic()
+            if delay < 0:
+                next_send = time.monotonic()
+                delay = 0
+            self.stop_event.wait(delay)
+
+        if sock is not None:
+            for _ in range(5):
+                try:
+                    send_msp(sock, MSP_SET_RAW_RC, pack_channels(self.neutral))
+                except OSError:
+                    break
+                time.sleep(0.02)
+            sock.close()
+        self.port = 0
+
+
+# --- Joystick selection --------------------------------------------------------
+
+def open_all_joysticks():
+    joysticks = []
+    for i in range(pygame.joystick.get_count()):
+        j = pygame.joystick.Joystick(i)
+        j.init()
+        joysticks.append(j)
+    return joysticks
+
+
+def describe_joystick(i, j):
+    return (f"[{i}] {j.get_name()} (axes={j.get_numaxes()} buttons={j.get_numbuttons()} "
+            f"hats={j.get_numhats()} guid={j.get_guid()})")
+
+
+def select_joystick(joysticks, spec, saved_name):
+    """Pick a device index from --joystick (index or name substring) or the saved mapping.
+
+    Returns the index, or raises SystemExit with the device list when the
+    request can't be matched.
+    """
+    listing = "\n".join(describe_joystick(i, j) for i, j in enumerate(joysticks))
+    if spec is not None:
+        if spec.isdigit():
+            idx = int(spec)
+            if idx < len(joysticks):
+                return idx
+            sys.exit(f"--joystick {idx}: no such device. Detected:\n{listing}")
+        matches = [i for i, j in enumerate(joysticks) if spec.lower() in j.get_name().lower()]
+        if not matches:
+            sys.exit(f"--joystick '{spec}': no device name contains that. Detected:\n{listing}")
+        if len(matches) > 1:
+            print(f"[joystick-rc] --joystick '{spec}' matches {len(matches)} devices, using [{matches[0]}]")
+        return matches[0]
+    if saved_name:
+        for i, j in enumerate(joysticks):
+            if j.get_name() == saved_name:
+                return i
+        print(f"[joystick-rc] Saved mapping device '{saved_name}' not found, using [0]")
+    return 0
+
+
 # --- Mapping model -----------------------------------------------------------
 
 def pack_channels(values_us):
@@ -121,12 +248,18 @@ def read_source_value(source, joystick):
     if source is None:
         return None
     kind = source["type"]
+    index = source["index"]
+    # a mapping saved for a different device may reference controls this one lacks
     if kind == "axis":
-        return joystick.get_axis(source["index"])
+        return joystick.get_axis(index) if index < joystick.get_numaxes() else None
     if kind == "button":
-        return 1.0 if joystick.get_button(source["index"]) else -1.0
+        if index >= joystick.get_numbuttons():
+            return None
+        return 1.0 if joystick.get_button(index) else -1.0
     if kind in ("hat_x", "hat_y"):
-        hat = joystick.get_hat(source["index"])
+        if index >= joystick.get_numhats():
+            return None
+        hat = joystick.get_hat(index)
         return float(hat[0] if kind == "hat_x" else hat[1])
     return None
 
@@ -164,14 +297,17 @@ def source_label(source):
 
 
 def load_mapping(path, channel_names):
+    """Return (mapping, saved joystick name or None)."""
     mapping = {name: None for name in channel_names}
+    saved_name = None
     if path and os.path.isfile(path):
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
+        saved_name = data.get("joystick_name")
         for ch in data.get("channels", []):
             if ch.get("name") in mapping:
                 mapping[ch["name"]] = ch.get("source")
-    return mapping
+    return mapping, saved_name
 
 
 def save_mapping(path, channel_names, mapping, joystick_name):
@@ -195,21 +331,20 @@ def run(args):
     pygame.init()
     pygame.joystick.init()
 
-    if pygame.joystick.get_count() == 0:
+    joysticks = open_all_joysticks()
+    if not joysticks:
         sys.exit("No joystick/gamepad detected. Plug one in and try again.")
     if args.list_joysticks:
-        for i in range(pygame.joystick.get_count()):
-            j = pygame.joystick.Joystick(i)
-            j.init()
-            print(f"[{i}] {j.get_name()} (axes={j.get_numaxes()} buttons={j.get_numbuttons()} hats={j.get_numhats()})")
+        for i, j in enumerate(joysticks):
+            print(describe_joystick(i, j))
         return
 
-    joy_index = args.joystick if args.joystick < pygame.joystick.get_count() else 0
-    joystick = pygame.joystick.Joystick(joy_index)
-    joystick.init()
-
     channel_names = CHANNEL_NAMES[: args.channels]
-    mapping = load_mapping(args.mapping, channel_names)
+    mapping, saved_name = load_mapping(args.mapping, channel_names)
+    joy_index = select_joystick(joysticks, args.joystick, saved_name)
+    joystick = joysticks[joy_index]
+    current_id = (joystick.get_guid(), joystick.get_name())
+    print(f"[joystick-rc] Using {describe_joystick(joy_index, joystick)}")
 
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Wingflight SITL Joystick RC Bridge")
@@ -217,18 +352,18 @@ def run(args):
     small = pygame.font.SysFont("consolas,couriernew,monospace", 13)
     clock = pygame.time.Clock()
 
-    sock = None
-    port = 0
     port_candidates = [int(p) for p in args.port_candidates.split(",") if p]
-    last_connect_attempt = 0.0
-    last_send = 0.0
-    send_interval = 1.0 / args.rate
+    link = MspLink(args.host, port_candidates, args.port, args.rate,
+                   [default_us_for(n) for n in channel_names])
+    link.start()
 
     bind_channel = None
     bind_initial = None
 
     def layout():
         rects = {"rows": {}}
+        rects["joy_prev"] = pygame.Rect(WIDTH - 90, 12, 32, 24)
+        rects["joy_next"] = pygame.Rect(WIDTH - 50, 12, 32, 24)
         y = ROWS_TOP
         for name in channel_names:
             rects["rows"][name] = {
@@ -244,24 +379,46 @@ def run(args):
 
     rects = layout()
 
+    def switch_joystick(new_index):
+        nonlocal joy_index, joystick, current_id, bind_channel
+        joy_index = new_index % len(joysticks)
+        joystick = joysticks[joy_index]
+        current_id = (joystick.get_guid(), joystick.get_name())
+        bind_channel = None
+        print(f"[joystick-rc] Using {describe_joystick(joy_index, joystick)}")
+
     running = True
     while running:
-        now = time.monotonic()
-
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            elif event.type in (pygame.JOYDEVICEADDED, pygame.JOYDEVICEREMOVED):
+                # hotplug: re-enumerate, staying on the same device if it's still there
+                new_list = open_all_joysticks()
+                if len(new_list) != len(joysticks) or event.type == pygame.JOYDEVICEREMOVED:
+                    joysticks = new_list
+                    if not joysticks:
+                        print("[joystick-rc] All joysticks removed")
+                        running = False
+                        break
+                    same = [i for i, j in enumerate(joysticks)
+                            if (j.get_guid(), j.get_name()) == current_id]
+                    switch_joystick(same[0] if same else 0)
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 bind_channel = None
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 pos = event.pos
                 if rects["quit"].collidepoint(pos):
                     running = False
+                elif rects["joy_prev"].collidepoint(pos):
+                    switch_joystick(joy_index - 1)
+                elif rects["joy_next"].collidepoint(pos):
+                    switch_joystick(joy_index + 1)
                 elif rects["save"].collidepoint(pos):
                     save_mapping(args.mapping, channel_names, mapping, joystick.get_name())
                     print(f"[joystick-rc] Saved mapping to {args.mapping}")
                 elif rects["load"].collidepoint(pos):
-                    mapping = load_mapping(args.mapping, channel_names)
+                    mapping, _ = load_mapping(args.mapping, channel_names)
                     print(f"[joystick-rc] Reloaded mapping from {args.mapping}")
                 else:
                     for name, row in rects["rows"].items():
@@ -305,51 +462,25 @@ def run(args):
                     bind_channel = None
                     break
 
-        # reconnect handling
-        if sock is None and now - last_connect_attempt > 1.0:
-            last_connect_attempt = now
-            sock, port = try_connect(args.host, port_candidates, args.port)
-            if sock is not None:
-                print(f"[joystick-rc] Connected to SITL MSP on {args.host}:{port}")
-
-        if sock is not None:
-            sock.setblocking(False)
-            try:
-                while sock.recv(4096):
-                    pass
-            except BlockingIOError:
-                pass
-            except OSError:
-                print("[joystick-rc] Lost connection to SITL, will retry")
-                sock.close()
-                sock = None
-
-        # compute channel outputs
+        # compute channel outputs; the link thread sends the latest set
         outputs = []
         for name in channel_names:
             source = mapping[name]
             raw = read_source_value(source, joystick)
             us = compute_us(name, None if raw is None else {"raw": raw, "config": source})
             outputs.append(us)
-
-        if sock is not None and now - last_send >= send_interval:
-            last_send = now
-            try:
-                send_msp(sock, MSP_SET_RAW_RC, pack_channels(outputs))
-            except OSError:
-                print("[joystick-rc] Send failed, will reconnect")
-                try:
-                    sock.close()
-                except OSError:
-                    pass
-                sock = None
+        link.set_outputs(outputs)
 
         # --- draw ---
         screen.fill((24, 24, 28))
-        status = f"Joystick: {joystick.get_name()}"
-        conn = f"SITL MSP: connected on port {port}" if sock is not None else "SITL MSP: disconnected (retrying...)"
+        status = f"Joystick [{joy_index + 1}/{len(joysticks)}]: {joystick.get_name()}"
+        port = link.port
+        conn = f"SITL MSP: connected on port {port}" if port else "SITL MSP: disconnected (retrying...)"
         screen.blit(font.render(status, True, (230, 230, 230)), (20, 15))
-        screen.blit(font.render(conn, True, (120, 220, 120) if sock is not None else (220, 140, 90)), (20, 38))
+        screen.blit(font.render(conn, True, (120, 220, 120) if port else (220, 140, 90)), (20, 38))
+        for key, label in (("joy_prev", "<"), ("joy_next", ">")):
+            pygame.draw.rect(screen, (70, 130, 180), rects[key])
+            screen.blit(font.render(label, True, (0, 0, 0)), (rects[key].x + 11, rects[key].y + 3))
 
         y = ROWS_TOP
         for name, us in zip(channel_names, outputs):
@@ -389,16 +520,7 @@ def run(args):
         pygame.display.flip()
         clock.tick(60)
 
-    if sock is not None:
-        neutral = [default_us_for(n) for n in channel_names]
-        for _ in range(5):
-            try:
-                send_msp(sock, MSP_SET_RAW_RC, pack_channels(neutral))
-            except OSError:
-                break
-            time.sleep(0.02)
-        sock.close()
-
+    link.stop()  # sends neutral frames before closing
     pygame.quit()
 
 
@@ -408,7 +530,9 @@ def parse_args():
     p.add_argument("--port", type=int, default=0, help="Explicit MSP TCP port (default: auto-detect)")
     p.add_argument("--port-candidates", default="5760,5761", help="Comma-separated ports to try when --port is 0")
     p.add_argument("--rate", type=float, default=50.0, help="RC frame send rate in Hz (default: 50)")
-    p.add_argument("--joystick", type=int, default=0, help="Joystick index to use (default: 0)")
+    p.add_argument("--joystick", default=None,
+                   help="Joystick index or case-insensitive name substring, e.g. 'FrSky' "
+                        "(default: the device named in the mapping file, else index 0)")
     p.add_argument("--list-joysticks", action="store_true", help="List detected joysticks and exit")
     p.add_argument("--channels", type=int, default=DEFAULT_CHANNEL_COUNT,
                     help=f"Number of RC channels to send, 4-{MAX_CHANNEL_COUNT} (default: {DEFAULT_CHANNEL_COUNT})")

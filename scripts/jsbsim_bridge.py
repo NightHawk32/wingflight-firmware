@@ -63,17 +63,10 @@ S_RIGHT_AILERON = 1
 S_ELEVATOR = 2
 S_RUDDER = 3
 
-# Wingflight's M1 (throttle) does NOT land in motor_speed[0]: target.c's
-# pwmCompleteMotorUpdate() applies the legacy Gazebo ArduCopterPlugin motor
-# remap, so motorsPwm[0] (== M1) is written to motor_speed[3]:
-#     pwmPkt.motor_speed[3] = motorsPwm[0] / 1000.0;   <-- M1, the wing throttle
-#     pwmPkt.motor_speed[0] = motorsPwm[1] / 1000.0;
-#     pwmPkt.motor_speed[1] = motorsPwm[2] / 1000.0;
-#     pwmPkt.motor_speed[2] = motorsPwm[3] / 1000.0;
-# A single-motor fixed-wing build never writes motorsPwm[1..3] at all, so
-# reading motor_speed[0] here yields a permanent 0.0 throttle. Override with
-# --throttle-motor-index if you change that remap in target.c.
-DEFAULT_THROTTLE_MOTOR_INDEX = 3
+# target.c's refreshPwmPacket() writes motorsPwm[i] to motor_speed[i], so
+# Wingflight's M1 (the wing throttle) is motor_speed[0]. A single-motor
+# fixed-wing build never writes motor_speed[1..3].
+DEFAULT_THROTTLE_MOTOR_INDEX = 0
 
 # Default initial position: KSFO, which the FlightGear base package ships
 # scenery for. JSBSim's own default IC is lat/lon 0/0 (open ocean, no
@@ -366,7 +359,7 @@ def parse_args(argv=None):
     parser.add_argument("--throttle-motor-index", type=int, default=DEFAULT_THROTTLE_MOTOR_INDEX,
                         choices=[0, 1, 2, 3],
                         help="servo_packet.motor_speed[] index carrying M1/throttle "
-                             f"(default: {DEFAULT_THROTTLE_MOTOR_INDEX} - target.c's Gazebo motor remap puts M1 there)")
+                             f"(default: {DEFAULT_THROTTLE_MOTOR_INDEX} = M1)")
     parser.add_argument("--servo-min", type=float, default=1000.0, help="Servo pulse at full negative deflection, us (default: 1000)")
     parser.add_argument("--servo-mid", type=float, default=1500.0, help="Servo pulse at neutral, us (default: 1500)")
     parser.add_argument("--servo-max", type=float, default=2000.0, help="Servo pulse at full positive deflection, us (default: 2000)")
@@ -445,7 +438,7 @@ def main():
     except OSError as exc:
         sys.exit(
             f"Could not bind UDP {args.host}:{args.recv_port} ({exc}).\n"
-            "Another jsbsim_bridge.py (or Gazebo) is probably still running - stop it first."
+            "Another jsbsim_bridge.py is probably still running - stop it first."
         )
     recv_sock.setblocking(False)
 

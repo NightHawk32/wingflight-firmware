@@ -66,8 +66,24 @@
     Also start scripts/sitl-joystick-rc.py so a USB joystick/gamepad drives RC
     over MSP. Requires pygame in the venv (-SetupVenv installs it).
 
+.PARAMETER JoystickDevice
+    With -Joystick: which device to use, as an index or a case-insensitive name
+    substring (e.g. "FrSky"). Default: the device saved in the mapping file,
+    else index 0. List devices with: python scripts\sitl-joystick-rc.py --list-joysticks
+
+.PARAMETER Configurator
+    Also start the Wingflight Configurator (desktop/NW.js build, "pnpm start" in
+    -ConfiguratorDir) in its own window. SITL serves one MSP client per TCP port,
+    so the ports are split: joystick RC on 5761, bridge GPS feed on 5762, and
+    the Configurator on 5763 (UART3, SITL's config default). In the Configurator
+    choose Manual and enter tcp://127.0.0.1:5763 (remembered after the first time).
+
+.PARAMETER ConfiguratorDir
+    With -Configurator: the configurator checkout (default: ..\wingflight-configurator
+    next to this firmware checkout). Run "make init" there once first.
+
 .PARAMETER StopOnExit
-    Stop the SITL/bridge/FlightGear/joystick child processes when this script exits.
+    Stop the SITL/bridge/FlightGear/joystick/Configurator child processes when this script exits.
 
 .EXAMPLE
     .\scripts\sitl-jsbsim-flightgear-launch.ps1 -SetupVenv -BuildSitl -Trim -StopOnExit
@@ -75,6 +91,10 @@
 .EXAMPLE
     .\scripts\sitl-jsbsim-flightgear-launch.ps1 -FlightGear -Joystick -Trim `
         -FgfsPath "C:\Program Files\FlightGear 2024.1\bin\fgfs.exe" -StopOnExit
+
+.EXAMPLE
+    # Fly with the joystick while the Configurator is connected on tcp://127.0.0.1:5763
+    .\scripts\sitl-jsbsim-flightgear-launch.ps1 -Trim -Joystick -Configurator -StopOnExit
 #>
 param(
     [switch]$SetupVenv,
@@ -94,8 +114,13 @@ param(
     [string[]]$FgExtraArgs = @(),
     [int]$FgStartupTimeoutSec = 300,
     [switch]$Joystick,
+    [string]$JoystickDevice = "",
+    [switch]$Configurator,
+    [string]$ConfiguratorDir = "",
     [switch]$StopOnExit
 )
+
+$ConfiguratorPort = 5763
 
 $ErrorActionPreference = "Stop"
 
@@ -105,11 +130,20 @@ function Get-FirmwareRoot {
 
 function Test-UdpPortInUse {
     param([int]$Port)
-    # A second bridge (or a leftover Gazebo/SITL run) already holding 9002/9003
+    # A second bridge (or a leftover SITL run) already holding 9002/9003
     # produces a confusing "no packets" symptom rather than a clear error, so
     # check up front.
     try {
         return (Get-NetUDPEndpoint -LocalPort $Port -ErrorAction Stop | Measure-Object).Count -gt 0
+    } catch {
+        return $false
+    }
+}
+
+function Test-TcpPortListening {
+    param([int]$Port)
+    try {
+        return (Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop | Measure-Object).Count -gt 0
     } catch {
         return $false
     }
@@ -122,6 +156,9 @@ $venvDir = Join-Path $root "tools\jsbsim-venv"
 $bridgePython = Join-Path $venvDir "Scripts\python.exe"
 $bridgeScript = Join-Path $root "scripts\jsbsim_bridge.py"
 $joystickScript = Join-Path $root "scripts\sitl-joystick-rc.py"
+if (-not $ConfiguratorDir) {
+    $ConfiguratorDir = Join-Path (Split-Path $root -Parent) "wingflight-configurator"
+}
 
 if ($SetupVenv) {
     if (-not (Test-Path $bridgePython)) {
@@ -177,6 +214,32 @@ $sitlProcess = Start-Process -FilePath $sitlExe -WorkingDirectory $objMain -Wind
     -RedirectStandardOutput (Join-Path $objMain "sitl_launch_stdout.log") `
     -RedirectStandardError (Join-Path $objMain "sitl_launch_stderr.log")
 Start-Sleep -Seconds 1
+
+$configuratorProcess = $null
+if ($Configurator) {
+    # The Configurator needs its own MSP port: 5761 is the joystick's, 5762 the
+    # bridge GPS feed's. 5763 exists only if eeprom.bin was created with UART3 MSP
+    # (SITL config default since the Configurator port was added).
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    while (-not (Test-TcpPortListening -Port $ConfiguratorPort) -and -not $sitlProcess.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+        Start-Sleep -Milliseconds 250
+    }
+    if (Test-TcpPortListening -Port $ConfiguratorPort) {
+        Write-Host "[launch] Configurator MSP port is up: tcp://127.0.0.1:$ConfiguratorPort (choose Manual in the Configurator's port picker)."
+    } elseif (-not $sitlProcess.HasExited) {
+        Write-Warning ("SITL is not listening on TCP $ConfiguratorPort - $objMain\eeprom.bin predates the Configurator port. " +
+            "Either delete it (SITL recreates it with the new defaults; this resets saved settings), or run " +
+            "'serial 2 1 115200 57600 0 115200' + 'save' in the Configurator CLI over tcp://127.0.0.1:5762 and restart.")
+    }
+
+    if (-not (Test-Path (Join-Path $ConfiguratorDir "package.json"))) {
+        Write-Warning "Configurator checkout not found at '$ConfiguratorDir' - pass -ConfiguratorDir, or start it yourself ('pnpm start')."
+    } else {
+        Write-Host "[launch] Starting Configurator ($ConfiguratorDir, pnpm start) in a new window ..."
+        $configuratorProcess = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", "pnpm start") `
+            -WorkingDirectory $ConfiguratorDir -PassThru
+    }
+}
 
 # FlightGear is launched BEFORE the JSBSim bridge: a first run can take ~90s+
 # to bind its native-FDM UDP port (navcache rebuild, TerraSync scenery
@@ -256,7 +319,9 @@ if ($Joystick) {
         Write-Warning "$joystickScript not found - skipping joystick RC."
     } else {
         Write-Host "[launch] Starting joystick RC bridge ..."
-        $joystickProcess = Start-Process -FilePath $bridgePython -ArgumentList @($joystickScript) `
+        $joystickArgs = @("`"$joystickScript`"")
+        if ($JoystickDevice) { $joystickArgs += @("--joystick", "`"$JoystickDevice`"") }
+        $joystickProcess = Start-Process -FilePath $bridgePython -ArgumentList $joystickArgs `
             -WorkingDirectory $root -PassThru
     }
 } else {
@@ -287,6 +352,10 @@ try {
             if ($p -and -not $p.HasExited) {
                 Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             }
+        }
+        if ($configuratorProcess -and -not $configuratorProcess.HasExited) {
+            # pnpm start spawns vite, gulp and NW.js below cmd.exe - take the whole tree.
+            taskkill.exe /PID $configuratorProcess.Id /T /F | Out-Null
         }
     }
 }
