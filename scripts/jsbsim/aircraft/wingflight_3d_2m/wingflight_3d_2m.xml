@@ -65,7 +65,12 @@
   </mass_balance>
 
   <ground_reactions>
-    <!-- Taildragger. Mains carry ~90 % of 64 N with ~1 cm static compression. -->
+    <!-- Taildragger. Mains carry ~90 % of 64 N with ~1 cm static compression.
+         Structure contacts (wingtips, nose, fin) are deliberately soft: with
+         only 0.45 kg m2 roll inertia, a stiff contact on a 1 m lever has a
+         rotational time constant of ~2 ms - shorter than the 2 ms-8 ms
+         integration step - and blows the state up to NaN on a wingtip strike.
+         Stability needs damping * lever^2 / inertia * dt well below 1. -->
     <contact type="BOGEY" name="LEFT_MAIN">
       <location unit="M"> <x> 0.45 </x> <y> -0.20 </y> <z> -0.28 </z> </location>
       <static_friction> 0.8 </static_friction>
@@ -101,31 +106,31 @@
     </contact>
     <contact type="STRUCTURE" name="LEFT_WINGTIP">
       <location unit="M"> <x> 0.65 </x> <y> -1.00 </y> <z> 0 </z> </location>
-      <static_friction> 1 </static_friction>
-      <dynamic_friction> 1 </dynamic_friction>
-      <spring_coeff unit="N/M"> 5000 </spring_coeff>
-      <damping_coeff unit="N/M/SEC"> 200 </damping_coeff>
+      <static_friction> 0.5 </static_friction>
+      <dynamic_friction> 0.4 </dynamic_friction>
+      <spring_coeff unit="N/M"> 1500 </spring_coeff>
+      <damping_coeff unit="N/M/SEC"> 25 </damping_coeff>
     </contact>
     <contact type="STRUCTURE" name="RIGHT_WINGTIP">
       <location unit="M"> <x> 0.65 </x> <y> 1.00 </y> <z> 0 </z> </location>
-      <static_friction> 1 </static_friction>
-      <dynamic_friction> 1 </dynamic_friction>
-      <spring_coeff unit="N/M"> 5000 </spring_coeff>
-      <damping_coeff unit="N/M/SEC"> 200 </damping_coeff>
+      <static_friction> 0.5 </static_friction>
+      <dynamic_friction> 0.4 </dynamic_friction>
+      <spring_coeff unit="N/M"> 1500 </spring_coeff>
+      <damping_coeff unit="N/M/SEC"> 25 </damping_coeff>
     </contact>
     <contact type="STRUCTURE" name="NOSE">
       <location unit="M"> <x> 0 </x> <y> 0 </y> <z> 0 </z> </location>
-      <static_friction> 1 </static_friction>
-      <dynamic_friction> 1 </dynamic_friction>
-      <spring_coeff unit="N/M"> 5000 </spring_coeff>
-      <damping_coeff unit="N/M/SEC"> 200 </damping_coeff>
+      <static_friction> 0.5 </static_friction>
+      <dynamic_friction> 0.4 </dynamic_friction>
+      <spring_coeff unit="N/M"> 1500 </spring_coeff>
+      <damping_coeff unit="N/M/SEC"> 25 </damping_coeff>
     </contact>
     <contact type="STRUCTURE" name="FIN_TOP">
       <location unit="M"> <x> 1.85 </x> <y> 0 </y> <z> 0.30 </z> </location>
-      <static_friction> 1 </static_friction>
-      <dynamic_friction> 1 </dynamic_friction>
-      <spring_coeff unit="N/M"> 5000 </spring_coeff>
-      <damping_coeff unit="N/M/SEC"> 200 </damping_coeff>
+      <static_friction> 0.5 </static_friction>
+      <dynamic_friction> 0.4 </dynamic_friction>
+      <spring_coeff unit="N/M"> 1500 </spring_coeff>
+      <damping_coeff unit="N/M/SEC"> 25 </damping_coeff>
     </contact>
   </ground_reactions>
 
@@ -193,9 +198,12 @@
         <gain> 1 </gain>
         <output> fcs/left-aileron-pos-norm </output>
       </pure_gain>
+      <!-- Same sign as the left one: FlightGear models (FGJSBsim convention)
+           expect right-aileron-pos-norm = +roll command and mirror it in the
+           animation. -1 here drew the right aileron reversed. -->
       <pure_gain name="fcs/right-aileron-norm">
         <input> fcs/aileron-servo </input>
-        <gain> -1 </gain>
+        <gain> 1 </gain>
         <output> fcs/right-aileron-pos-norm </output>
       </pure_gain>
     </channel>
@@ -215,9 +223,11 @@
         <range> <min> -0.785 </min> <max> 0.785 </max> </range>
         <output> fcs/rudder-pos-rad </output>
       </aerosurface_scale>
+      <!-- Negated: JSBSim's rudder + is nose left, FlightGear's
+           rudder-pos-norm + is trailing edge right (FGJSBsim negates it too). -->
       <pure_gain name="fcs/rudder-norm">
         <input> fcs/rudder-servo </input>
-        <gain> 1 </gain>
+        <gain> -1 </gain>
         <output> fcs/rudder-pos-norm </output>
       </pure_gain>
     </channel>

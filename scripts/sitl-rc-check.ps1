@@ -885,7 +885,9 @@ function Start-JsbsimBridge {
     $logDir = Join-Path $root "obj\main"
     if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 
-    $bridgeArgs = @($bridgeScript, "--aircraft", $Aircraft, "--trim")
+    # Always airborne: the control-response and GPS-movement checks need a
+    # flying aircraft, whatever the aircraft's interactive start default is.
+    $bridgeArgs = @($bridgeScript, "--aircraft", $Aircraft, "--trim", "--start", "air")
     if ($MspGps) { $bridgeArgs += "--msp-gps" }
 
     Write-Host "[SITL-RC] Starting JSBSim bridge (aircraft=$Aircraft) ..."

@@ -33,9 +33,15 @@
     aerobatic model in scripts/jsbsim/aircraft). The models bundled with the
     jsbsim package (e.g. c172p) still work.
 
+.PARAMETER Start
+    "ground" (at rest on the runway: arm, then take off) or "air" (at
+    -AltitudeFt / -AirspeedKts). Default: ground for wingflight_3d_2m, air
+    otherwise. A crashed aircraft (resting nosed over or inverted) is put back
+    to the start after 2 s.
+
 .PARAMETER AltitudeFt / AirspeedKts
-    Initial altitude (ft MSL) and calibrated airspeed (kts). Default per
-    aircraft: 200 ft / 40 kts (~57 m above the runway, ~20 m/s) for
+    Air start only: initial altitude (ft MSL) and calibrated airspeed (kts).
+    Default per aircraft: 200 ft / 40 kts (~57 m above the runway, ~20 m/s) for
     wingflight_3d_2m, 3000 ft / 90 kts otherwise.
 
 .PARAMETER Rate
@@ -49,8 +55,14 @@
     renders as a blue void in FlightGear.
 
 .PARAMETER FgView
-    FlightGear view to start in (default: 2 = Chase view, third person behind
-    the aircraft; 0 = cockpit, 1 = helicopter, 3 = tower). Cycle with V in-sim.
+    FlightGear view to start in (default: 3 = Tower view, a fixed camera at the
+    RC pilot position that turns to follow the aircraft; 2 = Chase view behind
+    the aircraft, 0 = cockpit, 1 = helicopter). Cycle with V in-sim.
+
+.PARAMETER PilotAlongM / PilotSideM
+    Fixed-camera (Tower view) position relative to the start point: metres
+    along the start heading and to its right (negative = left). Default 60 / 30:
+    beside the runway, 60 m past the threshold. Eye height is 1.7 m.
 
 .PARAMETER Trim
     Trim the aircraft for steady flight at the initial conditions before running
@@ -129,7 +141,11 @@ param(
     [double]$LatDeg = 37.6136,
     [double]$LonDeg = -122.3572,
     [double]$HeadingDeg = 297.9,
-    [int]$FgView = 2,
+    [int]$FgView = 3,
+    [double]$PilotAlongM = 60.0,
+    [double]$PilotSideM = 30.0,
+    [ValidateSet("", "ground", "air")]
+    [string]$Start = "",
     [switch]$Trim,
     [switch]$FlightGear,
     [string]$FgfsPath = "",
@@ -190,6 +206,18 @@ if (-not $ConfiguratorDir) {
 # in jsbsim_bridge.py (FlightGear's pre-positioning needs the altitude too).
 if ($null -eq $AltitudeFt) { $AltitudeFt = $(if ($Aircraft -eq "wingflight_3d_2m") { 200.0 } else { 3000.0 }) }
 if ($null -eq $AirspeedKts) { $AirspeedKts = $(if ($Aircraft -eq "wingflight_3d_2m") { 40.0 } else { 90.0 }) }
+if (-not $Start) { $Start = $(if ($Aircraft -eq "wingflight_3d_2m") { "ground" } else { "air" }) }
+$fieldElevationFt = 13.0  # KSFO; matches jsbsim_bridge.py --terrain-elevation-ft
+$fgAltitudeFt = $(if ($Start -eq "ground") { $fieldElevationFt } else { $AltitudeFt })
+
+# Fixed camera at the RC pilot position: offset from the start point along /
+# right of the start heading (flat-earth metres -> degrees is plenty for 100 m).
+$hdgRad = $HeadingDeg * [math]::PI / 180.0
+$northM = $PilotAlongM * [math]::Cos($hdgRad) - $PilotSideM * [math]::Sin($hdgRad)
+$eastM = $PilotAlongM * [math]::Sin($hdgRad) + $PilotSideM * [math]::Cos($hdgRad)
+$pilotLat = $LatDeg + $northM / 111132.0
+$pilotLon = $LonDeg + $eastM / (111320.0 * [math]::Cos($LatDeg * [math]::PI / 180.0))
+$pilotEyeFt = $fieldElevationFt + 1.7 / 0.3048
 
 # FlightGear visual: Edge540RC (repo wrapper) needs FGAddon's ZivkoEdge next to it.
 $fgWrapperDir = Join-Path $root "scripts\flightgear\Aircraft"
@@ -327,10 +355,19 @@ if ($FlightGear -and -not [string]::IsNullOrWhiteSpace($FgfsPath)) {
             "--native-fdm=socket,in,$([int]$FgRate),,$FgPort,udp",
             "--lat=$LatDeg",
             "--lon=$LonDeg",
-            "--altitude=$AltitudeFt",
+            "--altitude=$fgAltitudeFt",
             "--heading=$HeadingDeg",
             "--timeofday=noon",
             "--prop:/sim/current-view/view-number=$FgView",
+            # Tower view (3) = fixed RC pilot camera: pin the "tower" beside the
+            # runway instead of at the airport's real tower (km away - a 2 m
+            # plane would be invisible), and let it see objects closer than its
+            # default 10 m near plane.
+            "--prop:/sim/tower/auto-position=false",
+            "--prop:/sim/tower/latitude-deg=$pilotLat",
+            "--prop:/sim/tower/longitude-deg=$pilotLon",
+            "--prop:/sim/tower/altitude-ft=$pilotEyeFt",
+            "--prop:/sim/view[3]/config/ground-level-nearplane-m=0.5",
             "--disable-real-weather-fetch",
             "--disable-clouds3d"
         ) + $FgExtraArgs
@@ -369,7 +406,9 @@ $bridgeArgs = @(
     "--airspeed-kts", $AirspeedKts,
     "--lat-deg", $LatDeg,
     "--lon-deg", $LonDeg,
-    "--heading-deg", $HeadingDeg
+    "--heading-deg", $HeadingDeg,
+    "--terrain-elevation-ft", $fieldElevationFt,
+    "--start", $Start
 )
 if ($Trim) { $bridgeArgs += "--trim" }
 if ($FlightGear) {

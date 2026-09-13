@@ -91,6 +91,24 @@ AIRCRAFT_IC_DEFAULTS = {
 }
 FALLBACK_IC_DEFAULTS = (3000.0, 90.0)
 
+# --start default per aircraft. An RC model starts on the runway like the real
+# thing (arm, take off); an airborne start hands a trimmed glider to a disarmed
+# FC at zero throttle, which just crashes.
+AIRCRAFT_START_DEFAULTS = {"wingflight_3d_2m": "ground"}
+FALLBACK_START_DEFAULT = "air"
+
+# Ground start attitude: CG height above ground (ft) and pitch (deg) with all
+# wheels touching. wingflight_3d_2m's taildragger gear (mains 0.15 m ahead of /
+# 0.28 m below the CG, tail wheel 1.15 m behind / 0.10 m below) sits 7.9 deg
+# nose-up with the CG 0.257 m (0.84 ft) up; +0.1 ft so it settles, not bounces.
+AIRCRAFT_GROUND_IC = {"wingflight_3d_2m": (0.95, 7.9)}
+
+# JSBSim steps per bridge cycle (--substeps default). A 6.5 kg model's tiny
+# inertias make roll damping and ground contacts stiff; at 120 Hz a hard
+# wingtip strike integrates to NaN. 4 x 120 = 480 Hz physics, still 120 Hz to SITL.
+AIRCRAFT_SUBSTEPS = {"wingflight_3d_2m": 4}
+FALLBACK_GROUND_IC = (5.0, 0.0)  # unknown gear: drop from 5 ft, level
+
 
 def euler_to_quat(phi, theta, psi):
     """Standard aerospace ZYX Euler (roll,pitch,yaw) -> earth-to-body quaternion (w,x,y,z)."""
@@ -297,8 +315,16 @@ def build_fdm_packet(fdm, initial_altitude_ft):
     )
 
 
+# Beyond these the state is a numerical blow-up, not flight: a 3D model's
+# snap roll peaks around 25 rad/s. JSBSim's ground friction solver can emit
+# 1e5 lbf gear forces for a single step when a light model hits the ground
+# on several contacts at once (a hard crash) - the rates explode first.
+MAX_SANE_RATE_RAD_S = 50.0
+MAX_SANE_SPEED_FPS = 150.0 / FT_TO_M
+
+
 def state_is_sane(fdm, min_altitude_ft):
-    """False once JSBSim's state has gone non-finite or hit the ground.
+    """False once JSBSim's state has gone non-finite, blown up or hit the ground.
 
     Either way the FDM stops producing usable IMU data (NaNs propagate
     straight into Wingflight's fake gyro/acc via updateState()), so the
@@ -310,7 +336,45 @@ def state_is_sane(fdm, min_altitude_ft):
                  "position/h-sl-ft"):
         if not math.isfinite(fdm.get_property_value(prop)):
             return False
+    for prop in ("velocities/p-rad_sec", "velocities/q-rad_sec", "velocities/r-rad_sec"):
+        if abs(fdm.get_property_value(prop)) > MAX_SANE_RATE_RAD_S:
+            return False
+    if fdm.get_property_value("velocities/vt-fps") > MAX_SANE_SPEED_FPS:
+        return False
     return fdm.get_property_value("position/h-agl-ft") > min_altitude_ft
+
+
+class CrashDetector:
+    """Detects a crash that doesn't end below ground: the aircraft is resting on
+    its nose, back or a wingtip (structure contacts keep it from sinking, so
+    state_is_sane() never fires). Requires being near the ground, nearly
+    stationary and nosed over (pitch below -30 deg) or rolled past 60 deg for
+    hold_s - which a hover (nose up) or a normal landing never is.
+    """
+
+    def __init__(self, hold_s=2.0, near_ground_ft=5.0, max_speed_fps=10.0):
+        self.hold_s = hold_s
+        self.near_ground_ft = near_ground_ft
+        self.max_speed_fps = max_speed_fps
+        self.since = None
+
+    def reset(self):
+        self.since = None
+
+    def update(self, fdm):
+        crashed_pose = (
+            fdm.get_property_value("position/h-agl-ft") < self.near_ground_ft
+            and fdm.get_property_value("velocities/vt-fps") < self.max_speed_fps
+            and (abs(fdm.get_property_value("attitude/phi-deg")) > 60.0
+                 or fdm.get_property_value("attitude/theta-deg") < -30.0)
+        )
+        now = fdm.get_sim_time()
+        if not crashed_pose:
+            self.since = None
+            return False
+        if self.since is None:
+            self.since = now
+        return now - self.since >= self.hold_s
 
 
 def _solve_linear(a, b):
@@ -404,10 +468,16 @@ def apply_initial_conditions(fdm, args):
     fdm["ic/terrain-elevation-ft"] = args.terrain_elevation_ft
     fdm["ic/long-gc-deg"] = args.lon_deg
     fdm["ic/psi-true-deg"] = args.heading_deg
-    fdm["ic/h-sl-ft"] = args.altitude_ft
-    fdm["ic/vc-kts"] = args.airspeed_kts
-    fdm["ic/alpha-deg"] = 0.0
-    fdm["ic/gamma-deg"] = 0.0
+    if args.start == "ground":
+        h_agl_ft, theta_deg = AIRCRAFT_GROUND_IC.get(args.aircraft, FALLBACK_GROUND_IC)
+        fdm["ic/vc-kts"] = 0.0
+        fdm["ic/h-agl-ft"] = h_agl_ft
+        fdm["ic/theta-deg"] = theta_deg
+    else:
+        fdm["ic/h-sl-ft"] = args.altitude_ft
+        fdm["ic/vc-kts"] = args.airspeed_kts
+        fdm["ic/alpha-deg"] = 0.0
+        fdm["ic/gamma-deg"] = 0.0
     fdm.run_ic()
 
     if not args.no_engine_start:
@@ -415,6 +485,10 @@ def apply_initial_conditions(fdm, args):
         # and stopped, so fcs/throttle-cmd-norm produces exactly zero thrust no
         # matter what Wingflight's M1 output does. -1 means "all engines".
         fdm["propulsion/set-running"] = -1
+
+    if args.start == "ground":
+        print("[jsbsim-bridge] ground start: on the runway, engine idle - arm and take off")
+        return
 
     if args.trim:
         try:
@@ -455,6 +529,8 @@ def parse_args(argv=None):
                         help=f"JSBSim aircraft model name (default: {DEFAULT_AIRCRAFT}, the generic 2 m 3D model in "
                              "scripts/jsbsim/aircraft; c172p and the other jsbsim-package models also work)")
     parser.add_argument("--rate", type=float, default=120.0, help="Simulation/send rate in Hz (default: 120)")
+    parser.add_argument("--substeps", type=int, default=None,
+                        help="JSBSim integration steps per --rate cycle (default: 4 for wingflight_3d_2m, else 1)")
     parser.add_argument("--altitude-ft", type=float, default=None,
                         help="Initial altitude, ft MSL (default: per aircraft - 200 for wingflight_3d_2m, 3000 otherwise)")
     parser.add_argument("--airspeed-kts", type=float, default=None,
@@ -467,8 +543,11 @@ def parse_args(argv=None):
                         help=f"Initial true heading, deg (default: {DEFAULT_HEADING_DEG}, along KSFO runway 28R)")
     parser.add_argument("--terrain-elevation-ft", type=float, default=13.0,
                         help="Ground elevation JSBSim assumes, ft MSL (default: 13 = KSFO field elevation)")
+    parser.add_argument("--start", choices=["air", "ground"], default=None,
+                        help="Start airborne at --altitude-ft/--airspeed-kts, or at rest on the runway "
+                             "(default: ground for wingflight_3d_2m, air otherwise)")
     parser.add_argument("--trim", action="store_true",
-                        help="Trim the aircraft for steady flight at the initial conditions before running")
+                        help="Trim the aircraft for steady flight at the initial conditions before running (air start only)")
     parser.add_argument("--no-engine-start", action="store_true",
                         help="Leave the engine(s) stopped (by default they are started, otherwise throttle does nothing)")
     parser.add_argument("--trim-mode", type=int, default=1,
@@ -514,6 +593,11 @@ def parse_args(argv=None):
         args.airspeed_kts = default_kts
     if args.fg_aircraft is None:
         args.fg_aircraft = "Edge540RC" if args.aircraft == "wingflight_3d_2m" else args.aircraft
+    if args.start is None:
+        args.start = AIRCRAFT_START_DEFAULTS.get(args.aircraft, FALLBACK_START_DEFAULT)
+    if args.substeps is None:
+        args.substeps = AIRCRAFT_SUBSTEPS.get(args.aircraft, 1)
+    args.substeps = max(1, args.substeps)
 
     args.aileron_sign = -1.0 if args.invert_aileron else 1.0
     args.elevator_sign = -1.0 if args.invert_elevator else 1.0
@@ -539,7 +623,7 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
     fdm = jsbsim.FGFDMExec(None)
-    fdm.set_dt(dt)
+    fdm.set_dt(dt / args.substeps)
 
     if args.flightgear:
         directive_path = write_flightgear_output_directive(args.fg_host, args.fg_port, args.fg_rate)
@@ -586,32 +670,36 @@ def main():
                                   set_provider=not args.no_msp_gps_config)
         print(f"[jsbsim-bridge] MSP GPS feed enabled -> {args.host}:{args.msp_gps_port} @ {args.msp_gps_rate}Hz")
 
-    print(f"[jsbsim-bridge] aircraft={args.aircraft} rate={args.rate}Hz "
+    print(f"[jsbsim-bridge] aircraft={args.aircraft} rate={args.rate}Hz x{args.substeps} substeps "
           f"recv={args.host}:{args.recv_port} send={args.host}:{args.send_port} "
           f"throttle=motor_speed[{args.throttle_index}] "
-          f"ic=({args.lat_deg},{args.lon_deg}) {args.altitude_ft:.0f}ft {args.airspeed_kts:.0f}kts")
+          f"ic=({args.lat_deg},{args.lon_deg}) hdg {args.heading_deg:.1f} "
+          + (f"on the ground" if args.start == "ground" else f"{args.altitude_ft:.0f}ft {args.airspeed_kts:.0f}kts"))
     print("[jsbsim-bridge] waiting for Wingflight servo_packet updates (idle defaults until then)...")
 
     next_status = time.monotonic() + args.status_interval
     next_step_wall = time.monotonic()
     packets_received = 0
     resets = 0
+    crash_detector = CrashDetector()
     try:
         while True:
             if drain_actuator_updates(recv_sock, state):
                 packets_received += 1
             apply_actuators(fdm, state, scale, args)
-            fdm.run()
+            for _ in range(args.substeps):
+                fdm.run()
 
-            if not state_is_sane(fdm, args.min_agl_ft):
+            crashed = crash_detector.update(fdm)
+            if crashed or not state_is_sane(fdm, args.min_agl_ft):
+                reason = "crashed (resting nosed over / inverted)" if crashed else "FDM state invalid (crashed or non-finite)"
                 if args.no_auto_reset:
-                    print("[jsbsim-bridge] FDM state invalid (crashed or non-finite) and "
-                          "--no-auto-reset given - stopping.")
+                    print(f"[jsbsim-bridge] {reason} and --no-auto-reset given - stopping.")
                     break
                 resets += 1
-                print(f"[jsbsim-bridge] FDM state invalid (crashed or non-finite) - "
-                      f"re-running initial conditions (reset #{resets})")
+                print(f"[jsbsim-bridge] {reason} - re-running initial conditions (reset #{resets})")
                 apply_initial_conditions(fdm, args)
+                crash_detector.reset()
 
             send_sock.sendto(build_fdm_packet(fdm, initial_altitude_ft), send_addr)
 

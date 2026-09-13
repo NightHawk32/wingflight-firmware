@@ -25,11 +25,29 @@ geometry, with every tunable in one file.
     -FgfsPath "C:\Program Files\FlightGear 2024.1\bin\fgfs.exe" -StopOnExit
 ```
 
-The aircraft starts over the threshold of KSFO runway 28R, flying along it
-(heading 297.9°). For this aircraft the start defaults to 200 ft MSL at
-40 kts, which is about 57 m above the runway and about 20 m/s. Override with
-`-AltitudeFt` / `-AirspeedKts` / `-LatDeg` / `-LonDeg` / `-HeadingDeg`.
-FlightGear opens in Chase view (`-FgView 2`); press `V` to cycle views.
+The aircraft starts **on the ground** at the threshold of KSFO runway 28R,
+pointing down the runway (heading 297.9°), motor idle. Arm and take off: at
+full throttle it lifts off after about 5 m. If it crashes and comes to rest
+nosed over or inverted, it goes back to the start after 2 s.
+- **Airborne start:** `-Start air` (200 ft MSL at 40 kts, which is about 57 m
+  above the runway at about 20 m/s; change with `-AltitudeFt` / `-AirspeedKts`).
+- **Another start point:** `-LatDeg` / `-LonDeg` / `-HeadingDeg`.
+
+FlightGear opens in **Tower view**, a fixed camera where an RC pilot would
+stand. It is 30 m to the right of the runway and 60 m past the threshold, at
+1.7 m eye height, and turns to follow the aircraft. Move it with
+`-PilotAlongM` / `-PilotSideM`. `-FgView 2` gives the chase view instead, and
+`V` cycles views; `X` / `Shift+X` zooms.
+
+**Numerical robustness:** a 6.5 kg model has tiny inertias (Ixx 0.45 kg·m²).
+- **Physics rate:** the bridge runs JSBSim at 4 sub-steps per 120 Hz cycle,
+  i.e. 480 Hz (`--substeps`).
+- **Soft contacts:** the wingtip, nose and fin contacts are kept soft
+  (1500 N/m, 25 N·s/m, friction 0.5), because stiffer ones integrate to NaN on
+  a wingtip strike.
+- **Blow-up reset:** JSBSim's ground friction solver can still blow up in a
+  violent multi-contact crash. The bridge treats body rates above 50 rad/s or
+  speeds above 150 m/s as a crash and resets, so no garbage reaches SITL.
 
 ## Baseline numbers
 
