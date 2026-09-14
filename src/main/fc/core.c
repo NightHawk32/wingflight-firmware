@@ -48,6 +48,7 @@
 #include "drivers/system.h"
 #include "drivers/time.h"
 #include "drivers/freq.h"
+#include "drivers/rx_input_backup.h"
 #include "drivers/sbus_output.h"
 #include "drivers/fbus_master.h"
 
@@ -360,6 +361,29 @@ void updateArmingStatus(void)
             } else {
                 unsetArmingDisabled(ARMING_DISABLED_RESC);
             }
+        }
+#endif
+
+#ifdef USE_RX_INPUT_BACKUP
+        // A configured backup RX must prove itself linked before the first arm of this
+        // power cycle - same "don't trust it until it's shown you a signal" reasoning as
+        // the GPS-rescue fix check above, and the same exception once WAS_EVER_ARMED: a
+        // backup that blips stale between flights (satellite hiccup, momentary
+        // interference) must not lock out rearming for the rest of the session, only the
+        // very first arm while the backup's health is still completely unknown. Held off
+        // until the shared boot arming-grace window (armingConfig()->power_on_arming_grace_time,
+        // handled above) has elapsed, so slow-binding backup protocols (SRXL2/EXBUS-style
+        // handshakes) get the same settle time real receivers need - see
+        // docs/rx-wiring-autodetect-design.md's settleMs discussion for typical link-up
+        // timing per protocol.
+        if (rxInputBackupIsEnabled() && !(getArmingDisableFlags() & ARMING_DISABLED_BOOT_GRACE_TIME)) {
+            if (rxInputBackupIsActive() || ARMING_FLAG(WAS_EVER_ARMED)) {
+                unsetArmingDisabled(ARMING_DISABLED_RX_INPUT_BACKUP);
+            } else {
+                setArmingDisabled(ARMING_DISABLED_RX_INPUT_BACKUP);
+            }
+        } else {
+            unsetArmingDisabled(ARMING_DISABLED_RX_INPUT_BACKUP);
         }
 #endif
 
