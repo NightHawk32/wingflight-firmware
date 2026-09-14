@@ -157,7 +157,7 @@ static void refreshPwmPacket(bool motorsActive);
 //
 // Note the altitude is *relative to the simulator's initial condition*:
 // fdm_packet.position_xyz is NED metres from the sim's origin (see
-// scripts/jsbsim_bridge.py), so the firmware sees the IC altitude as 0 m MSL.
+// wingflight-sitl-hitl sitl/jsbsim_bridge.py), so the firmware sees the IC altitude as 0 m MSL.
 // That's what altitude-hold/vario style consumers care about; absolute MSL
 // altitude would need a new field in fdm_packet.
 static void updateFakeBaroFromFdm(const fdm_packet *pkt)
@@ -270,7 +270,7 @@ void updateState(const fdm_packet* pkt) {
     // motorDevice->enabled, so pwmCompleteMotorUpdate() - the only other place
     // a servo_packet is sent - never runs. The control surfaces still move
     // while disarmed (bench/passthrough testing, which every
-    // scripts/sitl-rc-check.ps1 mode relies on), so keep the simulator link
+    // wingflight-sitl-hitl tests/sitl-rc-check.ps1 mode relies on), so keep the simulator link
     // alive from here instead; otherwise the FDM receives nothing at all until
     // the aircraft is armed.
     if (!motorIsEnabled()) {
@@ -564,7 +564,7 @@ static void refreshPwmPacket(bool motorsActive)
 {
     // Normal range = [0.0, 1.0], 3D range = [-1.0, 1.0]. motor_speed[i] carries
     // M(i+1), so M1 (the fixed-wing throttle) is motor_speed[0];
-    // scripts/jsbsim_bridge.py reads it from there.
+    // wingflight-sitl-hitl sitl/jsbsim_bridge.py reads it from there.
     const double outScale = 1000.0;
 
     if (motorsActive) {

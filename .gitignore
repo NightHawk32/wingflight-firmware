@@ -23,8 +23,6 @@ README.pdf
 /downloads/
 /tools/
 /build/
-__pycache__/
-*.pyc
 
 # local changes only
 make/local.mk
@@ -53,6 +51,3 @@ ubuntu*.log
 
 # EEPROM image file (created by SITL)
 eeprom.bin
-
-# user-specific joystick channel mapping (created by scripts/sitl-joystick-rc.py)
-/scripts/sitl-joystick-mapping.json

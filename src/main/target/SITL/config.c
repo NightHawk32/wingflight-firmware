@@ -31,16 +31,16 @@
 
 // SITL-specific config defaults. NOTE: like every config default, these apply
 // on a config RESET only - an existing eeprom.bin keeps whatever it stored
-// (delete it, or use scripts/sitl-rc-check.ps1 -FreshEeprom, to pick these up).
+// (delete it, or use wingflight-sitl-hitl tests/sitl-rc-check.ps1 -FreshEeprom, to pick these up).
 //
 // - GPS provider MSP: there is no serial GPS in SITL; instead
-//   scripts/jsbsim_bridge.py --msp-gps feeds JSBSim's position/velocity to the
+//   wingflight-sitl-hitl sitl/jsbsim_bridge.py --msp-gps feeds JSBSim's position/velocity to the
 //   firmware as MSP_SET_RAW_GPS frames, which gps.c only processes when the
 //   provider is GPS_MSP.
 // - Second MSP port on UART2 (TCP 127.0.0.1:5762): the GPS feed needs its own
 //   MSP connection, because SITL's per-port TCP MSP server (dyad) accepts one
 //   client at a time and UART1 (5761) is already taken by the RC/telemetry
-//   client (sitl-joystick-rc.py or sitl-rc-check.ps1).
+//   client (wingflight-sitl-hitl joystick_rc.py or sitl-rc-check.ps1).
 // - Third MSP port on UART3 (TCP 127.0.0.1:5763), reserved for the Configurator,
 //   so it can stay connected alongside the joystick RC and the GPS feed. Three
 //   MSP ports is MAX_MSP_PORT_COUNT.
