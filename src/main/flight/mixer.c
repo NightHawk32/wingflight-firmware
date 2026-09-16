@@ -412,8 +412,8 @@ void INIT_CODE validateAndFixMixerConfig(void)
 }
 
 /*
- * Reads or writes the weight of every active rule tagged with a given
- * mixerRuleRole_e, for RC adjustment functions (fc/rc_adjustments.c)
+ * Reads or writes the weight *magnitude* of every active rule tagged with a
+ * given mixerRuleRole_e, for RC adjustment functions (fc/rc_adjustments.c)
  * that need to live-tune a rule without a fixed index -- nothing in this
  * codebase reserves fixed rule slots (pg/mixer.h), and the rule table is
  * freely reordered by the configurator's rule editor, so a tag is the
@@ -421,23 +421,24 @@ void INIT_CODE validateAndFixMixerConfig(void)
  * everywhere else a rule's liveness is checked (mixerUpdateRules(),
  * configurator's isNullRule(), the LUA suite's isEmpty()).
  *
- * More than one rule can share a role on purpose -- e.g. the wizard tags
- * both pitch-carrying outputs of a v-tail/flying-wing with
- * FLAP_COMPENSATION, and both motors of a differential-thrust-yaw pair
- * with DIFFERENTIAL_THRUST_YAW, the latter with opposite sign (one motor
- * speeds up, the other slows down). Writing the same raw weight to every
- * match would be correct for the first case and exactly cancel the
- * differential in the second, so *value only ever drives the first match
- * (in array order) directly; every other match is set to the same
- * magnitude but keeps its own sign *relative to that first match's prior
- * value* -- reproducing "both same sign" or "opposite sign" as
- * originally generated, from a single scalar. get() and set() share this
- * so get() then set(get()) round-trips exactly.
+ * Deliberately never touches a rule's sign, only its magnitude -- each
+ * matching rule keeps whatever polarity it was configured with (the
+ * configurator's Reverse checkbox, or a negative weight set via CLI), and
+ * *value only ever scales |weight|. This is what makes Reverse mean
+ * anything once an adjustment is live: earlier this wrote the adjustment's
+ * own raw (possibly-reversed-relative-to-itself) value straight into the
+ * first matching rule, silently overwriting whatever sign the pilot had
+ * configured on the very next tick. Per-rule sign preservation also
+ * happens to be exactly what a differential-thrust-yaw pair needs (the
+ * two rules are tagged the same role but opposite sign by design -- one
+ * motor speeds up, the other slows down) and what several same-signed
+ * flap-compensation rules on a v-tail/flying-wing need, without treating
+ * either case specially. get() and set() share this, so get() then
+ * set(get()) round-trips exactly.
  */
 static bool applyRoleWeight(uint8_t role, int *value, bool write)
 {
-    bool haveRef = false;
-    bool refPositive = true;
+    bool found = false;
 
     for (int i = 0; i < MIXER_RULE_COUNT; i++) {
         mixerRule_t *rule = mixerRulesMutable(i);
@@ -445,25 +446,19 @@ static bool applyRoleWeight(uint8_t role, int *value, bool write)
             continue;
         }
 
-        if (!haveRef) {
-            haveRef = true;
-            refPositive = rule->weight >= 0;
-            if (write) {
-                rule->weight = *value;
-            } else {
-                *value = rule->weight;
-            }
-        } else if (write) {
-            const bool samePolarity = (rule->weight >= 0) == refPositive;
-            rule->weight = samePolarity ? *value : -*value;
+        if (write) {
+            const bool positive = rule->weight >= 0;
+            const int magnitude = ABS(*value);
+            rule->weight    = positive ? magnitude : -magnitude;
+            rule->weightNeg = rule->weight;
+        } else if (!found) {
+            *value = ABS(rule->weight);
         }
 
-        if (write) {
-            rule->weightNeg = rule->weight;
-        }
+        found = true;
     }
 
-    return haveRef;
+    return found;
 }
 
 int get_ADJUSTMENT_FLAP_COMPENSATION_GAIN(void)
