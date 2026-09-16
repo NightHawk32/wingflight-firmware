@@ -847,7 +847,10 @@ static void pidApplyMode1(uint8_t axis)
 
     // Calculate I-component
     pid.data[axis].axisError = limitf(pid.data[axis].axisError + itermDelta, pid.errorLimit[axis]);
-    pid.data[axis].I = pid.coef[axis].Ki * masterGain * crossAxisRelax * pid.data[axis].axisError;
+    // TRADITIONAL_MODE forces I output to zero without touching axisError's own bookkeeping, so
+    // relax/decay keep behaving as configured and I resumes smoothly if the mode is switched off.
+    pid.data[axis].I = FLIGHT_MODE(TRADITIONAL_MODE) ? 0.0f
+        : pid.coef[axis].Ki * masterGain * crossAxisRelax * pid.data[axis].axisError;
 
     // Apply error decay (fixed rate -- no ground/airborne distinction; a plane
     // sitting on its wheels isn't at risk of tipping over from I-term windup

@@ -94,6 +94,7 @@ typedef enum {
     AUTOTRIM_MODE_BIT    = 11,
     LOITER_MODE_BIT      = 12,
     RTH_MODE_BIT         = 13,
+    TRADITIONAL_MODE_BIT = 14,
 } flightModeBits_e;
 
 typedef enum {
@@ -139,6 +140,11 @@ typedef enum {
     // inject a bank/pitch angle on top of the pilot's stick input, throttle stays manual.
     LOITER_MODE          = BIT(LOITER_MODE_BIT),
     RTH_MODE             = BIT(RTH_MODE_BIT),
+    // TRADITIONAL: layers on top of whatever stabilisation is already active (default rate PID,
+    // ANGLE, or HORIZON) and forces that axis's I-term output to zero, so the servo snaps back
+    // immediately on stick release instead of holding -- a more traditional RC-gyro feel. Does not
+    // touch iterm_relax/iterm_decay bookkeeping, so I resumes smoothly if this mode is switched off.
+    TRADITIONAL_MODE     = BIT(TRADITIONAL_MODE_BIT),
 } flightModeFlags_e;
 
 extern uint16_t flightModeFlags;
