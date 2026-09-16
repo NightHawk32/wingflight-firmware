@@ -262,6 +262,12 @@ static const adjustmentConfig_t adjustmentConfigs[ADJUSTMENT_FUNCTION_COUNT] =
 
     ADJ_ENTRY(TV_PROFILE,                   1, 6),
 
+    // Range is well inside MIXER_WEIGHT_MIN/MAX (pg/mixer.h, +-10000) --
+    // like every other gain-style adjustment here, the field's full range is
+    // never a deliberate live-tuning choice, just a typo. +-1000 is already
+    // a full +-1.0x on the flap input, generous for a compensation trim.
+    ADJ_ENTRY(FLAP_COMPENSATION_GAIN,      -1000, 1000),
+
 };
 
 

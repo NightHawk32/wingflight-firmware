@@ -23,6 +23,7 @@
 #include <math.h>
 
 #include "pg/mixer.h"
+#include "pg/adjustments.h"
 
 #include "drivers/io_types.h"
 #include "drivers/pwm_output.h"
@@ -63,6 +64,8 @@
 void mixerInit(void);
 
 void validateAndFixMixerConfig(void);
+
+ADJFUN_DECLARE(FLAP_COMPENSATION_GAIN)
 
 void mixerUpdate(timeUs_t currentTimeUs);
 

@@ -411,6 +411,46 @@ void INIT_CODE validateAndFixMixerConfig(void)
 
 }
 
+/*
+ * Finds "the" active rule tagged with a given mixerRulePurpose_e, for RC
+ * adjustment functions (fc/rc_adjustments.c) that need to live-tune a rule
+ * without a fixed index -- nothing in this codebase reserves fixed rule
+ * slots (pg/mixer.h), and the rule table is freely reordered by the
+ * configurator's rule editor, so a tag is the only stable handle. `oper`
+ * gates "active" here the same way it does everywhere else a rule's
+ * liveness is checked (mixerUpdateRules(), configurator's isNullRule(),
+ * the LUA suite's isEmpty()) -- a deleted rule can't win a purpose match
+ * even if a stale tag byte is still sitting in PG storage. If more than
+ * one rule shares a tag, the first match in array order wins; nothing
+ * enforces purpose uniqueness, so this is a documented tie-break, not a
+ * bug.
+ */
+static mixerRule_t *findRuleByPurpose(uint8_t purpose)
+{
+    for (int i = 0; i < MIXER_RULE_COUNT; i++) {
+        mixerRule_t *rule = mixerRulesMutable(i);
+        if (rule->oper && rule->purpose == purpose) {
+            return rule;
+        }
+    }
+    return NULL;
+}
+
+int get_ADJUSTMENT_FLAP_COMPENSATION_GAIN(void)
+{
+    const mixerRule_t *rule = findRuleByPurpose(MIXER_RULE_PURPOSE_FLAP_COMPENSATION);
+    return rule ? rule->weight : 0;
+}
+
+void set_ADJUSTMENT_FLAP_COMPENSATION_GAIN(int value)
+{
+    mixerRule_t *rule = findRuleByPurpose(MIXER_RULE_PURPOSE_FLAP_COMPENSATION);
+    if (rule) {
+        rule->weight    = value;
+        rule->weightNeg = value;
+    }
+}
+
 static void INIT_CODE setMapping(uint8_t in, uint8_t out)
 {
     mixer.mapping[out] = BIT(in);
