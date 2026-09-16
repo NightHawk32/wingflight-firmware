@@ -397,6 +397,7 @@ void INIT_CODE validateAndFixMixerConfig(void)
             rule->offset    = constrain(rule->offset, MIXER_INPUT_MIN, MIXER_INPUT_MAX);
             rule->weight    = constrain(rule->weight, MIXER_WEIGHT_MIN, MIXER_WEIGHT_MAX);
             rule->weightNeg = constrain(rule->weightNeg, MIXER_WEIGHT_MIN, MIXER_WEIGHT_MAX);
+            rule->purpose   = constrain(rule->purpose, 0, MIXER_RULE_PURPOSE_COUNT - 1);
         }
         else {
             rule->oper      = 0;

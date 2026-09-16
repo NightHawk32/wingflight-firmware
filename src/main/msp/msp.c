@@ -1713,6 +1713,7 @@ static bool mspProcessOutCommand(int16_t cmdMSP, sbuf_t *dst)
           sbufWriteU16(dst, mixerRules(i)->speed);
           sbufWriteU8(dst, mixerRules(i)->curve);
           sbufWriteU8(dst, mixerRules(i)->condition);
+          sbufWriteU8(dst, mixerRules(i)->purpose);
         }
         break;
 
@@ -3762,6 +3763,7 @@ static mspResult_e mspProcessInCommand(mspDescriptor_t srcDesc, int16_t cmdMSP, 
         mixerRulesMutable(i)->speed = sbufReadU16(src);
         mixerRulesMutable(i)->curve = sbufReadU8(src);
         mixerRulesMutable(i)->condition = sbufReadU8(src);
+        mixerRulesMutable(i)->purpose = sbufReadU8(src);
         break;
 
     case MSP_SET_MIXER_CURVE:
