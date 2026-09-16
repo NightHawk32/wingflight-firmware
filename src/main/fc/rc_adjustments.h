@@ -195,7 +195,7 @@ typedef enum {
     // Thrust Vector profile switching (independent of ADJUSTMENT_PID_PROFILE)
     ADJUSTMENT_TV_PROFILE                   = 111,
 
-    // Mixer rule weight, found by mixerRulePurpose_e tag rather than a fixed
+    // Mixer rule weight, found by mixerRuleRole_e tag rather than a fixed
     // rule index (pg/mixer.h) -- lets a switch/pot live-tune a rule the
     // configurator or wizard tagged, regardless of where it ends up in the
     // 32-slot table.

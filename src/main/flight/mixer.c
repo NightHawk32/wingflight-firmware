@@ -397,7 +397,7 @@ void INIT_CODE validateAndFixMixerConfig(void)
             rule->offset    = constrain(rule->offset, MIXER_INPUT_MIN, MIXER_INPUT_MAX);
             rule->weight    = constrain(rule->weight, MIXER_WEIGHT_MIN, MIXER_WEIGHT_MAX);
             rule->weightNeg = constrain(rule->weightNeg, MIXER_WEIGHT_MIN, MIXER_WEIGHT_MAX);
-            rule->purpose   = constrain(rule->purpose, 0, MIXER_RULE_PURPOSE_COUNT - 1);
+            rule->role      = constrain(rule->role, 0, MIXER_RULE_ROLE_COUNT - 1);
         }
         else {
             rule->oper      = 0;
@@ -413,7 +413,7 @@ void INIT_CODE validateAndFixMixerConfig(void)
 
 /*
  * Reads or writes the weight of every active rule tagged with a given
- * mixerRulePurpose_e, for RC adjustment functions (fc/rc_adjustments.c)
+ * mixerRuleRole_e, for RC adjustment functions (fc/rc_adjustments.c)
  * that need to live-tune a rule without a fixed index -- nothing in this
  * codebase reserves fixed rule slots (pg/mixer.h), and the rule table is
  * freely reordered by the configurator's rule editor, so a tag is the
@@ -421,7 +421,7 @@ void INIT_CODE validateAndFixMixerConfig(void)
  * everywhere else a rule's liveness is checked (mixerUpdateRules(),
  * configurator's isNullRule(), the LUA suite's isEmpty()).
  *
- * More than one rule can share a tag on purpose -- e.g. the wizard tags
+ * More than one rule can share a role on purpose -- e.g. the wizard tags
  * both pitch-carrying outputs of a v-tail/flying-wing with
  * FLAP_COMPENSATION, and both motors of a differential-thrust-yaw pair
  * with DIFFERENTIAL_THRUST_YAW, the latter with opposite sign (one motor
@@ -434,14 +434,14 @@ void INIT_CODE validateAndFixMixerConfig(void)
  * originally generated, from a single scalar. get() and set() share this
  * so get() then set(get()) round-trips exactly.
  */
-static bool applyPurposeWeight(uint8_t purpose, int *value, bool write)
+static bool applyRoleWeight(uint8_t role, int *value, bool write)
 {
     bool haveRef = false;
     bool refPositive = true;
 
     for (int i = 0; i < MIXER_RULE_COUNT; i++) {
         mixerRule_t *rule = mixerRulesMutable(i);
-        if (!rule->oper || rule->purpose != purpose) {
+        if (!rule->oper || rule->role != role) {
             continue;
         }
 
@@ -469,25 +469,25 @@ static bool applyPurposeWeight(uint8_t purpose, int *value, bool write)
 int get_ADJUSTMENT_FLAP_COMPENSATION_GAIN(void)
 {
     int value = 0;
-    applyPurposeWeight(MIXER_RULE_PURPOSE_FLAP_COMPENSATION, &value, false);
+    applyRoleWeight(MIXER_RULE_ROLE_FLAP_COMPENSATION, &value, false);
     return value;
 }
 
 void set_ADJUSTMENT_FLAP_COMPENSATION_GAIN(int value)
 {
-    applyPurposeWeight(MIXER_RULE_PURPOSE_FLAP_COMPENSATION, &value, true);
+    applyRoleWeight(MIXER_RULE_ROLE_FLAP_COMPENSATION, &value, true);
 }
 
 int get_ADJUSTMENT_DIFF_THRUST_YAW_GAIN(void)
 {
     int value = 0;
-    applyPurposeWeight(MIXER_RULE_PURPOSE_DIFFERENTIAL_THRUST_YAW, &value, false);
+    applyRoleWeight(MIXER_RULE_ROLE_DIFFERENTIAL_THRUST_YAW, &value, false);
     return value;
 }
 
 void set_ADJUSTMENT_DIFF_THRUST_YAW_GAIN(int value)
 {
-    applyPurposeWeight(MIXER_RULE_PURPOSE_DIFFERENTIAL_THRUST_YAW, &value, true);
+    applyRoleWeight(MIXER_RULE_ROLE_DIFFERENTIAL_THRUST_YAW, &value, true);
 }
 
 static void INIT_CODE setMapping(uint8_t in, uint8_t out)
