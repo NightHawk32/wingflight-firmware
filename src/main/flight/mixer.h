@@ -66,6 +66,7 @@ void mixerInit(void);
 void validateAndFixMixerConfig(void);
 
 ADJFUN_DECLARE(FLAP_COMPENSATION_GAIN)
+ADJFUN_DECLARE(DIFF_THRUST_YAW_GAIN)
 
 void mixerUpdate(timeUs_t currentTimeUs);
 

@@ -200,6 +200,7 @@ typedef enum {
     // configurator or wizard tagged, regardless of where it ends up in the
     // 32-slot table.
     ADJUSTMENT_FLAP_COMPENSATION_GAIN       = 112,
+    ADJUSTMENT_DIFF_THRUST_YAW_GAIN         = 113,
 
     ADJUSTMENT_FUNCTION_COUNT
 } adjustmentFunc_e;

@@ -412,43 +412,82 @@ void INIT_CODE validateAndFixMixerConfig(void)
 }
 
 /*
- * Finds "the" active rule tagged with a given mixerRulePurpose_e, for RC
- * adjustment functions (fc/rc_adjustments.c) that need to live-tune a rule
- * without a fixed index -- nothing in this codebase reserves fixed rule
- * slots (pg/mixer.h), and the rule table is freely reordered by the
- * configurator's rule editor, so a tag is the only stable handle. `oper`
- * gates "active" here the same way it does everywhere else a rule's
- * liveness is checked (mixerUpdateRules(), configurator's isNullRule(),
- * the LUA suite's isEmpty()) -- a deleted rule can't win a purpose match
- * even if a stale tag byte is still sitting in PG storage. If more than
- * one rule shares a tag, the first match in array order wins; nothing
- * enforces purpose uniqueness, so this is a documented tie-break, not a
- * bug.
+ * Reads or writes the weight of every active rule tagged with a given
+ * mixerRulePurpose_e, for RC adjustment functions (fc/rc_adjustments.c)
+ * that need to live-tune a rule without a fixed index -- nothing in this
+ * codebase reserves fixed rule slots (pg/mixer.h), and the rule table is
+ * freely reordered by the configurator's rule editor, so a tag is the
+ * only stable handle. `oper` gates "active" the same way it does
+ * everywhere else a rule's liveness is checked (mixerUpdateRules(),
+ * configurator's isNullRule(), the LUA suite's isEmpty()).
+ *
+ * More than one rule can share a tag on purpose -- e.g. the wizard tags
+ * both pitch-carrying outputs of a v-tail/flying-wing with
+ * FLAP_COMPENSATION, and both motors of a differential-thrust-yaw pair
+ * with DIFFERENTIAL_THRUST_YAW, the latter with opposite sign (one motor
+ * speeds up, the other slows down). Writing the same raw weight to every
+ * match would be correct for the first case and exactly cancel the
+ * differential in the second, so *value only ever drives the first match
+ * (in array order) directly; every other match is set to the same
+ * magnitude but keeps its own sign *relative to that first match's prior
+ * value* -- reproducing "both same sign" or "opposite sign" as
+ * originally generated, from a single scalar. get() and set() share this
+ * so get() then set(get()) round-trips exactly.
  */
-static mixerRule_t *findRuleByPurpose(uint8_t purpose)
+static bool applyPurposeWeight(uint8_t purpose, int *value, bool write)
 {
+    bool haveRef = false;
+    bool refPositive = true;
+
     for (int i = 0; i < MIXER_RULE_COUNT; i++) {
         mixerRule_t *rule = mixerRulesMutable(i);
-        if (rule->oper && rule->purpose == purpose) {
-            return rule;
+        if (!rule->oper || rule->purpose != purpose) {
+            continue;
+        }
+
+        if (!haveRef) {
+            haveRef = true;
+            refPositive = rule->weight >= 0;
+            if (write) {
+                rule->weight = *value;
+            } else {
+                *value = rule->weight;
+            }
+        } else if (write) {
+            const bool samePolarity = (rule->weight >= 0) == refPositive;
+            rule->weight = samePolarity ? *value : -*value;
+        }
+
+        if (write) {
+            rule->weightNeg = rule->weight;
         }
     }
-    return NULL;
+
+    return haveRef;
 }
 
 int get_ADJUSTMENT_FLAP_COMPENSATION_GAIN(void)
 {
-    const mixerRule_t *rule = findRuleByPurpose(MIXER_RULE_PURPOSE_FLAP_COMPENSATION);
-    return rule ? rule->weight : 0;
+    int value = 0;
+    applyPurposeWeight(MIXER_RULE_PURPOSE_FLAP_COMPENSATION, &value, false);
+    return value;
 }
 
 void set_ADJUSTMENT_FLAP_COMPENSATION_GAIN(int value)
 {
-    mixerRule_t *rule = findRuleByPurpose(MIXER_RULE_PURPOSE_FLAP_COMPENSATION);
-    if (rule) {
-        rule->weight    = value;
-        rule->weightNeg = value;
-    }
+    applyPurposeWeight(MIXER_RULE_PURPOSE_FLAP_COMPENSATION, &value, true);
+}
+
+int get_ADJUSTMENT_DIFF_THRUST_YAW_GAIN(void)
+{
+    int value = 0;
+    applyPurposeWeight(MIXER_RULE_PURPOSE_DIFFERENTIAL_THRUST_YAW, &value, false);
+    return value;
+}
+
+void set_ADJUSTMENT_DIFF_THRUST_YAW_GAIN(int value)
+{
+    applyPurposeWeight(MIXER_RULE_PURPOSE_DIFFERENTIAL_THRUST_YAW, &value, true);
 }
 
 static void INIT_CODE setMapping(uint8_t in, uint8_t out)

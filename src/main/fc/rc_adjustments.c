@@ -267,6 +267,7 @@ static const adjustmentConfig_t adjustmentConfigs[ADJUSTMENT_FUNCTION_COUNT] =
     // never a deliberate live-tuning choice, just a typo. +-1000 is already
     // a full +-1.0x on the flap input, generous for a compensation trim.
     ADJ_ENTRY(FLAP_COMPENSATION_GAIN,      -1000, 1000),
+    ADJ_ENTRY(DIFF_THRUST_YAW_GAIN,        -1000, 1000),
 
 };
 
