@@ -2077,6 +2077,8 @@ static bool mspProcessOutCommand(int16_t cmdMSP, sbuf_t *dst)
         sbufWriteU8(dst, currentPidProfile->gain_curve[PID_YAW]);
         /* Att Hold max rate */
         sbufWriteU16(dst, currentPidProfile->atthold.max_rate);
+        /* Auto Hover roll deadband */
+        sbufWriteU8(dst, currentPidProfile->autohover.roll_deadband);
         break;
 
     case MSP_SENSOR_CONFIG:
@@ -3266,6 +3268,10 @@ static mspResult_e mspProcessInCommand(mspDescriptor_t srcDesc, int16_t cmdMSP, 
         /* Att Hold max rate */
         if (sbufBytesRemaining(src) >= 2) {
             currentPidProfile->atthold.max_rate = sbufReadU16(src);
+        }
+        /* Auto Hover roll deadband */
+        if (sbufBytesRemaining(src) >= 1) {
+            currentPidProfile->autohover.roll_deadband = sbufReadU8(src);
         }
         /* Load new values */
         pidLoadProfile(currentPidProfile);
