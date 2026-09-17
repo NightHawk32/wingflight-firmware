@@ -111,6 +111,13 @@ typedef struct
 
 PG_DECLARE_ARRAY(mixerCurve_t, MIXER_CURVE_COUNT, mixerCurves);
 
+typedef enum {
+    MIXER_RULE_ROLE_NONE = 0,
+    MIXER_RULE_ROLE_FLAP_COMPENSATION,
+    MIXER_RULE_ROLE_DIFFERENTIAL_THRUST_YAW,
+    MIXER_RULE_ROLE_COUNT
+} mixerRuleRole_e;
+
 typedef struct
 {
     uint8_t   oper;             // rule operation
@@ -122,6 +129,7 @@ typedef struct
     uint16_t  speed;            // slew rate limit on this rule's contribution (0=unlimited, same units/scale as servo speed)
     uint8_t   curve;            // 0=none, 1..MIXER_CURVE_COUNT = mixerCurves(curve-1), applied before weight selection
     uint8_t   condition;        // 0=always active, 1..LOGIC_CONDITION_COUNT = logicConditions(condition-1) gates this rule
+    uint8_t   role;             // mixerRuleRole_e -- descriptive tag only, never read by the mixer evaluator
 } mixerRule_t;
 
 PG_DECLARE_ARRAY(mixerRule_t, MIXER_RULE_COUNT, mixerRules);
