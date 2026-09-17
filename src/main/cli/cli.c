@@ -2742,6 +2742,7 @@ static void cliMixer(const char *cmdName, char *cmdline)
                 mix->curve     = vals[CURVE];
                 mix->condition = vals[CONDITION];
                 mix->role      = vals[ROLE];
+                mixerCaptureRuleSign(vals[RULE]);
             } else {
                 cliShowArgumentRangeError(cmdName, NULL, 0, 0);
             }

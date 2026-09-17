@@ -65,6 +65,12 @@ void mixerInit(void);
 
 void validateAndFixMixerConfig(void);
 
+// Re-latches mixerRuleSign[index] from mixerRules(index)->weight's current
+// sign -- call this whenever a rule's weight is written from the
+// configurator/CLI (see flight/mixer.c's own comment on why this can't just
+// be inferred from weight's live value at adjustment time).
+void mixerCaptureRuleSign(uint8_t index);
+
 ADJFUN_DECLARE(FLAP_COMPENSATION_GAIN)
 ADJFUN_DECLARE(DIFF_THRUST_YAW_GAIN)
 

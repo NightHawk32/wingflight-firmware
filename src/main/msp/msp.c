@@ -3764,6 +3764,7 @@ static mspResult_e mspProcessInCommand(mspDescriptor_t srcDesc, int16_t cmdMSP, 
         mixerRulesMutable(i)->curve = sbufReadU8(src);
         mixerRulesMutable(i)->condition = sbufReadU8(src);
         mixerRulesMutable(i)->role = sbufReadU8(src);
+        mixerCaptureRuleSign(i);
         break;
 
     case MSP_SET_MIXER_CURVE:
