@@ -50,23 +50,26 @@
 // math instead, since the old Euler implementation could not survive attitudes away from level.
 //
 // Unlike autohover (which deliberately frees the roll axis, since roll coincides with the world
-// vertical axis exactly at hover and is the pilot's pirouette control there), this mode holds all
-// three axes. There's no equivalent "free spin axis" at a generic captured attitude, so leaving
-// any axis unheld would just let the aircraft drift on that axis.
+// vertical axis exactly at hover and is the pilot's pirouette control there), this mode can hold
+// any subset of the three axes at once -- each axis tracks or freezes independently based on its
+// own stick, e.g. holding pitch/yaw attitude while aileron alone is worked (a clean axial roll or
+// rifle roll), or holding roll/yaw while riding the elevator through a high-alpha attitude. There
+// is no fixed reference attitude to decompose into independent per-axis offsets the way autohover
+// does for roll (that always-vertical target IS the reference), so per-axis freezing is done
+// directly in quaternion space instead (see the qKeep construction below), never by extracting or
+// composing Euler angles -- that's what keeps this safe through inverted/knife-edge attitudes
+// where an Euler decomposition would couple axes or hit gimbal lock.
 //
-// Known limitations (documented, not fixed here):
+// Known limitation (documented, not fixed here):
 // - Like autohover, does not subtract accelerometerConfig()->accelerometerTrims, so a pilot with
 //   board-mount trim dialled in will hold systematically off from where they released the sticks.
-// - The activity gate is a single global OR-of-per-axis-deflection check, not a per-axis one --
-//   deliberate. Once frozen, the correction is a single coupled 3D quaternion-error vector across
-//   all 3 axes; thawing/freezing axes independently would reintroduce exactly the kind of
-//   Euler-style axis coupling autohover.c's header warns about.
 
 typedef struct {
     bool        Active;
-    bool        Tracking;      // true while the target is free-tracking (sticks active / not airborne)
+    bool        Tracking[3];   // per-axis: true while that axis's target is free-tracking (its own
+                                // stick active / not airborne)
     float       Gain;
-    float       Deadband;      // fraction (0..1) of stick deflection that keeps the target tracking
+    float       Deadband;      // fraction (0..1) of stick deflection that keeps an axis tracking
     float       MaxRate;
     quaternion  qTarget;
 } attHold_t;
@@ -110,71 +113,104 @@ float attHoldApply(int axis, float pidSetpoint)
         return pidSetpoint;
     }
 
-    // The activity gate and the (shared, cross-axis) correction only need computing once per PID
-    // loop iteration, not once per axis call -- do that work on the first axis touched each
-    // iteration and cache it, same pattern autoHoverApply uses for its pitch/yaw correction.
+    // The per-axis activity gate and the shared quaternion-error work only need computing once
+    // per PID loop iteration, not once per axis call -- do that work on the first axis touched
+    // each iteration and cache it, same pattern autoHoverApply uses for its pitch/yaw correction.
     if (axis == FD_ROLL) {
-        const bool sticksActive = !isAirborne()
-            || fabsf(getDeflection(FD_ROLL))  > attHold.Deadband
-            || fabsf(getDeflection(FD_PITCH)) > attHold.Deadband
-            || fabsf(getDeflection(FD_YAW))   > attHold.Deadband;
+        const bool grounded = !isAirborne();
+        attHold.Tracking[FD_ROLL]  = grounded || fabsf(getDeflection(FD_ROLL))  > attHold.Deadband;
+        attHold.Tracking[FD_PITCH] = grounded || fabsf(getDeflection(FD_PITCH)) > attHold.Deadband;
+        attHold.Tracking[FD_YAW]   = grounded || fabsf(getDeflection(FD_YAW))   > attHold.Deadband;
 
-        if (sticksActive) {
-            // Pilot is actively commanding the aircraft (or it's not airborne yet) -- keep the
-            // hold target tracking reality so a future freeze is seamless: error is ~0 the
-            // instant every stick returns to center. No correction is applied here at all.
-            getQuaternion(&attHold.qTarget);
-            attHold.Tracking = true;
-        } else {
-            attHold.Tracking = false;
+        quaternion qCurrent;
+        getQuaternion(&qCurrent);
 
-            quaternion qCurrent;
-            getQuaternion(&qCurrent);
+        quaternion qCurrentConj = { .w = qCurrent.w, .x = -qCurrent.x, .y = -qCurrent.y, .z = -qCurrent.z };
 
-            quaternion qCurrentConj = { .w = qCurrent.w, .x = -qCurrent.x, .y = -qCurrent.y, .z = -qCurrent.z };
+        quaternion qError;
+        imuQuaternionMultiplication(&qCurrentConj, &attHold.qTarget, &qError);
 
-            quaternion qError;
-            imuQuaternionMultiplication(&qCurrentConj, &attHold.qTarget, &qError);
+        // Shortest-path sign correction -- q and -q represent the same physical rotation, but
+        // without this the error can decompose onto the "long way around" axis instead of the
+        // direct one (see autoHoverApply for the same fix).
+        if (qError.w < 0.0f) {
+            qError.w = -qError.w;
+            qError.x = -qError.x;
+            qError.y = -qError.y;
+            qError.z = -qError.z;
+        }
 
-            // Shortest-path sign correction -- q and -q represent the same physical rotation, but
-            // without this the error can decompose onto the "long way around" axis instead of the
-            // direct one (see autoHoverApply for the same fix).
-            if (qError.w < 0.0f) {
-                qError.w = -qError.w;
-                qError.x = -qError.x;
-                qError.y = -qError.y;
-                qError.z = -qError.z;
-            }
+        // Standard geometric attitude-control error term (2 * vector part), singularity-free
+        // across the full 0-180 degree range -- see autoHoverApply for why this is preferred
+        // over an axis-angle/acos decomposition. All three axes feed this vector here (unlike
+        // autohover, which leaves roll/index 0 unused).
+        const float errorDeg[3] = {
+            (2.0f * qError.x) / M_RADf,
+            (2.0f * qError.y) / M_RADf,
+            (2.0f * qError.z) / M_RADf,
+        };
 
-            // Standard geometric attitude-control error term (2 * vector part), singularity-free
-            // across the full 0-180 degree range -- see autoHoverApply for why this is preferred
-            // over an axis-angle/acos decomposition. All three axes feed the corrective vector
-            // here (unlike autohover, which leaves roll/index 0 unused).
-            const float errorDeg[3] = {
-                (2.0f * qError.x) / M_RADf,
-                (2.0f * qError.y) / M_RADf,
-                (2.0f * qError.z) / M_RADf,
-            };
-
-            float magnitude = 0.0f;
-            for (int i = 0; i < 3; i++) {
+        // Correction rates: only the axes that are actually frozen this loop are being asked to
+        // move anything, so only they take part in the magnitude clamp below -- a tracking axis
+        // isn't part of the correction at all (it's a pure pidSetpoint passthrough, same as
+        // before), and folding its raw error into the clamp vector would distort the frozen axes'
+        // rotation direction for no reason.
+        float magnitude = 0.0f;
+        for (int i = 0; i < 3; i++) {
+            if (!attHold.Tracking[i]) {
                 rate[i] = errorDeg[i] * attHold.Gain;
                 magnitude += sq(rate[i]);
             }
-            magnitude = sqrtf(magnitude);
+        }
+        magnitude = sqrtf(magnitude);
 
-            // Clamp the vector's magnitude, not each axis independently -- per-axis clamping
-            // would distort the rotation axis mid-correction (see autoHoverApply).
-            if (magnitude > attHold.MaxRate && magnitude > 0.0f) {
-                const float scale = attHold.MaxRate / magnitude;
-                rate[0] *= scale;
-                rate[1] *= scale;
-                rate[2] *= scale;
+        if (magnitude > attHold.MaxRate && magnitude > 0.0f) {
+            const float scale = attHold.MaxRate / magnitude;
+            for (int i = 0; i < 3; i++) {
+                if (!attHold.Tracking[i]) {
+                    rate[i] *= scale;
+                }
             }
         }
+
+        // Advance qTarget so a tracking axis's error is ~0 again next loop (seamless future
+        // freeze) while a frozen axis's held offset is carried forward completely unchanged.
+        // This is a per-axis partial version of "getQuaternion(&attHold.qTarget)" (the old
+        // all-tracking capture): qError's vector part is, to the small-per-loop-step accuracy
+        // this runs at, an axis-separable measure of how far qTarget currently sits from
+        // qCurrent along each body axis. Zeroing a tracking axis's component before recomposing
+        // says "close that gap"; leaving a frozen axis's component untouched says "keep exactly
+        // the offset already held on that axis". Re-deriving qTarget = qCurrent (x) qKeep this
+        // way (rather than integrating a running per-axis offset, which is how autohover.c
+        // tracks its one live axis) avoids ever constructing an intermediate Euler triple, which
+        // is what would reintroduce gimbal lock/coupling here since -- unlike autohover's fixed
+        // vertical reference -- any of this mode's 3 axes can legitimately end up frozen near a
+        // 90 degree offset from the other two.
+        if (attHold.Tracking[FD_ROLL] || attHold.Tracking[FD_PITCH] || attHold.Tracking[FD_YAW]) {
+            quaternion qKeep = {
+                .x = attHold.Tracking[FD_ROLL]  ? 0.0f : qError.x,
+                .y = attHold.Tracking[FD_PITCH] ? 0.0f : qError.y,
+                .z = attHold.Tracking[FD_YAW]   ? 0.0f : qError.z,
+            };
+            qKeep.w = sqrtf(fmaxf(0.0f, 1.0f - sq(qKeep.x) - sq(qKeep.y) - sq(qKeep.z)));
+
+            quaternion qTargetNew;
+            imuQuaternionMultiplication(&qCurrent, &qKeep, &qTargetNew);
+
+            const float targetNormRecip = 1.0f / sqrtf(sq(qTargetNew.w) + sq(qTargetNew.x) + sq(qTargetNew.y) + sq(qTargetNew.z));
+            qTargetNew.w *= targetNormRecip;
+            qTargetNew.x *= targetNormRecip;
+            qTargetNew.y *= targetNormRecip;
+            qTargetNew.z *= targetNormRecip;
+
+            attHold.qTarget = qTargetNew;
+        }
+        // else: every axis is frozen -- leave qTarget completely untouched rather than
+        // recomputing an identical result through the quaternion algebra above, so a long hold
+        // can't accumulate floating-point drift loop after loop.
     }
 
-    if (attHold.Tracking) {
+    if (attHold.Tracking[axis]) {
         DEBUG_AXIS(ATTHOLD, axis, 0, pidSetpoint);
         return pidSetpoint;
     }
