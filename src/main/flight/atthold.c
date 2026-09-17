@@ -117,10 +117,14 @@ float attHoldApply(int axis, float pidSetpoint)
     // per PID loop iteration, not once per axis call -- do that work on the first axis touched
     // each iteration and cache it, same pattern autoHoverApply uses for its pitch/yaw correction.
     if (axis == FD_ROLL) {
-        const bool grounded = !isAirborne();
-        attHold.Tracking[FD_ROLL]  = grounded || fabsf(getDeflection(FD_ROLL))  > attHold.Deadband;
-        attHold.Tracking[FD_PITCH] = grounded || fabsf(getDeflection(FD_PITCH)) > attHold.Deadband;
-        attHold.Tracking[FD_YAW]   = grounded || fabsf(getDeflection(FD_YAW))   > attHold.Deadband;
+        // Deliberately not gated on isAirborne() -- see the pre-airborne attenuation below
+        // instead. Forcing tracking (pure passthrough) whenever grounded, as this used to, meant
+        // Att Hold gave zero correction authority on the bench no matter how long you sat there,
+        // unlike angleModeApply/horizonModeApply/autoHoverApply's pitch+yaw, which all still
+        // correct pre-airborne, just at reduced strength.
+        attHold.Tracking[FD_ROLL]  = fabsf(getDeflection(FD_ROLL))  > attHold.Deadband;
+        attHold.Tracking[FD_PITCH] = fabsf(getDeflection(FD_PITCH)) > attHold.Deadband;
+        attHold.Tracking[FD_YAW]   = fabsf(getDeflection(FD_YAW))   > attHold.Deadband;
 
         quaternion qCurrent;
         getQuaternion(&qCurrent);
@@ -144,11 +148,23 @@ float attHoldApply(int axis, float pidSetpoint)
         // across the full 0-180 degree range -- see autoHoverApply for why this is preferred
         // over an axis-angle/acos decomposition. All three axes feed this vector here (unlike
         // autohover, which leaves roll/index 0 unused).
-        const float errorDeg[3] = {
+        float errorDeg[3] = {
             (2.0f * qError.x) / M_RADf,
             (2.0f * qError.y) / M_RADf,
             (2.0f * qError.z) / M_RADf,
         };
+
+        // Same pre-airborne attenuation angleModeApply/horizonModeApply/autoHoverApply's pitch+yaw
+        // use, so the mode can be armed/tested on the ground without snapping at full strength --
+        // reduced authority, not the zero authority a hard isAirborne() gate on tracking used to
+        // give (see above). Applied to all three axes uniformly, unlike autohover.c, since here
+        // there's no single "always-on" axis to treat differently -- all three go through the same
+        // track/freeze machinery.
+        if (!isAirborne()) {
+            errorDeg[0] *= 0.25f;
+            errorDeg[1] *= 0.25f;
+            errorDeg[2] *= 0.25f;
+        }
 
         // Correction rates: only the axes that are actually frozen this loop are being asked to
         // move anything, so only they take part in the magnitude clamp below -- a tracking axis

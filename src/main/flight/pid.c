@@ -855,10 +855,36 @@ static void pidApplyMode1(uint8_t axis)
     // Apply error decay (fixed rate -- no ground/airborne distinction; a plane
     // sitting on its wheels isn't at risk of tipping over from I-term windup
     // the way a loaded heli rotor disk is, so there's no need to decay faster
-    // while landed)
-    const float errorDecay = limitf(pid.data[axis].axisError * pid.itermDecayRate, pid.itermDecayLimit);
+    // while landed) -- but suspended while a leveling/attitude-hold layer is
+    // actively shaping this axis's setpoint. Those layers (ANGLE/HORIZON/GPS
+    // rescue/failsafe/loiter/RTH's shared angleModeApply on roll+pitch, the
+    // acro trainer likewise, and ATTHOLD/AUTOHOVER on whichever axes they
+    // hold) fundamentally need a sustained I-term to hold a corrected
+    // attitude against a persistent disturbance once the rate error itself
+    // has settled to ~0 -- an unconditional decay quietly erodes exactly that
+    // contribution, which feels indistinguishable from the correction just
+    // giving up after a couple of seconds even though the true attitude
+    // error never went away. Plain acro/manual flight (and TRADITIONAL_MODE,
+    // which only masks the I *output* above, not axisError itself) still
+    // decay normally.
+#ifdef USE_ACRO_TRAINER
+    const flightModeFlags_e rollPitchLevelingModes = ANGLE_MODE | HORIZON_MODE | GPS_RESCUE_MODE
+        | FAILSAFE_MODE | LOITER_MODE | RTH_MODE | ATTHOLD_MODE | AUTOHOVER_MODE | TRAINER_MODE;
+#else
+    const flightModeFlags_e rollPitchLevelingModes = ANGLE_MODE | HORIZON_MODE | GPS_RESCUE_MODE
+        | FAILSAFE_MODE | LOITER_MODE | RTH_MODE | ATTHOLD_MODE | AUTOHOVER_MODE;
+#endif
 
-    pid.data[axis].axisError -= errorDecay * pid.dT;
+    const bool isYaw = (axis == FD_YAW);
+    const bool levelingModeShapingThisAxis = isYaw
+        ? FLIGHT_MODE(ATTHOLD_MODE | AUTOHOVER_MODE)
+        : FLIGHT_MODE(rollPitchLevelingModes);
+
+    if (!levelingModeShapingThisAxis) {
+        const float errorDecay = limitf(pid.data[axis].axisError * pid.itermDecayRate, pid.itermDecayLimit);
+
+        pid.data[axis].axisError -= errorDecay * pid.dT;
+    }
 
 
   //// Feedforward

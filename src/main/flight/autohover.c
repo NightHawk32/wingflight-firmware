@@ -40,6 +40,13 @@
 
 #include "autohover.h"
 
+// Below this combined pitch+yaw error, the aircraft is considered close enough to vertical that
+// the quaternion error's per-axis decomposition can be trusted for roll-hold tracking (see the
+// nearVerticalTarget comment in autoHoverApply). Not a user-facing tunable -- an internal
+// numerical-stability margin, picked well below the angle range where axis coupling becomes
+// significant while still being loose enough to engage roll-hold shortly before reaching upright.
+#define AUTOHOVER_ROLL_HOLD_ENTRY_DEG 30.0f
+
 // Quaternion-based vertical (90 degree pitch) attitude + heading hold, for 3D "prop hang" hover.
 // Deliberately NOT built on leveling.c's Euler-angle approach -- that computes roll/pitch error
 // per axis independently and hits gimbal lock exactly at 90 degrees pitch, the one attitude this
@@ -138,7 +145,6 @@ float autoHoverApply(int axis, float pidSetpoint)
         // fighting the stick. Once the stick returns to center, roll is captured and held instead
         // (see rollActive below) -- disturbance-driven drift no longer goes uncorrected.
         const bool rollActive = !autoHover.RollCaptured
-            || !isAirborne()
             || fabsf(getDeflection(FD_ROLL)) > autoHover.RollDeadband;
 
         // Held target: vertical, at the captured heading, plus the pilot's pitch/yaw stick
@@ -218,16 +224,38 @@ float autoHoverApply(int axis, float pidSetpoint)
             (2.0f * qError.z) / M_RADf,
         };
 
-        // Same pre-airborne attenuation angleModeApply/horizonModeApply use, so the switch can't
-        // be armed/tested on the ground and snap violently. Roll isn't included here -- rollActive
-        // is already forced true pre-airborne above, so roll's correction branch below never runs
-        // on the ground.
+        // errorDeg[0] is only a clean, independent measure of roll drift once the aircraft is
+        // already close to the vertical target -- quaternion rotations don't decompose into
+        // independent per-axis components for a large total error (e.g. engaging from level on
+        // the bench, ~90 degrees of pitch away), so at that distance errorDeg[0] picks up
+        // pitch/yaw's error instead of genuine roll drift. Left unguarded, that spurious value
+        // feeds into the persistent RollOffsetDecidegrees integrator below, which shifts qBase's
+        // roll next loop, which changes next loop's error again -- a real, bench-confirmed
+        // runaway feedback loop (heavy servo oscillation, pitch never settling into a clean
+        // nose-up command) with no actual roll disturbance behind it. Computed from the raw,
+        // pre-attenuation error (below) since that's what genuinely reflects how far from
+        // vertical the aircraft still is, on the ground or in the air alike.
+        const bool nearVerticalTarget = sqrtf(sq(errorDeg[1]) + sq(errorDeg[2])) < AUTOHOVER_ROLL_HOLD_ENTRY_DEG;
+
+        // Same pre-airborne attenuation angleModeApply/horizonModeApply use, so the switch can be
+        // armed/tested on the ground without snapping at full strength -- reduced authority, not
+        // the zero authority forcing rollActive true unconditionally pre-airborne used to give.
+        // Roll is included here now too: RollCaptured still forces the first post-engage loop to
+        // track regardless of ground state, so there's no snap-to-a-stale-offset risk from
+        // removing that forced-tracking behavior.
         if (!isAirborne()) {
+            errorDeg[0] *= 0.25f;
             errorDeg[1] *= 0.25f;
             errorDeg[2] *= 0.25f;
         }
 
-        if (rollActive) {
+        if (!nearVerticalTarget) {
+            // Still transitioning to vertical -- defer the whole roll-hold state machine (it's
+            // only meant to reject torque roll once already hovering, not guide the initial snap
+            // to vertical) and leave RollCaptured false so the first loop after crossing into
+            // range below tracks (captures current roll) rather than freezing on a stale offset.
+            rate[FD_ROLL] = pidSetpoint;
+        } else if (rollActive) {
             // Track: keep the held roll offset following the current attitude, so a future freeze
             // starts from ~zero error instead of snapping. This only ever adds a relative,
             // singularity-free error term onto the running offset -- it never reads an absolute
@@ -243,13 +271,13 @@ float autoHoverApply(int axis, float pidSetpoint)
             }
 
             rate[FD_ROLL] = pidSetpoint;
+            autoHover.RollCaptured = true;
         } else {
             // Frozen: correct back toward the captured roll. A scalar clamp, kept separate from
             // the pitch/yaw vector clamp below -- roll's correction isn't part of that rotation.
             rate[FD_ROLL] = constrainf(errorDeg[0] * autoHover.Gain, -autoHover.MaxRate, autoHover.MaxRate);
+            autoHover.RollCaptured = true;
         }
-
-        autoHover.RollCaptured = true;
 
         float magnitude = 0.0f;
         for (int i = FD_PITCH; i <= FD_YAW; i++) {
