@@ -481,17 +481,11 @@ $(OBJECT_DIR)/$(TARGET)/%.o: %.S
 ## all : Build all currently built targets
 all: $(CI_TARGETS)
 
-## all_all : Build all targets (including legacy / unsupported)
+## all_all : Build all valid targets
 all_all: $(VALID_TARGETS)
 
 ## unified : build all Unified Targets
 unified: $(UNIFIED_TARGETS)
-
-## legacy : Build legacy targets
-legacy: $(LEGACY_TARGETS)
-
-## unsupported : Build unsupported targets
-unsupported: $(UNSUPPORTED_TARGETS)
 
 ## pre-push : The minimum verification that should be run before pushing, to check if CI has a chance of succeeding
 pre-push:
@@ -630,8 +624,6 @@ targets:
 	@echo "Valid targets:       $(VALID_TARGETS)"
 	@echo "Built targets:       $(CI_TARGETS)"
 	@echo "Unified targets:     $(UNIFIED_TARGETS)"
-	@echo "Legacy targets:      $(LEGACY_TARGETS)"
-	@echo "Unsupported targets: $(UNSUPPORTED_TARGETS)"
 	@echo "Default target:      $(TARGET)"
 	@echo "targets-group-1:     $(GROUP_1_TARGETS)"
 	@echo "targets-group-2:     $(GROUP_2_TARGETS)"
