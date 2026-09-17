@@ -169,16 +169,19 @@ float getDeflection(int axis)
 // past this axis's max rate and saturate early, losing the rate curve and feeling like
 // passthrough.
 //
-// Normalise against the fixed ceiling any profile's rcRates could reach (RC_RATES_MAX), not
-// this profile's own configured rcRates - dividing by the profile's own rate cancels it out of
-// the result entirely (full stick always reaches full throw, whatever rcRates is set to), which
-// left MANUAL flying at max authority regardless of how the pilot tuned rates. Against the fixed
-// ceiling, a milder rate profile genuinely yields milder MANUAL throw, exactly mirroring how
-// rcRates scales the stabilised-mode rate target.
+// Scaled through pidGetFeedforward() -- the exact same Kf*rate computation stabilised flight's
+// F-term uses -- rather than a fixed rcRates-independent ceiling (the previous approach). MANUAL
+// is meant to be "stabilised flight minus the gyro correction", and F is precisely stabilised
+// flight's non-corrective, no-gyro-feedback contribution: reusing it means MANUAL tracks however
+// F has actually been tuned for this airframe (so a well-tuned F puts MANUAL's fixed output in
+// the neighbourhood of stabilised flight's typical in-flight settled output, with the gap between
+// them being exactly the stabilisation MANUAL omits), rather than an arbitrary fraction unrelated
+// to the aircraft's real tuned response. Judged in flight, not on the bench -- a static airframe
+// never rotates far enough for stabilised mode's P-term to relax toward that same settled state,
+// so the two won't visibly match sitting on a bench either way.
 float getManualDeflection(int axis)
 {
-    const float maxRate = CONTROL_RATE_CONFIG_RC_RATES_MAX * 5.0f;
-    return constrainf(applyRatesCurve(axis, sp.deflection[axis]) / maxRate, -1.0f, 1.0f);
+    return constrainf(pidGetFeedforward(axis, applyRatesCurve(axis, sp.deflection[axis])), -1.0f, 1.0f);
 }
 
 static float setpointResponseAccel(int axis, float value)

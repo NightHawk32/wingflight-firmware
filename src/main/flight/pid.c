@@ -85,6 +85,15 @@ float pidGetOutput(int axis)
     return pid.data[axis].pidSum;
 }
 
+// Exposes the same feedforward computation pidApplyMode1's F-term uses (pid.coef[axis].Kf is
+// otherwise file-static) -- lets a caller ask "what would stabilized flight command for this
+// axis at this rate, with no gyro correction at all" without duplicating Kf's derivation or
+// scale. See setpoint.c's getManualDeflection(), which uses this as MANUAL mode's whole output.
+float pidGetFeedforward(int axis, float rate)
+{
+    return pid.coef[axis].Kf * rate;
+}
+
 const pidAxisData_t * pidGetAxisData(void)
 {
     return pid.data;
