@@ -113,6 +113,15 @@
 #undef USE_SERIALRX_SUMD
 #undef USE_SERIALRX_SUMH
 #undef USE_SERIALRX_XBUS
+// The backup RX providers decode serial RX frames (SBUS/FBUS/FPort/EX Bus/CRSF)
+// and timestamp bytes with microsISR(); SITL has neither a serial RX stack nor
+// drivers/system.c. Keep the core USE_RX_INPUT_BACKUP API (fc/core.c and msp.c
+// call it unconditionally) but build it with no providers, so it stays inert.
+#undef USE_RX_INPUT_BACKUP_SBUS
+#undef USE_RX_INPUT_BACKUP_FBUS
+#undef USE_RX_INPUT_BACKUP_FPORT
+#undef USE_RX_INPUT_BACKUP_EXBUS
+#undef USE_RX_INPUT_BACKUP_CRSF
 #undef USE_LED_STRIP
 #undef USE_TELEMETRY_FRSKY_HUB
 #undef USE_TELEMETRY_HOTT
