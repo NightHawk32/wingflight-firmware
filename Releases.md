@@ -1,3 +1,11 @@
+# 0.0.22
+
+Add a descriptive role tag to mixer rules, with per-role adjustment functions (ADJUSTMENT_FLAP_COMPENSATION_GAIN, ADJUSTMENT_DIFF_THRUST_YAW_GAIN) and fixes for role-adjusted rules losing their Reverse flag.
+Add TRADITIONAL flight mode: stabilized with I-term forced to zero.
+Block first arm until a configured backup RX has linked.
+Hold Auto Hover's roll axis against disturbance drift (e.g. torque roll) once the stick centers, instead of leaving it a bare pass-through the whole time.
+Change default servo refresh rate to a safe 50Hz.
+
 # 0.0.21
 
 Tag CLI errors raised while replaying a target's embedded custom-defaults blob (e.g. on `defaults`/`defaults nosave`) with "(custom defaults)", so they're no longer indistinguishable from an error in whatever command the user actually typed.
