@@ -27,13 +27,6 @@
 #include "pg/pid.h"
 #include "pg/adjustments.h"
 
-// Fraction of the normal I-term decay rate (and decay speed limit) applied to an axis that is
-// actively holding a frozen target -- see the decay comment in pidApplyMode1. Slow enough that a
-// real steady disturbance is still held, but not zero, so unneeded I eventually drains away and
-// the surfaces re-center when nothing is actually happening. At the default iterm_decay_time this
-// is a time constant of roughly 6 s.
-#define ATTHOLD_HOLD_I_DECAY_SCALE 0.1f
-
 void attHoldInit(const pidProfile_t *pidProfile);
 void attHoldSetState(bool state);
 

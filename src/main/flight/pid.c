@@ -56,6 +56,7 @@
 #include "flight/leveling.h"
 #include "flight/autohover.h"
 #include "flight/atthold.h"
+#include "flight/hold_engine.h"
 #include "flight/rpm_filter.h"
 
 #include "pid.h"
@@ -909,7 +910,7 @@ static void pidApplyMode1(uint8_t axis)
         || (!isYaw && FLIGHT_MODE(rollPitchLevelingModes));
 
     if (!levelingModeShapingThisAxis) {
-        const float decayScale = attHoldHoldingThisAxis ? ATTHOLD_HOLD_I_DECAY_SCALE : 1.0f;
+        const float decayScale = attHoldHoldingThisAxis ? QUATHOLD_HOLD_I_DECAY_SCALE : 1.0f;
         const float errorDecay = limitf(pid.data[axis].axisError * pid.itermDecayRate * decayScale, pid.itermDecayLimit * decayScale);
 
         pid.data[axis].axisError -= errorDecay * pid.dT;
