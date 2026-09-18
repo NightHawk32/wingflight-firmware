@@ -1,3 +1,16 @@
+# 0.0.23
+
+Add optional throttle assist to AUTOHOVER for underthrottled hover, ramping throttle when pitch correction stays pinned at max rate.
+Add per-servo balance curve for matching multi-servo control surfaces (e.g. dual ailerons).
+Add SITL (Software-In-The-Loop) simulator target for testing firmware behavior without hardware.
+Give ATT HOLD/AUTOHOVER real pre-airborne correction authority instead of none, and stop I-term decay eroding a sustained hold once rate error settles.
+Fix ATT HOLD holding all axes as a single gated group instead of tracking/freezing each axis independently.
+Fix AUTOHOVER/ATTHOLD retaining a stale hold target after a safety mode (GPS rescue/failsafe/RTH/loiter/angle) preempts them, unclamped MSP deadbands freezing hold correction, and a throttle assist trigger that could fire with max_rate at 0.
+Fix blackbox flightModeFlags truncating box IDs past bit 31, so modes like AUTOHOVER never showed as engaged in logs.
+Fix MANUAL mode's throw being scaled against the rate profile's maximum ceiling instead of the tune's actual feedforward.
+Fix blackbox mass-storage log filenames still using the legacy "rtfl" prefix.
+Remove legacy Matek/Nucleo board targets (superseded by unified STM32 targets).
+
 # 0.0.22
 
 Add a descriptive role tag to mixer rules, with per-role adjustment functions (ADJUSTMENT_FLAP_COMPENSATION_GAIN, ADJUSTMENT_DIFF_THRUST_YAW_GAIN) and fixes for role-adjusted rules losing their Reverse flag.
