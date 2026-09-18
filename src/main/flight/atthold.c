@@ -76,11 +76,24 @@
 #define ATTHOLD_SETTLE_RATE     15.0f   // deg/s
 #define ATTHOLD_SETTLE_MAX_S    0.4f
 
+// If a frozen axis has a sizeable attitude error (above ATTHOLD_STALL_ERROR_DEG) yet has not moved
+// (below ATTHOLD_STALL_RATE) for ATTHOLD_STALL_TIME_S, the correction isn't achieving anything --
+// the aircraft is pinned, sitting on the bench, or the surface has no authority. A hold that keeps
+// pushing forever against something it can't move isn't holding anything useful and leaves the
+// surfaces pegged, so the axis gives up and re-captures its target at the current attitude (which
+// lets the surfaces re-center). A small steady error held in balance by the I term -- e.g.
+// sagging a couple of degrees against torque roll -- stays under the error threshold and keeps
+// holding indefinitely.
+#define ATTHOLD_STALL_ERROR_DEG 5.0f
+#define ATTHOLD_STALL_RATE      5.0f    // deg/s
+#define ATTHOLD_STALL_TIME_S    3.0f
+
 typedef struct {
     bool        Active;
     bool        Tracking[3];   // per-axis: true while that axis's target is free-tracking (its own
                                 // stick active, or still settling after the stick was released)
     float       SettleTime[3]; // per-axis: seconds since that axis's stick returned inside the deadband
+    float       StallTime[3];  // per-axis: seconds a frozen axis has had a large error with no motion
     float       Gain;
     float       Deadband;      // fraction (0..1) of stick deflection that keeps an axis tracking
     float       MaxRate;
@@ -122,6 +135,7 @@ void attHoldSetState(bool state)
         for (int i = 0; i < 3; i++) {
             attHold.Tracking[i] = false;
             attHold.SettleTime[i] = 0.0f;
+            attHold.StallTime[i] = 0.0f;
         }
     }
 
@@ -196,6 +210,25 @@ float attHoldApply(int axis, float pidSetpoint)
             (2.0f * qError.y) / M_RADf,
             (2.0f * qError.z) / M_RADf,
         };
+
+        // Stall detection uses the raw error (before the pre-airborne attenuation below), since
+        // that's the true distance from the held attitude. Sends a stalled axis back through the
+        // tracking path -- which re-aims just that axis's target at the current attitude -- and
+        // lets the normal settle logic above hand it back to frozen a loop or two later.
+        for (int i = 0; i < 3; i++) {
+            if (!attHold.Tracking[i] && fabsf(errorDeg[i]) > ATTHOLD_STALL_ERROR_DEG
+                && fabsf(pidData[i].gyroRate) < ATTHOLD_STALL_RATE) {
+                attHold.StallTime[i] += dT;
+
+                if (attHold.StallTime[i] >= ATTHOLD_STALL_TIME_S) {
+                    attHold.Tracking[i] = true;
+                    attHold.SettleTime[i] = 0.0f;
+                    attHold.StallTime[i] = 0.0f;
+                }
+            } else {
+                attHold.StallTime[i] = 0.0f;
+            }
+        }
 
         // Same pre-airborne attenuation angleModeApply/horizonModeApply/autoHoverApply's pitch+yaw
         // use, so the mode can be armed/tested on the ground without snapping at full strength --

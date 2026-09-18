@@ -879,6 +879,16 @@ static void pidApplyMode1(uint8_t axis)
     // (stick active, or still settling after release): there it's plain rate
     // flight, so it should bleed I exactly like normal mode rather than carry
     // stale I from an earlier maneuver into the next hold.
+    //
+    // An ATTHOLD axis that IS holding is the one exception to "suspended":
+    // it decays at a small fraction of the normal rate instead of not at all.
+    // With no bleed whatsoever, I left over from before the hold engaged (or
+    // from a disturbance long gone) would keep the surfaces parked off-center
+    // forever even with zero attitude error and zero motion -- e.g. sitting on
+    // the bench, where nothing the hold does can ever move the aircraft. A
+    // slow bleed still lets the hold carry a real steady disturbance (torque
+    // roll): the outer attitude loop just re-grows whatever I is needed, at the
+    // cost of a small sag -- while anything not actually needed drains away.
 #ifdef USE_ACRO_TRAINER
     const flightModeFlags_e rollPitchLevelingModes = ANGLE_MODE | HORIZON_MODE | GPS_RESCUE_MODE
         | FAILSAFE_MODE | LOITER_MODE | RTH_MODE | TRAINER_MODE;
@@ -887,17 +897,20 @@ static void pidApplyMode1(uint8_t axis)
         | FAILSAFE_MODE | LOITER_MODE | RTH_MODE;
 #endif
 
-    bool holdModeHoldingThisAxis = false;
+    bool autoHoverHoldingThisAxis = false;
+    bool attHoldHoldingThisAxis = false;
 #ifdef USE_ACC
-    holdModeHoldingThisAxis = attHoldIsHolding(axis) || autoHoverIsHolding(axis);
+    autoHoverHoldingThisAxis = autoHoverIsHolding(axis);
+    attHoldHoldingThisAxis = attHoldIsHolding(axis);
 #endif
 
     const bool isYaw = (axis == FD_YAW);
-    const bool levelingModeShapingThisAxis = holdModeHoldingThisAxis
+    const bool levelingModeShapingThisAxis = autoHoverHoldingThisAxis
         || (!isYaw && FLIGHT_MODE(rollPitchLevelingModes));
 
     if (!levelingModeShapingThisAxis) {
-        const float errorDecay = limitf(pid.data[axis].axisError * pid.itermDecayRate, pid.itermDecayLimit);
+        const float decayScale = attHoldHoldingThisAxis ? ATTHOLD_HOLD_I_DECAY_SCALE : 1.0f;
+        const float errorDecay = limitf(pid.data[axis].axisError * pid.itermDecayRate * decayScale, pid.itermDecayLimit * decayScale);
 
         pid.data[axis].axisError -= errorDecay * pid.dT;
     }
