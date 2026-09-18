@@ -50,6 +50,16 @@
 // significant while still being loose enough to engage roll-hold shortly before reaching upright.
 #define AUTOHOVER_ROLL_HOLD_ENTRY_DEG 30.0f
 
+// After the roll stick returns to center, the held roll keeps free-tracking until roll has actually
+// stopped rotating (below AUTOHOVER_ROLL_SETTLE_RATE) or AUTOHOVER_ROLL_SETTLE_MAX_S has passed,
+// whichever comes first. Freezing at the instant of release would pin the target to a roll the
+// aircraft is still spinning through, and the hold would haul it back past where the pilot let go
+// -- a rubber-band snap-back, unlike normal rate flight where the rate loop just brakes and the
+// attitude stays put. The time cap stops a persistent torque-roll from keeping the hold off
+// forever. Same scheme as atthold.c's ATTHOLD_SETTLE_*.
+#define AUTOHOVER_ROLL_SETTLE_RATE  15.0f   // deg/s
+#define AUTOHOVER_ROLL_SETTLE_MAX_S 0.4f
+
 // Absolute, firmware-enforced backstop on the throttle assist ceiling, independent of whatever
 // value autohover.throttle_assist_max happens to hold. The CLI settings table clamps `set` inputs
 // to this same 0-50 range, but MSP's SET_PID_PROFILE handler writes the raw wire byte with no
@@ -101,6 +111,9 @@ typedef struct {
     bool    RollCaptured;           // false until the held roll has snapped to the current attitude
                                      // at least once since engagement (avoids a snap-to-zero if the
                                      // roll stick happens to already be centered on engage)
+    bool    RollHolding;            // true while roll is frozen and correcting back to its captured
+                                     // value (not while free-tracking or settling after a release)
+    float   RollSettleTime;         // seconds since the roll stick returned inside the deadband
     float   RollDeadband;           // fraction (0..1) of roll stick deflection that keeps the held
                                      // roll tracking current attitude (no correction)
     float   RollOffsetDecidegrees;  // held roll offset from qBase's canonical roll=0, updated while
@@ -154,6 +167,8 @@ void autoHoverSetState(bool state)
         autoHover.HeadingTargetDecidegrees = attitude.values.yaw;
         autoHover.RollOffsetDecidegrees = 0.0f;
         autoHover.RollCaptured = false;
+        autoHover.RollHolding = false;
+        autoHover.RollSettleTime = 0.0f;
     }
 
     if (!state) {
@@ -165,6 +180,15 @@ void autoHoverSetState(bool state)
     }
 
     autoHover.Active = state;
+}
+
+// True while this axis is actively holding a target, as opposed to being under free stick control.
+// Pitch and yaw always hold while the mode is active; roll only holds once frozen (not while
+// free-tracking, settling after a release, or before the aircraft reaches vertical). pid.c uses
+// this to decide whether I-term decay should be suspended -- see pidApplyMode1.
+bool autoHoverIsHolding(int axis)
+{
+    return autoHover.Active && (axis != FD_ROLL || autoHover.RollHolding);
 }
 
 float autoHoverApply(int axis, float pidSetpoint)
@@ -184,8 +208,21 @@ float autoHoverApply(int axis, float pidSetpoint)
         // deflection produces continuous rotation instead of converging on a bounded offset and
         // fighting the stick. Once the stick returns to center, roll is captured and held instead
         // (see rollActive below) -- disturbance-driven drift no longer goes uncorrected.
-        const bool rollActive = !autoHover.RollCaptured
-            || fabsf(getDeflection(FD_ROLL)) > autoHover.RollDeadband;
+        const bool rollStickActive = fabsf(getDeflection(FD_ROLL)) > autoHover.RollDeadband;
+        bool rollActive = !autoHover.RollCaptured || rollStickActive;
+
+        if (rollStickActive) {
+            autoHover.RollSettleTime = 0.0f;
+        } else if (!rollActive && !autoHover.RollHolding) {
+            // Stick centered but roll is still in free-track from the last deflection: keep
+            // tracking until it has stopped rotating (or the settle window runs out), then freeze.
+            autoHover.RollSettleTime += pidGetDT();
+
+            if (fabsf(pidGetAxisData()[FD_ROLL].gyroRate) >= AUTOHOVER_ROLL_SETTLE_RATE
+                && autoHover.RollSettleTime < AUTOHOVER_ROLL_SETTLE_MAX_S) {
+                rollActive = true;
+            }
+        }
 
         // Held target: vertical, at the captured heading, plus the pilot's pitch/yaw stick
         // deflection as a small local (body-frame) rotation offset -- same "deflect away from
@@ -295,6 +332,7 @@ float autoHoverApply(int axis, float pidSetpoint)
             // to vertical) and leave RollCaptured false so the first loop after crossing into
             // range below tracks (captures current roll) rather than freezing on a stale offset.
             rate[FD_ROLL] = pidSetpoint;
+            autoHover.RollHolding = false;
         } else if (rollActive) {
             // Track: keep the held roll offset following the current attitude, so a future freeze
             // starts from ~zero error instead of snapping. This only ever adds a relative,
@@ -312,11 +350,13 @@ float autoHoverApply(int axis, float pidSetpoint)
 
             rate[FD_ROLL] = pidSetpoint;
             autoHover.RollCaptured = true;
+            autoHover.RollHolding = false;
         } else {
             // Frozen: correct back toward the captured roll. A scalar clamp, kept separate from
             // the pitch/yaw vector clamp below -- roll's correction isn't part of that rotation.
             rate[FD_ROLL] = constrainf(errorDeg[0] * autoHover.Gain, -autoHover.MaxRate, autoHover.MaxRate);
             autoHover.RollCaptured = true;
+            autoHover.RollHolding = true;
         }
 
         float magnitude = 0.0f;
