@@ -134,7 +134,11 @@ INIT_CODE void autoHoverInit(const pidProfile_t *pidProfile)
     autoHover.Gain = pidProfile->autohover.gain / 10.0f;
     autoHover.MaxAngle = pidProfile->autohover.max_angle;
     autoHover.MaxRate = pidProfile->autohover.max_rate;
-    autoHover.RollDeadband = pidProfile->autohover.roll_deadband / 100.0f;
+    // Constrained here, not just at the CLI (settings.c) or MSP boundary -- MSP's
+    // SET_PID_PROFILE handler writes the raw wire byte with no clamping of its own, and an
+    // out-of-range deadband (>100) would make fabsf(getDeflection()) > RollDeadband never true
+    // for normal [-1, 1] stick input, freezing roll hold even at full stick deflection.
+    autoHover.RollDeadband = constrainf(pidProfile->autohover.roll_deadband / 100.0f, 0.0f, 1.0f);
     autoHover.ThrottleAssistGain = pidProfile->autohover.throttle_assist_gain / 100.0f;
     autoHover.ThrottleAssistMax = fminf(pidProfile->autohover.throttle_assist_max / 100.0f,
         AUTOHOVER_THROTTLE_ASSIST_MAX_CEILING);
@@ -344,7 +348,11 @@ float autoHoverApply(int axis, float pidSetpoint)
         // more specific proxy for thrust deficiency than a yaw/heading disturbance would be. Gated
         // on isAirborne() for the same reason the pre-airborne attenuation above exists -- ground
         // pitch error (e.g. sitting nose-up on a bench stand) must never drive throttle up.
-        if (autoHover.ThrottleAssistGain > 0.0f && isAirborne() && pitchEffort >= autoHover.MaxRate) {
+        // MaxRate > 0.0f is required, not just ThrottleAssistGain -- with MaxRate at 0 (a valid
+        // CLI/MSP value that effectively disables attitude correction), pitchEffort >= 0.0f is
+        // true on every loop regardless of actual pitch error, which would trigger the assist
+        // continuously even though no real correction is being commanded.
+        if (autoHover.ThrottleAssistGain > 0.0f && autoHover.MaxRate > 0.0f && isAirborne() && pitchEffort >= autoHover.MaxRate) {
             if (autoHover.PitchSaturatedSinceMs == 0) {
                 autoHover.PitchSaturatedSinceMs = millis();
             }

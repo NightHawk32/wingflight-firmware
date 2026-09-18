@@ -90,7 +90,12 @@ void set_ADJUSTMENT_ATTHOLD_GAIN(int value)
 INIT_CODE void attHoldInit(const pidProfile_t *pidProfile)
 {
     attHold.Gain = pidProfile->atthold.gain / 10.0f;
-    attHold.Deadband = pidProfile->atthold.deadband / 100.0f;
+    // Constrained here, not just at the CLI (settings.c) or MSP boundary -- MSP's
+    // SET_PID_PROFILE handler writes the raw wire byte with no clamping of its own, and an
+    // out-of-range deadband (>100) would make fabsf(getDeflection()) > Deadband never true for
+    // normal [-1, 1] stick input, so Att Hold would keep correcting instead of passing through
+    // even at full stick.
+    attHold.Deadband = constrainf(pidProfile->atthold.deadband / 100.0f, 0.0f, 1.0f);
     attHold.MaxRate = pidProfile->atthold.max_rate;
 }
 

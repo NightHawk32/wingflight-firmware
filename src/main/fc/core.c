@@ -891,8 +891,18 @@ void processRxModes(timeUs_t currentTimeUs)
     acroTrainerSetState(FLIGHT_MODE(TRAINER_MODE));
 #endif // USE_ACRO_TRAINER
 #ifdef USE_ACC
-    autoHoverSetState(FLIGHT_MODE(AUTOHOVER_MODE));
-    attHoldSetState(FLIGHT_MODE(ATTHOLD_MODE));
+    // GPS rescue/failsafe/RTH/loiter take priority over AUTOHOVER/ATTHOLD for the actual setpoint
+    // (see pidApplySetpoint's angleModeApply branch in pid.c), but AUTOHOVER_MODE/ATTHOLD_MODE's
+    // flightModeFlags bit stays set the whole time it's preempted -- the box-selection chain above
+    // only clears it when a different BOX switch position is chosen, not when a safety mode merely
+    // takes priority. Left unguarded, autoHoverSetState/attHoldSetState would see the mode as
+    // continuously active and never re-capture a fresh target, so once the safety mode clears and
+    // priority falls back to the hold, it resumes whatever heading/roll/attitude target (and, for
+    // AUTOHOVER, throttle assist ramp -- see autoHoverThrottleBoost) was captured before the
+    // preemption instead of the aircraft's current attitude. Mirrors pid.c's own priority mask.
+    const bool safetyLevelingActive = FLIGHT_MODE(ANGLE_MODE | GPS_RESCUE_MODE | FAILSAFE_MODE | LOITER_MODE | RTH_MODE);
+    autoHoverSetState(FLIGHT_MODE(AUTOHOVER_MODE) && !safetyLevelingActive);
+    attHoldSetState(FLIGHT_MODE(ATTHOLD_MODE) && !safetyLevelingActive);
 #endif // USE_ACC
 #ifdef USE_SERVOS
     autoTrimUpdate();
