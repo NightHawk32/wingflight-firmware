@@ -867,27 +867,35 @@ static void pidApplyMode1(uint8_t axis)
     // while landed) -- but suspended while a leveling/attitude-hold layer is
     // actively shaping this axis's setpoint. Those layers (ANGLE/HORIZON/GPS
     // rescue/failsafe/loiter/RTH's shared angleModeApply on roll+pitch, the
-    // acro trainer likewise, and ATTHOLD/AUTOHOVER on whichever axes they
-    // hold) fundamentally need a sustained I-term to hold a corrected
-    // attitude against a persistent disturbance once the rate error itself
-    // has settled to ~0 -- an unconditional decay quietly erodes exactly that
-    // contribution, which feels indistinguishable from the correction just
-    // giving up after a couple of seconds even though the true attitude
-    // error never went away. Plain acro/manual flight (and TRADITIONAL_MODE,
-    // which only masks the I *output* above, not axisError itself) still
-    // decay normally.
+    // acro trainer likewise, and AUTOHOVER on whichever axes it holds, and
+    // ATTHOLD on an axis that is actually holding a frozen target) fundamentally
+    // need a sustained I-term to hold a corrected attitude against a
+    // persistent disturbance once the rate error itself has settled to ~0 --
+    // an unconditional decay quietly erodes exactly that contribution, which
+    // feels indistinguishable from the correction just giving up after a
+    // couple of seconds even though the true attitude error never went away.
+    // Plain acro/manual flight (and TRADITIONAL_MODE, which only masks the I
+    // *output* above, not axisError itself) still decay normally -- and so
+    // does an ATTHOLD axis that's free-tracking (stick active, or still
+    // settling after release): there it's plain rate flight, so it should
+    // bleed I exactly like normal mode rather than carry stale I from an
+    // earlier maneuver into the next hold.
 #ifdef USE_ACRO_TRAINER
     const flightModeFlags_e rollPitchLevelingModes = ANGLE_MODE | HORIZON_MODE | GPS_RESCUE_MODE
-        | FAILSAFE_MODE | LOITER_MODE | RTH_MODE | ATTHOLD_MODE | AUTOHOVER_MODE | TRAINER_MODE;
+        | FAILSAFE_MODE | LOITER_MODE | RTH_MODE | AUTOHOVER_MODE | TRAINER_MODE;
 #else
     const flightModeFlags_e rollPitchLevelingModes = ANGLE_MODE | HORIZON_MODE | GPS_RESCUE_MODE
-        | FAILSAFE_MODE | LOITER_MODE | RTH_MODE | ATTHOLD_MODE | AUTOHOVER_MODE;
+        | FAILSAFE_MODE | LOITER_MODE | RTH_MODE | AUTOHOVER_MODE;
+#endif
+
+    bool attHoldHoldingThisAxis = false;
+#ifdef USE_ACC
+    attHoldHoldingThisAxis = attHoldIsHolding(axis);
 #endif
 
     const bool isYaw = (axis == FD_YAW);
-    const bool levelingModeShapingThisAxis = isYaw
-        ? FLIGHT_MODE(ATTHOLD_MODE | AUTOHOVER_MODE)
-        : FLIGHT_MODE(rollPitchLevelingModes);
+    const bool levelingModeShapingThisAxis = attHoldHoldingThisAxis
+        || (isYaw ? FLIGHT_MODE(AUTOHOVER_MODE) : FLIGHT_MODE(rollPitchLevelingModes));
 
     if (!levelingModeShapingThisAxis) {
         const float errorDecay = limitf(pid.data[axis].axisError * pid.itermDecayRate, pid.itermDecayLimit);

@@ -33,6 +33,7 @@
 
 #include "flight/airborne.h"
 #include "flight/imu.h"
+#include "flight/pid.h"
 #include "flight/setpoint.h"
 
 #include "atthold.h"
@@ -42,8 +43,9 @@
 // reason: this must work right through inverted/knife-edge/harrier attitudes where Euler roll/pitch
 // error terms couple and leveling.c's Euler math would misbehave) but replaces autohover's
 // always-on bounded-stick-offset model with a deadband-gated track/freeze model, so this mode
-// gives full, zero-lag stick authority while the pilot is actively flying and only locks onto an
-// attitude the instant every stick returns to center. That behavioral model (continuously
+// gives full, zero-lag stick authority while the pilot is actively flying and locks onto an
+// attitude once a stick returns to center and that axis has stopped rotating (see
+// ATTHOLD_SETTLE_RATE below -- capturing mid-rotation would snap the aircraft back). That behavioral model (continuously
 // recapture the hold target while a stick is deflected so a future freeze is seamless; freeze and
 // correct only inside a deadband) is carried over from an older Euler-angle-based attitude hold
 // (removed in commit e10a57cd4) -- this file reimplements that behavior on autohover's quaternion
@@ -64,10 +66,21 @@
 // - Like autohover, does not subtract accelerometerConfig()->accelerometerTrims, so a pilot with
 //   board-mount trim dialled in will hold systematically off from where they released the sticks.
 
+// After an axis's stick returns to center, its target keeps free-tracking until the aircraft has
+// actually stopped rotating on that axis (below ATTHOLD_SETTLE_RATE) or ATTHOLD_SETTLE_MAX_S has
+// passed, whichever comes first. Freezing the target at the instant of release instead would pin
+// it to an attitude the aircraft is still rotating through, so the hold would haul it back past
+// where the pilot actually stopped -- a rubber-band snap-back, unlike plain acro/rate flight,
+// where the rate loop just brakes and the attitude stays put. The time cap keeps a persistent
+// disturbance rotation (torque roll, spin-up) from ever holding the axis in tracking forever.
+#define ATTHOLD_SETTLE_RATE     15.0f   // deg/s
+#define ATTHOLD_SETTLE_MAX_S    0.4f
+
 typedef struct {
     bool        Active;
     bool        Tracking[3];   // per-axis: true while that axis's target is free-tracking (its own
-                                // stick active / not airborne)
+                                // stick active, or still settling after the stick was released)
+    float       SettleTime[3]; // per-axis: seconds since that axis's stick returned inside the deadband
     float       Gain;
     float       Deadband;      // fraction (0..1) of stick deflection that keeps an axis tracking
     float       MaxRate;
@@ -105,9 +118,22 @@ void attHoldSetState(bool state)
 {
     if (state && !attHold.Active) {
         getQuaternion(&attHold.qTarget);
+
+        for (int i = 0; i < 3; i++) {
+            attHold.Tracking[i] = false;
+            attHold.SettleTime[i] = 0.0f;
+        }
     }
 
     attHold.Active = state;
+}
+
+// True while this axis is actively holding a frozen target (as opposed to free-tracking under
+// stick control or settling after a release). pid.c uses this to decide whether I-term decay
+// should be suspended -- see pidApplyMode1.
+bool attHoldIsHolding(int axis)
+{
+    return attHold.Active && !attHold.Tracking[axis];
 }
 
 float attHoldApply(int axis, float pidSetpoint)
@@ -127,9 +153,21 @@ float attHoldApply(int axis, float pidSetpoint)
         // Att Hold gave zero correction authority on the bench no matter how long you sat there,
         // unlike angleModeApply/horizonModeApply/autoHoverApply's pitch+yaw, which all still
         // correct pre-airborne, just at reduced strength.
-        attHold.Tracking[FD_ROLL]  = fabsf(getDeflection(FD_ROLL))  > attHold.Deadband;
-        attHold.Tracking[FD_PITCH] = fabsf(getDeflection(FD_PITCH)) > attHold.Deadband;
-        attHold.Tracking[FD_YAW]   = fabsf(getDeflection(FD_YAW))   > attHold.Deadband;
+        const pidAxisData_t *pidData = pidGetAxisData();
+        const float dT = pidGetDT();
+
+        for (int i = 0; i < 3; i++) {
+            if (fabsf(getDeflection(i)) > attHold.Deadband) {
+                attHold.Tracking[i] = true;
+                attHold.SettleTime[i] = 0.0f;
+            } else if (attHold.Tracking[i]) {
+                attHold.SettleTime[i] += dT;
+
+                if (fabsf(pidData[i].gyroRate) < ATTHOLD_SETTLE_RATE || attHold.SettleTime[i] >= ATTHOLD_SETTLE_MAX_S) {
+                    attHold.Tracking[i] = false;
+                }
+            }
+        }
 
         quaternion qCurrent;
         getQuaternion(&qCurrent);
