@@ -40,6 +40,7 @@
 #include "fc/rc_modes.h"
 #include "fc/rc.h"
 
+#include "flight/autohover.h"
 #include "flight/pid.h"
 #include "flight/tv_pid.h"
 #include "flight/imu.h"
@@ -332,7 +333,14 @@ static void mixerUpdateInputs(void)
     mixerUpdateCyclic();
 
     // Update throttle (governor holds RPM/throttle per its configured mode when BOXGOVERNOR is engaged)
-    mixerSetInput(MIXER_IN_STABILIZED_THROTTLE, governorApply(getThrottle()));
+    float throttle = getThrottle();
+#ifdef USE_ACC
+    // AUTOHOVER's optional throttle assist (disabled by default) is added here, before governorApply,
+    // so any governor-side slew/ceiling still applies on top as a second layer of limiting. It's a
+    // no-op (returns 0) whenever the mode is inactive or the assist isn't configured/triggered.
+    throttle = constrainf(throttle + autoHoverThrottleBoost(), 0.0f, 1.0f);
+#endif
+    mixerSetInput(MIXER_IN_STABILIZED_THROTTLE, governorApply(throttle));
 }
 
 void mixerUpdate(timeUs_t currentTimeUs)

@@ -31,5 +31,6 @@ void autoHoverInit(const pidProfile_t *pidProfile);
 void autoHoverSetState(bool state);
 
 float autoHoverApply(int axis, float pidSetpoint);
+float autoHoverThrottleBoost(void);
 
 ADJFUN_DECLARE(AUTOHOVER_GAIN)
