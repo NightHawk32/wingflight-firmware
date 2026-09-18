@@ -20,6 +20,8 @@
 #include "types.h"
 #include "platform.h"
 
+#include "common/curve.h"
+
 #include "pg/pg.h"
 
 // Descriptive only -- firmware does not branch on this. It lets the
@@ -97,11 +99,8 @@ typedef struct
 
 PG_DECLARE_ARRAY(mixerInput_t, MIXER_INPUT_COUNT, mixerInputs);
 
-typedef struct
-{
-    int16_t   x;                // -1000..1000, normalized like weight/offset
-    int16_t   y;                // -1000..1000
-} mixerCurvePoint_t;
+// -1000..1000, normalized like weight/offset
+typedef curvePoint_t mixerCurvePoint_t;
 
 typedef struct
 {

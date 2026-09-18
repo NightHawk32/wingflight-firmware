@@ -27,6 +27,7 @@
 #include "build/build_config.h"
 
 #include "common/axis.h"
+#include "common/curve.h"
 #include "common/filter.h"
 #include "common/maths.h"
 
@@ -225,35 +226,11 @@ static void mixerUpdateCyclic(void)
     mixer.cyclicTotal = sqrtf(sq(SP) + sq(SR));
 }
 
-// Linear interpolation through a curve's (ascending-x) points. Points beyond
-// either end clamp to that end's y. Curves have at most MIXER_CURVE_POINTS
-// (9) points, so a linear scan is negligible cost.
+// Curves have at most MIXER_CURVE_POINTS (9) points, so a linear scan is
+// negligible cost.
 static float mixerEvaluateCurve(const mixerCurve_t *curve, float x)
 {
-    const int n = curve->count;
-
-    if (n < 2)
-        return x;
-
-    const float xs = x * 1000.0f;
-
-    if (xs <= curve->points[0].x)
-        return curve->points[0].y / 1000.0f;
-
-    if (xs >= curve->points[n - 1].x)
-        return curve->points[n - 1].y / 1000.0f;
-
-    for (int i = 0; i < n - 1; i++) {
-        const mixerCurvePoint_t *p0 = &curve->points[i];
-        const mixerCurvePoint_t *p1 = &curve->points[i + 1];
-
-        if (xs >= p0->x && xs <= p1->x) {
-            const float t = (p1->x != p0->x) ? (xs - p0->x) / (float)(p1->x - p0->x) : 0;
-            return (p0->y + t * (p1->y - p0->y)) / 1000.0f;
-        }
-    }
-
-    return x;
+    return evaluateCurvePoints(curve->points, curve->count, x * 1000.0f, x * 1000.0f) / 1000.0f;
 }
 
 static void mixerUpdateRules(void)

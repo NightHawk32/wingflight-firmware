@@ -220,6 +220,7 @@ SPEED_OPTIMISED_SRC := ""
 SIZE_OPTIMISED_SRC  := ""
 
 SPEED_OPTIMISED_SRC := $(SPEED_OPTIMISED_SRC) \
+            common/curve.c \
             common/encoding.c \
             common/filter.c \
             common/maths.c \

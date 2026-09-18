@@ -20,6 +20,7 @@
 #include "config/config.h"
 
 #include "pg/servos.h"
+#include "pg/servo_curve.h"
 #include "pg/adjustments.h"
 
 #define DEFAULT_SERVO_FLAGS      0
