@@ -2115,6 +2115,10 @@ static bool mspProcessOutCommand(int16_t cmdMSP, sbuf_t *dst)
         sbufWriteU16(dst, currentPidProfile->atthold.max_rate);
         /* Auto Hover roll deadband */
         sbufWriteU8(dst, currentPidProfile->autohover.roll_deadband);
+        /* Auto Hover throttle assist */
+        sbufWriteU8(dst, currentPidProfile->autohover.throttle_assist_gain);
+        sbufWriteU8(dst, currentPidProfile->autohover.throttle_assist_max);
+        sbufWriteU16(dst, currentPidProfile->autohover.throttle_assist_trigger_ms);
         break;
 
     case MSP_SENSOR_CONFIG:
@@ -3350,6 +3354,12 @@ static mspResult_e mspProcessInCommand(mspDescriptor_t srcDesc, int16_t cmdMSP, 
         /* Auto Hover roll deadband */
         if (sbufBytesRemaining(src) >= 1) {
             currentPidProfile->autohover.roll_deadband = sbufReadU8(src);
+        }
+        /* Auto Hover throttle assist */
+        if (sbufBytesRemaining(src) >= 4) {
+            currentPidProfile->autohover.throttle_assist_gain = sbufReadU8(src);
+            currentPidProfile->autohover.throttle_assist_max = sbufReadU8(src);
+            currentPidProfile->autohover.throttle_assist_trigger_ms = sbufReadU16(src);
         }
         /* Load new values */
         pidLoadProfile(currentPidProfile);

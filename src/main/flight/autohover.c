@@ -34,8 +34,11 @@
 #include "common/axis.h"
 #include "common/maths.h"
 
+#include "drivers/time.h"
+
 #include "flight/airborne.h"
 #include "flight/imu.h"
+#include "flight/pid.h"
 #include "flight/setpoint.h"
 
 #include "autohover.h"
@@ -46,6 +49,13 @@
 // numerical-stability margin, picked well below the angle range where axis coupling becomes
 // significant while still being loose enough to engage roll-hold shortly before reaching upright.
 #define AUTOHOVER_ROLL_HOLD_ENTRY_DEG 30.0f
+
+// Absolute, firmware-enforced backstop on the throttle assist ceiling, independent of whatever
+// value autohover.throttle_assist_max happens to hold. The CLI settings table clamps `set` inputs
+// to this same 0-50 range, but MSP's SET_PID_PROFILE handler writes the raw wire byte with no
+// clamping of its own -- this constant is what actually prevents a stray/malicious/corrupted
+// profile value from raising the ceiling past a sane bound, not just the CLI or configurator UI.
+#define AUTOHOVER_THROTTLE_ASSIST_MAX_CEILING 0.50f
 
 // Quaternion-based vertical (90 degree pitch) attitude + heading hold, for 3D "prop hang" hover.
 // Deliberately NOT built on leveling.c's Euler-angle approach -- that computes roll/pitch error
@@ -72,10 +82,15 @@
 // - Attitude/heading hold only -- no GPS or optical-flow position lock. Horizontal drift is the
 //   pilot's responsibility via normal stick input, same as deflecting away from ANGLE_MODE's level
 //   target and letting go to spring back.
-// - Manual throttle only. This commands an attitude, not a maneuver profile -- it has no awareness
-//   of airspeed/energy state or whether the airframe has enough thrust to sustain a vertical hover.
-//   If it doesn't, engaging this commands a hard (rate-clamped) pitch-up and the aircraft will
-//   likely stall/tumble rather than hover.
+// - Manual throttle only by default. This commands an attitude, not a maneuver profile -- it has
+//   no awareness of airspeed/energy state or whether the airframe has enough thrust to sustain a
+//   vertical hover. If it doesn't, engaging this commands a hard (rate-clamped) pitch-up and the
+//   aircraft will likely stall/tumble rather than hover. An optional, profile-gated throttle assist
+//   (throttle_assist_gain/_max/_trigger_ms, 0 gain = disabled/default) can nudge throttle up when
+//   the pitch correction below is pegged at MaxRate for a sustained period -- see the assist block
+//   in autoHoverApply and autoHoverThrottleBoost. It is a bounded nudge, not a fix for a genuinely
+//   underpowered airframe: it ramps in slowly, is capped hard at throttle_assist_max, and is purely
+//   additive on top of the pilot's own throttle stick, never a substitute for it.
 
 typedef struct {
     bool    Active;
@@ -90,6 +105,15 @@ typedef struct {
                                      // roll tracking current attitude (no correction)
     float   RollOffsetDecidegrees;  // held roll offset from qBase's canonical roll=0, updated while
                                      // tracking, frozen (and corrected back to) while idle
+    float   ThrottleAssistGain;     // fraction-of-throttle-range added per second while pitch
+                                     // correction is saturated (0 = feature disabled)
+    float   ThrottleAssistMax;      // hard ceiling, fraction of throttle range, on the added boost
+    uint16_t ThrottleAssistTriggerMs; // ms the pitch correction must stay saturated before the
+                                     // boost starts ramping in
+    timeMs_t PitchSaturatedSinceMs; // 0 when not currently saturated; set to millis() on the rising
+                                     // edge of saturation, same edge-timer pattern LOGIC_CONDITION_DELAY
+                                     // uses in logic_condition.c
+    float   ThrottleAssistPercent;  // live boost value, 0..ThrottleAssistMax, fraction of throttle range
 } autoHover_t;
 
 static FAST_DATA_ZERO_INIT autoHover_t autoHover;
@@ -111,6 +135,10 @@ INIT_CODE void autoHoverInit(const pidProfile_t *pidProfile)
     autoHover.MaxAngle = pidProfile->autohover.max_angle;
     autoHover.MaxRate = pidProfile->autohover.max_rate;
     autoHover.RollDeadband = pidProfile->autohover.roll_deadband / 100.0f;
+    autoHover.ThrottleAssistGain = pidProfile->autohover.throttle_assist_gain / 100.0f;
+    autoHover.ThrottleAssistMax = fminf(pidProfile->autohover.throttle_assist_max / 100.0f,
+        AUTOHOVER_THROTTLE_ASSIST_MAX_CEILING);
+    autoHover.ThrottleAssistTriggerMs = pidProfile->autohover.throttle_assist_trigger_ms;
 }
 
 // Called once on the rising edge of AUTOHOVER_MODE so the held heading is captured fresh each
@@ -122,6 +150,14 @@ void autoHoverSetState(bool state)
         autoHover.HeadingTargetDecidegrees = attitude.values.yaw;
         autoHover.RollOffsetDecidegrees = 0.0f;
         autoHover.RollCaptured = false;
+    }
+
+    if (!state) {
+        // Hard reset on disengage, not just a decay to zero -- a stale boost must never carry
+        // over into the next engagement, and the pilot's throttle stick regains sole authority
+        // the instant the mode drops.
+        autoHover.ThrottleAssistPercent = 0.0f;
+        autoHover.PitchSaturatedSinceMs = 0;
     }
 
     autoHover.Active = state;
@@ -286,6 +322,10 @@ float autoHoverApply(int axis, float pidSetpoint)
         }
         magnitude = sqrtf(magnitude);
 
+        // Captured pre-clamp -- the vector clamp below rescales rate[FD_PITCH], but the throttle
+        // assist below that needs the raw, unscaled commanded pitch effort to judge saturation.
+        const float pitchEffort = fabsf(rate[FD_PITCH]);
+
         // Clamp the vector's magnitude, not each axis independently -- per-axis clamping would
         // distort the rotation axis mid-maneuver (e.g. pitch saturating before yaw), turning a
         // clean single-axis snap-to-vertical into a curved one. Roll is excluded -- it has its own
@@ -295,11 +335,54 @@ float autoHoverApply(int axis, float pidSetpoint)
             rate[FD_PITCH] *= scale;
             rate[FD_YAW] *= scale;
         }
+
+        // Throttle assist: optional, profile-gated nudge (ThrottleAssistGain 0 = disabled, the
+        // default) for when the pitch correction above has been pegged at MaxRate long enough to
+        // suggest the airframe can't out-thrust the hold on the pilot's current throttle, not just
+        // ride out a single gust. Pitch only, not the combined pitch+yaw vector above -- pitch is
+        // the axis fighting gravity in this vertical attitude, so sustained pitch saturation is a
+        // more specific proxy for thrust deficiency than a yaw/heading disturbance would be. Gated
+        // on isAirborne() for the same reason the pre-airborne attenuation above exists -- ground
+        // pitch error (e.g. sitting nose-up on a bench stand) must never drive throttle up.
+        if (autoHover.ThrottleAssistGain > 0.0f && isAirborne() && pitchEffort >= autoHover.MaxRate) {
+            if (autoHover.PitchSaturatedSinceMs == 0) {
+                autoHover.PitchSaturatedSinceMs = millis();
+            }
+        } else {
+            autoHover.PitchSaturatedSinceMs = 0;
+        }
+
+        const bool assistTriggered = autoHover.PitchSaturatedSinceMs != 0
+            && (millis() - autoHover.PitchSaturatedSinceMs) >= autoHover.ThrottleAssistTriggerMs;
+
+        // Ramped, not stepped, in both directions -- even an instantly-detected trigger can't jump
+        // straight to the ceiling in one loop tick, and releasing decays back out over the same
+        // timescale instead of latching high. slewLimit is the same bounded-rate-of-change helper
+        // governor.c uses for its own throttle target; ThrottleAssistGain is fraction-of-range per
+        // second, so scaling it by pidGetDT() gives the max change allowed this loop tick.
+        const float assistTarget = assistTriggered ? autoHover.ThrottleAssistMax : 0.0f;
+        autoHover.ThrottleAssistPercent = constrainf(
+            slewLimit(autoHover.ThrottleAssistPercent, assistTarget, autoHover.ThrottleAssistGain * pidGetDT()),
+            0.0f, autoHover.ThrottleAssistMax);
+
+        DEBUG_AXIS(AUTOHOVER, axis, 1, lrintf(autoHover.ThrottleAssistPercent * 1000.0f));
     }
 
     DEBUG_AXIS(AUTOHOVER, axis, 0, rate[axis]);
 
     return rate[axis];
+}
+
+// 0..1 fraction of throttle range to add on top of the pilot's own throttle command -- 0 whenever
+// the mode is inactive or the assist is disabled/not currently triggered. mixer.c adds this before
+// governorApply() so any governor-side slew/ceiling still applies on top as a second layer.
+float autoHoverThrottleBoost(void)
+{
+    if (!autoHover.Active) {
+        return 0.0f;
+    }
+
+    return autoHover.ThrottleAssistPercent;
 }
 
 #endif
