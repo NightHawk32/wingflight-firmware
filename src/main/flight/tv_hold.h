@@ -26,5 +26,6 @@ void  tvHoldInit(const tvPidProfile_t *profile);
 void  tvHoldSetState(bool state);
 
 float tvHoldApply(int axis, float pidSetpoint);
+bool  tvHoldIsHolding(int axis);
 
 ADJFUN_DECLARE(TV_HOLD_GAIN)

@@ -999,7 +999,12 @@ static void subTaskPidController(timeUs_t currentTimeUs)
         if (IS_RC_MODE_ACTIVE(BOXTHRUSTVECTOR) && !gyroOverflowDetected()) {
             // BOXTVHOLD: independent attitude/heading hold for this loop only, decoupled
             // from the main loop's ANGLE/AUTOHOVER/ATTHOLD chain -- see flight/tv_hold.c.
-            tvHoldSetState(IS_RC_MODE_ACTIVE(BOXTVHOLD));
+            // Not engaged while a safety mode has priority (tvPidApplyAxis skips the hold
+            // then -- same mask as attHoldSetState's below/above): leaving it "engaged" but
+            // unapplied would let the target go stale, and the nozzle would head back to the
+            // pre-safety-mode attitude once the safety mode cleared instead of re-capturing.
+            const bool tvSafetyLevelingActive = FLIGHT_MODE(ANGLE_MODE | GPS_RESCUE_MODE | FAILSAFE_MODE | LOITER_MODE | RTH_MODE);
+            tvHoldSetState(IS_RC_MODE_ACTIVE(BOXTVHOLD) && !tvSafetyLevelingActive);
             tvPidController(currentTimeUs);
         } else {
             tvHoldSetState(false);
