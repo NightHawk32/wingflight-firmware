@@ -18,3 +18,6 @@
 #pragma once
 
 void autoTrimUpdate(void);
+
+// "idle", "collecting" or "save pending" -- for the CLI.
+const char *autoTrimStateName(void);

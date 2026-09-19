@@ -91,6 +91,15 @@ static bool isTrimmableServo(int servo)
     return false;
 }
 
+const char *autoTrimStateName(void)
+{
+    switch (autoTrim.state) {
+        case AUTOTRIM_COLLECTING:    return "collecting";
+        case AUTOTRIM_SAVE_PENDING:  return "save pending";
+        default:                     return "idle";
+    }
+}
+
 void autoTrimUpdate(void)
 {
     const bool switchOn = IS_RC_MODE_ACTIVE(BOXAUTOTRIM);
