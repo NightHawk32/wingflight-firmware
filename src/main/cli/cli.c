@@ -139,7 +139,6 @@ bool cliMode = false;
 #include "flight/pid.h"
 #include "flight/position.h"
 #include "flight/servos.h"
-#include "flight/autotrim.h"
 #include "flight/motors.h"
 #include "flight/tv_pid.h"
 
@@ -2219,9 +2218,6 @@ static void cliServo(const char *cmdName, char *cmdline)
         printServo(DUMP_MASTER, servoParams(0), NULL, serialConfig(), NULL, NULL);
     }
     else if (strcasecmp(args[FUNC], "status") == 0) {
-        cliPrintLinef("# auto trim: %s (mode %s, %s)", autoTrimStateName(),
-            IS_RC_MODE_ACTIVE(BOXAUTOTRIM) ? "on" : "off",
-            ARMING_FLAG(ARMED) ? "armed" : "disarmed");
         if (pwmServoCount > 0) {
             cliPrintLine("# PWM Servos");
             for (int i = 0; i < pwmServoCount; i++) {
