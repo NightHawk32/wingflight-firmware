@@ -50,6 +50,12 @@
 // significant while still being loose enough to engage roll-hold shortly before reaching upright.
 #define AUTOHOVER_ROLL_HOLD_ENTRY_DEG 30.0f
 
+// Tighter angle inside which the tracked roll is allowed to freeze (and its settle countdown to
+// run). Between this and AUTOHOVER_ROLL_HOLD_ENTRY_DEG roll only tracks, so the target is never
+// locked while the aircraft is still flaring into vertical. Once frozen, the hold persists until
+// the aircraft leaves the entry angle.
+#define AUTOHOVER_ROLL_LOCK_DEG       10.0f
+
 // After the roll stick returns to center, the held roll keeps free-tracking until roll has actually
 // stopped rotating (below AUTOHOVER_ROLL_SETTLE_RATE) or AUTOHOVER_ROLL_SETTLE_MAX_S has passed,
 // whichever comes first. Freezing at the instant of release would pin the target to a roll the
@@ -209,20 +215,6 @@ float autoHoverApply(int axis, float pidSetpoint)
         // fighting the stick. Once the stick returns to center, roll is captured and held instead
         // (see rollActive below) -- disturbance-driven drift no longer goes uncorrected.
         const bool rollStickActive = fabsf(getDeflection(FD_ROLL)) > autoHover.RollDeadband;
-        bool rollActive = !autoHover.RollCaptured || rollStickActive;
-
-        if (rollStickActive) {
-            autoHover.RollSettleTime = 0.0f;
-        } else if (!rollActive && !autoHover.RollHolding) {
-            // Stick centered but roll is still in free-track from the last deflection: keep
-            // tracking until it has stopped rotating (or the settle window runs out), then freeze.
-            autoHover.RollSettleTime += pidGetDT();
-
-            if (fabsf(pidGetAxisData()[FD_ROLL].gyroRate) >= AUTOHOVER_ROLL_SETTLE_RATE
-                && autoHover.RollSettleTime < AUTOHOVER_ROLL_SETTLE_MAX_S) {
-                rollActive = true;
-            }
-        }
 
         // Held target: vertical, at the captured heading, plus the pilot's pitch/yaw stick
         // deflection as a small local (body-frame) rotation offset -- same "deflect away from
@@ -312,7 +304,33 @@ float autoHoverApply(int axis, float pidSetpoint)
         // nose-up command) with no actual roll disturbance behind it. Computed from the raw,
         // pre-attenuation error (below) since that's what genuinely reflects how far from
         // vertical the aircraft still is, on the ground or in the air alike.
-        const bool nearVerticalTarget = sqrtf(sq(errorDeg[1]) + sq(errorDeg[2])) < AUTOHOVER_ROLL_HOLD_ENTRY_DEG;
+        const float verticalErrorDeg = sqrtf(sq(errorDeg[1]) + sq(errorDeg[2]));
+        const bool nearVerticalTarget = verticalErrorDeg < AUTOHOVER_ROLL_HOLD_ENTRY_DEG;
+
+        // Two-stage lock. Between the entry and lock angles roll only tracks; the freeze (and its
+        // settle countdown) is only allowed once the aircraft is properly vertical. Engaging from
+        // level flares up at MaxRate and torque-rolls through the last few tens of degrees --
+        // starting the settle clock at the entry angle let its time cap expire mid-spin, freezing
+        // the target on a roll the aircraft was still rotating through and hauling it back. Once
+        // holding, the lock is kept until the aircraft leaves the entry angle (hysteresis), so a
+        // gust inside that band doesn't drop the hold.
+        const bool inLockZone = verticalErrorDeg < AUTOHOVER_ROLL_LOCK_DEG;
+
+        bool rollActive = !autoHover.RollCaptured || rollStickActive || (!autoHover.RollHolding && !inLockZone);
+
+        if (rollStickActive || !inLockZone) {
+            autoHover.RollSettleTime = 0.0f;
+        } else if (!rollActive && !autoHover.RollHolding) {
+            // Stick centered and vertical, but roll is still in free-track from the last
+            // deflection or the approach: keep tracking until it has stopped rotating (or the
+            // settle window runs out), then freeze.
+            autoHover.RollSettleTime += pidGetDT();
+
+            if (fabsf(pidGetAxisData()[FD_ROLL].gyroRate) >= AUTOHOVER_ROLL_SETTLE_RATE
+                && autoHover.RollSettleTime < AUTOHOVER_ROLL_SETTLE_MAX_S) {
+                rollActive = true;
+            }
+        }
 
         // Same pre-airborne attenuation angleModeApply/horizonModeApply use, so the switch can be
         // armed/tested on the ground without snapping at full strength -- reduced authority, not
@@ -333,6 +351,8 @@ float autoHoverApply(int axis, float pidSetpoint)
             // range below tracks (captures current roll) rather than freezing on a stale offset.
             rate[FD_ROLL] = pidSetpoint;
             autoHover.RollHolding = false;
+            autoHover.RollCaptured = false;
+            autoHover.RollSettleTime = 0.0f;
         } else if (rollActive) {
             // Track: keep the held roll offset following the current attitude, so a future freeze
             // starts from ~zero error instead of snapping. This only ever adds a relative,

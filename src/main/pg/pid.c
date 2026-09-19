@@ -108,7 +108,7 @@ void resetPidProfile(pidProfile_t *pidProfile)
         .trainer.lookahead_ms = 50,
         .autohover.gain = 50,
         .autohover.max_angle = 30,
-        .autohover.max_rate = 300,
+        .autohover.max_rate = 120,
         .autohover.roll_deadband = 5,
         .autohover.throttle_assist_gain = 0,
         .autohover.throttle_assist_max = 15,
