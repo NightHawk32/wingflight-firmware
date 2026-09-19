@@ -106,8 +106,11 @@
 // long. This rides out the garbage/failsafe-hold frames some receivers emit for a
 // moment right at boot, or when the link is reacquired after a brief drop, before
 // the pilot's actual stick/pot positions can be trusted -- mirrors the RX layer's
-// own MAX_INVALID_PULSE_TIME_MS hold window for bad channel data.
-#define SERVO_TRIM_LINK_SETTLE_MS 300
+// own MAX_INVALID_PULSE_TIME_MS hold window for bad channel data. Some setups (e.g.
+// a channel fed by a secondary receiver or a telemetry-derived source) bring the
+// adjustment channel online noticeably later than the link itself, so this is kept
+// generous: a trim is not worth acting on until well after everything has settled.
+#define SERVO_TRIM_LINK_SETTLE_MS 1000
 
 // Timeout for the last changed adjustment (report for telemetry)
 #define ADJUSTMENT_LATENCY_MS 3000
