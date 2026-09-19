@@ -162,14 +162,15 @@ Multiple changes (#314) (#353).
 - `tail_rotor_mode` (U8) is removed. Payload is now just `model_type` (U8).
   Breaking wire change, same as `MSP_MIXER_CONFIG` above.
 
-### MSP_SERVO_TRIM (API 22.3)
+### MSP_SERVO_TRIM
 
 New MSP command (233) returning the live, runtime-only servo trim in us set by
 continuous (mapped) `SERVO_TRIM_*` adjustments. It is never saved and starts from
 zero at boot, so a client can show that a trim is in effect even though the servo
 center is unchanged. Returns: U8 count, then one S16 per servo, in the same order
 and count as `MSP_SERVO_CONFIGURATIONS`. Read-only, and small enough to fit the
-MSP response buffers at any servo count.
+MSP response buffers at any servo count. The API version is not bumped: firmware
+without it answers the command as unsupported, which is how a client tells.
 
 ### MSP_BUS_SERVO_CONFIG
 
