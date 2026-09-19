@@ -1,3 +1,14 @@
+# 0.0.24
+
+Make continuous (pot/channel-mapped) SERVO_TRIM_* adjustments runtime-only: they no longer rewrite and save the servo center, so a trim can't re-apply itself on top of its own saved result after a reboot or leave a wrong center behind.
+Add MSP_SERVO_TRIM (command 233) to report the live runtime servo trim per servo. The MSP API version stays at 22.2.
+Lengthen the servo trim link-settle delay from 300ms to 1000ms, fixing trim channels that come online later than the RX link driving a servo center far off position after boot.
+Add a channel deadband to continuous adjustments so a noisy pot no longer flips the value by 1 every tick, causing repeated config writes, beeps, blackbox events and wandering PID values.
+Make ATT HOLD fly like normal mode until it holds: the hold target is captured once the axis stops rotating instead of the instant the stick centers, so releasing mid-rotation no longer snaps the aircraft back.
+Let ATT HOLD re-center when nothing is happening: I-term bleeds slowly on a holding axis, and a frozen axis pinned against something it can't move (e.g. tilted on the bench) re-captures its target after a stall timeout.
+Apply the same settle-then-capture and per-axis I-term decay to AUTOHOVER roll, fixing its release snap-back.
+Run the Thrust Vector hold on the same shared hold engine as ATT HOLD, picking up all of its fixes (per-axis tracking, reduced ground authority, clamped deadband, settle-then-capture, stall timeout), and drop its engaged state while a safety mode has priority.
+
 # 0.0.23
 
 Add optional throttle assist to AUTOHOVER for underthrottled hover, ramping throttle when pitch correction stays pinned at max rate.
