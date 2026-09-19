@@ -528,6 +528,20 @@ Support for the IBUS2 protocol for control link and basic telemetry using the ib
 
 ## Bug Fixes
 
+### Continuous servo trim no longer changes the saved servo center
+
+A continuous ("Absolute") `SERVO_TRIM_ROLL/PITCH/YAW` adjustment, where a pot or
+channel position is the trim, used to be written into the servo center and saved.
+After a reboot the pot applied itself again on top of its own saved result, and a
+bad reading (e.g. a channel that was not valid yet at boot) left a wrong center
+behind.
+
+It is now a runtime-only offset added at the servo output. It starts from zero at
+boot, follows the pot, is never saved, and is limited to 20% of the servo's scale
+(the larger of `rneg`/`rpos`). Switch-stepped adjustments and `BOXAUTOTRIM` still
+edit the servo center as before, and auto trim leaves the pot's part out of the
+center it saves. No MSP or configuration changes.
+
 ### Servo trim (SERVO_TRIM_*) could snap on a boot-time or reacquired RX link
 
 The mapped/continuous ("Absolute") in-flight adjustment mode had no debounce
