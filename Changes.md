@@ -538,7 +538,7 @@ reacquired following a brief dropout, could snap a servo's trimmed center
 before the pilot had any control over it.
 
 `SERVO_TRIM_ROLL/PITCH/YAW` adjustments now require the RX link to have been
-continuously valid for 300 ms before they are evaluated at all, and the
+continuously valid for 1000 ms (was 300 ms) before they are evaluated at all, and the
 continuous/mapped mode now uses the same +-2 / 100 ms channel-stability
 debounce that stepped mode already had. Other adjustment functions (PID
 gains, rates, etc.) are unaffected.
