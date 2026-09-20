@@ -80,6 +80,12 @@ bool tvHoldIsHolding(int axis)
     return quatHoldIsHolding(&tvHold, axis);
 }
 
+// Scale on the normal I-term decay for this axis -- see quatHoldIDecayScale.
+float tvHoldIDecayScale(int axis)
+{
+    return quatHoldIDecayScale(&tvHold, axis);
+}
+
 float tvHoldApply(int axis, float pidSetpoint)
 {
     if (!tvHold.Active) {

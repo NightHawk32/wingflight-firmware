@@ -76,6 +76,12 @@ bool attHoldIsHolding(int axis)
     return quatHoldIsHolding(&attHold, axis);
 }
 
+// Scale on the normal I-term decay for this axis -- see quatHoldIDecayScale.
+float attHoldIDecayScale(int axis)
+{
+    return quatHoldIDecayScale(&attHold, axis);
+}
+
 float attHoldApply(int axis, float pidSetpoint)
 {
     if (!attHold.Active) {

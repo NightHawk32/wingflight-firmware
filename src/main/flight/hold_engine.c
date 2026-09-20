@@ -84,6 +84,12 @@
 #define HOLD_STALL_RATE      5.0f    // deg/s
 #define HOLD_STALL_TIME_S    3.0f
 
+// After a stall re-capture the error is zero but the I that wound up against the pinned aircraft
+// is still there, and the slow hold-rate bleed would take ~15 s to clear it (longer on yaw, whose
+// I ceiling is far higher) -- surfaces left deflected for no reason. For this long afterwards the
+// axis bleeds at the normal full rate instead, which clears a saturated I in about 2-3 s.
+#define HOLD_STALL_BLEED_S   3.0f
+
 void quatHoldInit(quatHold_t *hold, float gain, float deadband, float maxRate)
 {
     hold->Gain = gain;
@@ -112,6 +118,7 @@ void quatHoldSetState(quatHold_t *hold, bool state)
             hold->Tracking[i] = false;
             hold->SettleTime[i] = 0.0f;
             hold->StallTime[i] = 0.0f;
+            hold->BleedTime[i] = 0.0f;
         }
     }
 
@@ -121,6 +128,15 @@ void quatHoldSetState(quatHold_t *hold, bool state)
 bool quatHoldIsHolding(const quatHold_t *hold, int axis)
 {
     return hold->Active && !hold->Tracking[axis];
+}
+
+float quatHoldIDecayScale(const quatHold_t *hold, int axis)
+{
+    if (!quatHoldIsHolding(hold, axis) || hold->BleedTime[axis] > 0.0f) {
+        return 1.0f;
+    }
+
+    return QUATHOLD_HOLD_I_DECAY_SCALE;
 }
 
 float quatHoldApply(quatHold_t *hold, int axis, float pidSetpoint)
@@ -142,6 +158,10 @@ float quatHoldApply(quatHold_t *hold, int axis, float pidSetpoint)
         const float dT = pidGetDT();
 
         for (int i = 0; i < 3; i++) {
+            if (hold->BleedTime[i] > 0.0f) {
+                hold->BleedTime[i] = fmaxf(0.0f, hold->BleedTime[i] - dT);
+            }
+
             if (fabsf(getDeflection(i)) > hold->Deadband) {
                 hold->Tracking[i] = true;
                 hold->SettleTime[i] = 0.0f;
@@ -195,6 +215,7 @@ float quatHoldApply(quatHold_t *hold, int axis, float pidSetpoint)
                     hold->Tracking[i] = true;
                     hold->SettleTime[i] = 0.0f;
                     hold->StallTime[i] = 0.0f;
+                    hold->BleedTime[i] = HOLD_STALL_BLEED_S;
                 }
             } else {
                 hold->StallTime[i] = 0.0f;

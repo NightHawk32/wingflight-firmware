@@ -43,6 +43,7 @@ typedef struct {
                                 // stick active, or still settling after the stick was released)
     float       SettleTime[3]; // per-axis: seconds since that axis's stick returned inside the deadband
     float       StallTime[3];  // per-axis: seconds a frozen axis has had a large error with no motion
+    float       BleedTime[3];  // per-axis: seconds of full-rate I decay left after a stall re-capture
     float       Gain;          // deg/s of correction rate per degree of attitude error
     float       Deadband;      // fraction (0..1) of stick deflection that keeps an axis tracking
     float       MaxRate;       // deg/s clamp on the commanded correction rate (safety limit)
@@ -60,6 +61,11 @@ void quatHoldSetState(quatHold_t *hold, bool state);
 // True while this axis is actively holding a frozen target, as opposed to free-tracking under
 // stick control or settling after a release.
 bool quatHoldIsHolding(const quatHold_t *hold, int axis);
+
+// Scale on the normal I-term decay rate/limit for this axis: QUATHOLD_HOLD_I_DECAY_SCALE while it
+// is holding, 1.0 otherwise -- and also 1.0 for a short window after a stall re-capture, so the I
+// that wound up while the aircraft was pinned drains in a couple of seconds instead of ~15 s.
+float quatHoldIDecayScale(const quatHold_t *hold, int axis);
 
 // Call once per axis per PID loop, roll first (the shared work is done on the first axis touched).
 // Returns the pilot's setpoint unchanged while the axis is tracking, or the correction rate while
