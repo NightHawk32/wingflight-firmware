@@ -25,7 +25,6 @@
 #include "fc/runtime_config.h"
 #include "fc/rc_controls.h"
 
-#include "flight/airborne.h"
 #include "flight/mixer.h"
 
 #include "pg/battery.h"
@@ -133,16 +132,15 @@ static float smartFuelChargeLevelFromVoltage(float cellVoltage)
     return constrainf(1.0f / (1.0f + exp_approx(-12.0f * (scaledVoltage - 3.7f))), 0.0f, 1.0f);
 }
 
+// Voltage sag follows current, and on a wing current follows throttle. Use the throttle the
+// mixer actually sends to the motor (after governor and AUTOHOVER assist), so the load is
+// counted whenever the motor is working, not only when the stick or tilt says "airborne".
+// The gain is the sag, in volts per cell, expected at full throttle.
 static float smartFuelApplySagCompensation(float cellVoltage)
 {
-    if (isAirborne()) {
-        const float cyclic = getCyclicDeflection();
-        const float stickLoad = constrainf(cyclic * 0.2f, 0.0f, 1.0f);
+    const float throttle = constrainf(mixerGetInput(MIXER_IN_STABILIZED_THROTTLE), 0.0f, 1.0f);
 
-        cellVoltage += smartFuel.config.sagCompensation * stickLoad;
-    }
-
-    return cellVoltage;
+    return cellVoltage + smartFuel.config.sagCompensation * throttle;
 }
 
 static float smartFuelChargeLevelFromVoltageEstimation(float estimation)

@@ -80,8 +80,6 @@ float mixerGetInput(uint8_t index);
 
 float mixerGetOutput(uint8_t index);
 
-float getCyclicDeflection(void);
-
 bool mixerSaturated(uint8_t index);
 void mixerSaturateInput(uint8_t index);
 void mixerSaturateOutput(uint8_t index);
