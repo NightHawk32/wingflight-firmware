@@ -899,10 +899,10 @@ static void pidApplyMode1(uint8_t axis)
 #endif
 
     bool autoHoverHoldingThisAxis = false;
-    bool attHoldHoldingThisAxis = false;
+    float attHoldDecayScale = 1.0f;
 #ifdef USE_ACC
     autoHoverHoldingThisAxis = autoHoverIsHolding(axis);
-    attHoldHoldingThisAxis = attHoldIsHolding(axis);
+    attHoldDecayScale = attHoldIDecayScale(axis);
 #endif
 
     const bool isYaw = (axis == FD_YAW);
@@ -910,8 +910,7 @@ static void pidApplyMode1(uint8_t axis)
         || (!isYaw && FLIGHT_MODE(rollPitchLevelingModes));
 
     if (!levelingModeShapingThisAxis) {
-        const float decayScale = attHoldHoldingThisAxis ? QUATHOLD_HOLD_I_DECAY_SCALE : 1.0f;
-        const float errorDecay = limitf(pid.data[axis].axisError * pid.itermDecayRate * decayScale, pid.itermDecayLimit * decayScale);
+        const float errorDecay = limitf(pid.data[axis].axisError * pid.itermDecayRate * attHoldDecayScale, pid.itermDecayLimit * attHoldDecayScale);
 
         pid.data[axis].axisError -= errorDecay * pid.dT;
     }
