@@ -380,7 +380,7 @@ void updateArmingStatus(void)
         // until the shared boot arming-grace window (armingConfig()->power_on_arming_grace_time,
         // handled above) has elapsed, so slow-binding backup protocols (SRXL2/EXBUS-style
         // handshakes) get the same settle time real receivers need - see
-        // docs/rx-wiring-autodetect-design.md's settleMs discussion for typical link-up
+        // the settleMs discussion at https://doc.wingflight.org/contributing/tech/rx-wiring-autodetect/ for typical link-up
         // timing per protocol.
         if (rxInputBackupIsEnabled() && !(getArmingDisableFlags() & ARMING_DISABLED_BOOT_GRACE_TIME)) {
             if (rxInputBackupIsActive() || ARMING_FLAG(WAS_EVER_ARMED)) {

@@ -120,8 +120,8 @@ When implementing features or reviewing PRs, assume fixed-wing-first behavior un
 - **Developer and internals documentation** (code guidelines, coding style, parameter groups, configuration and
   Blackbox formats, SmartFuel internals, hardware debugging) is in the Technical Reference under Contributing on
   the same site: <https://doc.wingflight.org/contributing/tech/>.
-- **`docs/` in this repository** holds only design notes that must sit next to the code they describe.
-  [docs/README.md](docs/README.md) is the index. Add to it sparingly.
+- **`docs/` in this repository** holds only a README that points at the docs site. Do not add documents there; add
+  them to wingflight-docs, and link to them by URL from source comments.
 
 ## Build and Test
 
@@ -141,8 +141,8 @@ need extra care and, where possible, a new test.
 
 ## Before Changing Flight-Control Code
 
-Read [docs/FlightDynamics.md](docs/FlightDynamics.md). It records the signal chain, the design rationale behind
-each stage, and a review of known defects. Two things to keep in mind:
+Read [Flight Dynamics](https://doc.wingflight.org/contributing/tech/flight-dynamics/) in the Technical
+Reference. It records the signal chain, the design rationale behind each stage, and a review of known defects. Two things to keep in mind:
 
 - Sign conventions are easy to get wrong. Attitude pitch is **positive nose-down**, RC yaw is negated once in
   `setpoint.c`, and PID output is a unitless surface command where 1.0 is full travel. See section 1 of that
