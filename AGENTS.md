@@ -117,8 +117,11 @@ When implementing features or reviewing PRs, assume fixed-wing-first behavior un
   <https://doc.wingflight.org>. It is the source of truth. Do not add or update user documentation in this
   repository's `docs/`. Change wingflight-docs instead, and note in the PR when a behaviour change needs a
   matching docs page update.
-- **`docs/` in this repository** is for design and developer material: rationale, conventions, internal
-  formats and development process. [docs/README.md](docs/README.md) is the index.
+- **Developer and internals documentation** (code guidelines, coding style, parameter groups, configuration and
+  Blackbox formats, SmartFuel internals, hardware debugging) is in the Technical Reference under Contributing on
+  the same site: <https://doc.wingflight.org/contributing/tech/>.
+- **`docs/` in this repository** holds only a README that points at the docs site. Do not add documents there; add
+  them to wingflight-docs, and link to them by URL from source comments.
 
 ## Build and Test
 
@@ -138,8 +141,8 @@ need extra care and, where possible, a new test.
 
 ## Before Changing Flight-Control Code
 
-Read [docs/FlightDynamics.md](docs/FlightDynamics.md). It records the signal chain, the design rationale behind
-each stage, and a review of known defects. Two things to keep in mind:
+Read [Flight Dynamics](https://doc.wingflight.org/contributing/tech/flight-dynamics/) in the Technical
+Reference. It records the signal chain, the design rationale behind each stage, and a review of known defects. Two things to keep in mind:
 
 - Sign conventions are easy to get wrong. Attitude pitch is **positive nose-down**, RC yaw is negated once in
   `setpoint.c`, and PID output is a unitless surface command where 1.0 is full travel. See section 1 of that
