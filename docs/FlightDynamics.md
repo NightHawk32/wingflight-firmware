@@ -304,6 +304,7 @@ The 25% rule was added so modes can be tested on the bench without snapping (com
 - **L-9. Hold stall re-capture is silent.** After 3 s pinned above 5° error the target ratchets to the current attitude with no beep, OSD or log flag. A genuine slow disturbance (cross-wind hover) could be walked off target this way without the pilot knowing.
 - **L-10. Auto trim captures whatever the sticks and stabilization are doing** during its 2 s window, not a true neutral. It needs hands-off, straight-and-level flight to give a good centre.
 - **L-11. First IMU update integrates over a huge `dt`.** [imu.c:460](../src/main/flight/imu.c#L460) initialises `previousIMUUpdateTime` to 0, so the first step is seconds long. Inherited from Betaflight and converges quickly on the bench; noted because it happens once per boot.
+- **L-12. SmartFuel sag compensation uses the wrong load.** [smartfuel.c](../src/main/sensors/smartfuel.c) adds voltage back in proportion to the combined roll and pitch control demand (`getCyclicDeflection()`), inherited from the helicopter firmware. On a wing, voltage sag follows throttle and current. It also only runs when `isAirborne()` is true, so in level hands-off cruise (H-4) it is off. At the default gain it adds at most about 0.11 V per cell. A better driver is the throttle command or the measured current.
 
 ### Checked and found sound
 
