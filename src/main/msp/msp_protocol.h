@@ -329,4 +329,6 @@
 // MSP2_WING_RX_INPUT_BACKUP_TRIAL above, which claimed those two from master
 // independently on a sibling branch.
 #define MSP2_WING_ESC_SENSOR_TRIAL            0x5F14
+// 0x5F15: CRSF Sensors link diagnostics (0x5F10-0x5F14 are taken by the entries above).
+#define MSP2_WING_CRSF_SENSORS_STATUS         0x5F15
 #define MSP_V2_FRAME                         255
