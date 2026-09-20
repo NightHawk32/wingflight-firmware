@@ -32,18 +32,8 @@ developer material that belongs next to the code. See [AGENTS.md](../AGENTS.md) 
 | [development/Custom Board Configuration.md](development/Custom%20Board%20Configuration.md) | Mapping pins on a custom board with the CLI |
 | [development/Customized Version.md](development/Customized%20Version.md) | Building a firmware with different features enabled |
 
-## User-facing pages still to move
+## User-facing documentation
 
-These describe subjects that the wingflight-docs site does not cover yet. They stay here until they are ported
-there, and then should be deleted from this repository.
-
-| File | Subject |
-|---|---|
-| [Controls.md](Controls.md) | Stick commands and arming |
-| [Safety.md](Safety.md) | Bench and first-flight safety |
-| [Rx.md](Rx.md), [Rssi.md](Rssi.md), [Spektrum bind.md](Spektrum%20bind.md), [FrSky SPI RX.md](FrSky%20SPI%20RX.md) | Receiver protocols, RSSI and binding |
-| [Serial.md](Serial.md) | Serial port functions and passthrough |
-| [Telemetry.md](Telemetry.md), [CastleESCTelemetry.md](CastleESCTelemetry.md) | Telemetry protocols and Castle Live Link |
-| [Gps.md](Gps.md) | GPS setup, u-blox configuration, RTH and loiter settings |
-| [VTX.md](VTX.md) | VTX control and the VTX table |
-| [LedStrip.md](LedStrip.md), [Buzzer.md](Buzzer.md), [Display.md](Display.md) | LED strip, buzzer and OLED display |
+Everything user-facing is in wingflight-docs: <https://doc.wingflight.org>. That includes setup, the Configurator tabs,
+flight modes, receivers, serial ports, telemetry, GPS, VTX, LED strip, the CLI reference and stick commands. If
+you change behaviour that one of those pages describes, update the page there.

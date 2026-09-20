@@ -246,7 +246,7 @@ Severity reflects consequence in flight, not effort to fix. **Confirmed** = foll
 - `FAILSAFE_MODE` is never set from link loss. No landing, no drop/disarm, and `failsafe_procedure`, `failsafe_delay`, `failsafe_off_delay` and `failsafe_throttle_low_delay` have no effect on link loss.
 - `GPS_RESCUE` cannot be entered by failsafe.
 - What does happen is [rx.c](../src/main/rx/rx.c) `detectAndApplySignalLossBehaviour()`: hold last value 300 ms, then per-channel fallback (default AUTO: roll/pitch/yaw centred, throttle just below the off-throttle threshold, **all other channels hold last value**, including the arm switch and any mode switches).
-- The user docs (the `configurator/tabs/failsafe.md` page in the wingflight-docs repo) currently describe `failsafe_procedure`, `failsafe_delay` and `failsafe_off_delay` as if stage 2 worked, and the `flight-modes/gps-rescue.md` page describes GPS Rescue as a working failsafe. Both need correcting. The governor code already knew about the stub; the CLI settings still exist and do nothing.
+- The user docs used to describe `failsafe_procedure`, `failsafe_delay` and `failsafe_off_delay` as if stage 2 worked, and GPS Rescue as a working failsafe. The `failsafe` and `gps-rescue` pages in the wingflight-docs repo are corrected in WingFlight/wingflight-docs#20. The governor code already knew about the stub; the CLI settings still exist and do nothing.
 
 *Fix.* Either enable and adapt stage 2 for wings (what should a plane do: level and cut, or RTH?), or delete the dead settings. Until then, tell pilots to configure the receiver's own failsafe, including the mode switches.
 
