@@ -117,8 +117,11 @@ When implementing features or reviewing PRs, assume fixed-wing-first behavior un
   <https://doc.wingflight.org>. It is the source of truth. Do not add or update user documentation in this
   repository's `docs/`. Change wingflight-docs instead, and note in the PR when a behaviour change needs a
   matching docs page update.
-- **`docs/` in this repository** is for design and developer material: rationale, conventions, internal
-  formats and development process. [docs/README.md](docs/README.md) is the index.
+- **Developer and internals documentation** (code guidelines, coding style, parameter groups, configuration and
+  Blackbox formats, SmartFuel internals, hardware debugging) is in the Technical Reference under Contributing on
+  the same site: <https://doc.wingflight.org/contributing/tech/>.
+- **`docs/` in this repository** holds only design notes that must sit next to the code they describe.
+  [docs/README.md](docs/README.md) is the index. Add to it sparingly.
 
 ## Build and Test
 
