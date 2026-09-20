@@ -10,7 +10,7 @@ Two GPS protocols are supported. NMEA text and UBLOX binary.
 
 ## Navigation: RTH and Loiter
 
-With a GPS fix, two modes can steer the aircraft. See [Modes](Modes.md) for the switches:
+With a GPS fix, two modes can steer the aircraft. See [Modes](https://doc.wingflight.org/configurator/tabs/auxiliary/) for the switches:
 
 * **GPS RTH** flies back to the point where the aircraft was armed and climbs or descends to `nav_rth_altitude`.
 * **GPS LOITER** orbits the point where the mode was switched on.

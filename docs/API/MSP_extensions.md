@@ -3,7 +3,7 @@
 > **Status.** The sections below are the original Cleanflight description of two extensions
 > (mode ranges and adjustment ranges). They are kept for reference and have **not** been
 > re-verified against Wingflight, which has since extended both (see `MSP_MODE_RANGES_EXTRA` and the
-> `adjfunc` slots in [Inflight Adjustments](../Inflight%20Adjustments.md)). The authoritative message list is
+> `adjfunc` slots in [Inflight Adjustments](https://doc.wingflight.org/configurator/tabs/adjustments/)). The authoritative message list is
 > the source: `src/main/msp/msp_protocol.h` and `msp_protocol_v2_*.h`, with the handlers in
 > `src/main/msp/msp.c`.
 
@@ -240,5 +240,5 @@ cleanflight.
 
 See also
 --------
-[Modes.md](../Modes.md) describes the user visible implementation for the cleanflight
+[Modes.md](https://doc.wingflight.org/configurator/tabs/auxiliary/) describes the user visible implementation for the cleanflight
 modes extension.

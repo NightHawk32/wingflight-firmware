@@ -9,8 +9,8 @@ Model aircraft can be dangerous, particularly on the test bench. Some simple rul
 
 ## Before installing
 
-Read [Cli](Cli.md), [Controls](Controls.md), [Failsafe](Failsafe.md) and [Modes](Modes.md). In
-particular, read [Failsafe](Failsafe.md): the flight controller does **not** disarm or land the
+Read [Cli](https://doc.wingflight.org/reference/cli-reference/), [Controls](Controls.md), [Failsafe](https://doc.wingflight.org/configurator/tabs/failsafe/) and [Modes](https://doc.wingflight.org/configurator/tabs/auxiliary/). In
+particular, read [Failsafe](https://doc.wingflight.org/configurator/tabs/failsafe/): the flight controller does **not** disarm or land the
 aircraft on its own when the link is lost, so configure the receiver's failsafe and check it.
 
 Use the Receiver tab in the Configurator to check that your channels are centred at 1500 (1520 for

@@ -9,9 +9,8 @@ for. It can have bugs that the official version does not, and enabling a feature
 developers left off may overload the processor or overflow flash or RAM. Do not fly it before you
 have tested it on the bench.
 
-This is for people who can already build the firmware from source. See the build guides in
-[development](development/Development.md). Choose a unified target that matches your MCU (see
-[Boards](Boards.md)):
+This is for people who can already build the firmware from source. See [Building the Firmware](https://doc.wingflight.org/contributing/building-the-firmware/) for the toolchain and
+targets, and [Development](Development.md) for contribution guidelines. Choose a unified target that matches your MCU:
 
 ```
 make TARGET=STM32F405

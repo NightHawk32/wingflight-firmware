@@ -213,7 +213,7 @@ enters failsafe mode or loses signal.
 
 When signal loss is detected the flight controller holds the last values for 300 ms, and then sets
 roll, pitch and yaw to `rc_center` and the throttle to just below the off-throttle threshold. See
-[Failsafe](Failsafe.md) for what does, and what does not, happen next.
+[Failsafe](https://doc.wingflight.org/configurator/tabs/failsafe/) for what does, and what does not, happen next.
 
 Signal loss can be detected when:
 
