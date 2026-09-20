@@ -36,10 +36,14 @@
 
 #include "drivers/time.h"
 
+#include "fc/rc.h"
+
 #include "flight/airborne.h"
 #include "flight/imu.h"
 #include "flight/pid.h"
 #include "flight/setpoint.h"
+
+#include "rx/rx.h"
 
 #include "autohover.h"
 
@@ -444,9 +448,21 @@ float autoHoverApply(int axis, float pidSetpoint)
 // 0..1 fraction of throttle range to add on top of the pilot's own throttle command -- 0 whenever
 // the mode is inactive or the assist is disabled/not currently triggered. mixer.c adds this before
 // governorApply() so any governor-side slew/ceiling still applies on top as a second layer.
+//
+// The assist is additive on the pilot's throttle, never a substitute for it, so it is also off
+// whenever the throttle stick is at or below the off-throttle threshold, or the receiver has no
+// signal (a held-on AUTOHOVER switch plus a centred/held stick must not spin the motor up, and
+// the flight-controller failsafe stage 2 is disabled, so nothing else clears it). The ramp is reset, not merely
+// masked, so the assist re-ramps from zero once the stick comes back up instead of stepping in.
 float autoHoverThrottleBoost(void)
 {
     if (!autoHover.Active) {
+        return 0.0f;
+    }
+
+    if (isThrottleOff() || !rxIsReceivingSignal()) {
+        autoHover.ThrottleAssistPercent = 0.0f;
+        autoHover.PitchSaturatedSinceMs = 0;
         return 0.0f;
     }
 
