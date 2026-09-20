@@ -6,7 +6,7 @@ controller that has been tested, from the
 
 Wingflight can support a custom flight controller, as long as it uses supported hardware. Before
 you start, check that your MCU and peripherals are supported, and test your hardware separately.
-Then flash the matching unified target (see [Boards](Boards.md)) and configure the pins from the
+Then flash the matching unified target (see [Building the Firmware](https://doc.wingflight.org/contributing/building-the-firmware/)) and configure the pins from the
 CLI.
 
 Use the `resource` command to map each peripheral to a pin:

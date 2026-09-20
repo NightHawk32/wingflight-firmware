@@ -5,7 +5,7 @@
 When armed, the aircraft is ready to fly and the motor will spin when throttle is applied.
 
 By default, arming and disarming is done with stick positions. (This is disabled when a switch is
-used to arm; see the `ARM` mode in [Modes](Modes.md).)
+used to arm; see the `ARM` mode in [Modes](https://doc.wingflight.org/configurator/tabs/auxiliary/).)
 
 If the aircraft will not arm, connect to the Configurator or the CLI and run `status`. The
 "Arming disable flags" line lists the reasons:
