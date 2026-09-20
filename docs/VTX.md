@@ -1,11 +1,11 @@
 # VTX
 
-Cleanflight supports control of VTX modules.  
+Wingflight supports control of VTX modules.  
 
 ## VTX Systems
 
 Current support includes 
-1. RTC6705 directly connected to the CPU (maybe via a PCB board interconnect, e.g. SPRACINGF3NEO)
+1. RTC6705 directly connected to the CPU
 2. IRC Tramp
 3. TBS Smart Audio
 
@@ -13,8 +13,7 @@ Current support includes
 
 If your FC has a button, excluding a BOOT buttons, then it can be used for VTX control.
 
-Some boards like the SPRacingF3NEO have both a VTX module and a button.
-Other boards like the SPRacingF3MINI have multiple buttons.
+Some boards have both a VTX module and a button. Check your board's documentation.
 
 ### VTX Button usage
 
@@ -71,14 +70,14 @@ vtxtable powerlabels 25 100 400
 
 The example above contains 5 bands, **each with a name, a single-letter abbreviation, a factory flag and eight frequencies.**
 
-The factory flag controls how Betaflight communicates with the vtx.
+The factory flag controls how Wingflight communicates with the vtx.
 
-**When the flag is set to `FACTORY`, Betaflight sends the vtx a band and channel number.**
+**When the flag is set to `FACTORY`, Wingflight sends the vtx a band and channel number.**
 The vtx will then use its built-in frequency table.
-In this mode, the actual contents of the vtxtable are **not** send the vtx. They are only used for display in the OSD and similar places.
+In this mode, the actual contents of the vtxtable are **not** send the vtx. They are only used for display, for example in the Configurator.
 As such, bands with the flag set to `FACTORY` should be set to match the built-in frequency table of the vtx.
 
-**When the flag is set to `CUSTOM`, Betaflight sends the vtx the frequency it should use.**
+**When the flag is set to `CUSTOM`, Wingflight sends the vtx the frequency it should use.**
 This mode utilizes the contents of the table and allows the user to create custom bands with whatever frequencies they like.
 **Videotransmitters without a built-in table, such as IRC Tramp or rtc6705 only support `CUSTOM`.**
 
@@ -102,7 +101,7 @@ vtxtable band 5 RACEBAND R FACTORY 5658 5695 5732 5769 5806 5843 5880 5917
 ### Power levels
 
 In addition the the frequency, videotransmitters also need to know how much power they should use for transmission.
-The example shown previously contains three power levels, **each with a value and a label.** The label is shown to the user in the OSD,
+The example shown previously contains three power levels, **each with a value and a label.** The label is shown to the user,
 while the value is sent to the vtx.
 
 Power levels should be setup to match the hardware in use.
@@ -287,9 +286,9 @@ vtxtable powerlabels MIN MAX
 
 ### Pitmode
 Pitmode is separate from vtxTable. No power level should be created for pitmode.
-Pitmode can be controlled in a variety of ways including OSD, AUX switches and lua scripts.
+Pitmode can be controlled in a variety of ways including AUX switches (the `VTX PIT MODE` mode) and Lua scripts.
 
 Some videotransmitters have restrictions on its usage. For example, SmartAudio V1.0 and V2.0 devices can only enter pitmode on power-up.
-Betaflight can make the these devices leave pitmode, but not enter it.
+Wingflight can make the these devices leave pitmode, but not enter it.
 
 rtc6705 devices do not support a proper ultra-low power pitmode. Instead, if the board supports it, pitmode turns off rtc6705 devices completely.

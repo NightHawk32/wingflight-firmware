@@ -49,8 +49,8 @@ http://www.lemon-rx.com/index.php?route=product/product&product_id=118
 
 16 channels via serial currently supported.  See below how to set up your transmitter.
 
-* You probably need an inverter between the receiver output and the flight controller. However, some flight controllers have this built in (the main port on CC3D, for example), and doesn't need one.
-* Some OpenLRS receivers produce a non-inverted SBUS signal. It is possible to switch SBUS inversion off using CLI command `set sbus_inversion = OFF` when using an F3 based flight controller.
+* You probably need an inverter between the receiver output and the flight controller. However, many flight controllers have this built in, and don't need one.
+* Some receivers produce a non-inverted SBUS signal. Use the `serialrx_inverted` setting to match the polarity of your receiver, if your flight controller supports it.
 * Softserial ports cannot be used with SBUS because it runs at too high of a bitrate (1Mbps).  Refer to the chapter specific to your board to determine which port(s) may be used.
 * You will need to configure the channel mapping in the GUI (Receiver tab) or CLI (`map` command). Note that channels above 8 are mapped "straight", with no remapping.
 
@@ -191,36 +191,41 @@ Allows you to use MSP commands as the RC input.  Only 8 channel support to maint
  
 ## Configuration
 
-There are 3 features that control receiver mode:
+These features control the receiver mode:
 
 ```
 RX_PPM
 RX_SERIAL
 RX_PARALLEL_PWM
 RX_MSP
+RX_SPI
 ```
 
 Only one receiver feature can be enabled at a time.
 
 ### RX signal-loss detection
 
-The software has signal loss detection which is always enabled.  Signal loss detection is used for safety and failsafe reasons.
+The software has signal loss detection which is always enabled. It is used for safety and failsafe
+reasons.
 
-The `rx_min_usec` and `rx_max_usec` settings helps detect when your RX stops sending any data, enters failsafe mode or when the RX looses signal.
+The `rx_pulse_min` and `rx_pulse_max` settings help detect when your receiver stops sending data,
+enters failsafe mode or loses signal.
 
-By default, when the signal loss is detected the FC will set pitch/roll/yaw to the value configured for `mid_rc`. The throttle will be set to the value configured for `rx_min_usec` or `mid_rc` if using 3D feature.
+When signal loss is detected the flight controller holds the last values for 300 ms, and then sets
+roll, pitch and yaw to `rc_center` and the throttle to just below the off-throttle threshold. See
+[Failsafe](Failsafe.md) for what does, and what does not, happen next.
 
 Signal loss can be detected when:
 
-1. no rx data is received (due to radio reception, recevier configuration or cabling issues).
-2. using Serial RX and receiver indicates failsafe condition.
-3. using any of the first 4 stick channels do not have a value in the range specified by `rx_min_usec` and `rx_max_usec`.
+1. no rx data is received (due to radio reception, receiver configuration or cabling issues),
+2. using Serial RX and the receiver indicates a failsafe condition, or
+3. any of the first 4 stick channels have a value outside the range specified by `rx_pulse_min` and `rx_pulse_max`.
 
 ### RX loss configuration
 
 The `rxfail` cli command is used to configure per-channel rx-loss behaviour.
 You can use the `rxfail` command to change this behaviour.
-A flight channel can either be AUTOMATIC or HOLD, an AUX channel can either be SET or HOLD.  
+A flight channel can be AUTOMATIC, HOLD or SET. An AUX channel can be HOLD or SET.  
 
 * AUTOMATIC - Flight channels are set to safe values (low throttle, mid position for yaw/pitch/roll).
 * HOLD - Channel holds the last value.
@@ -259,11 +264,11 @@ To make AUX8 hold it's value when RX loss is detected:
 
 WARNING: Always make sure you test the behavior is as expected after configuring rxfail settings!
 
-#### `rx_min_usec`
+#### `rx_pulse_min`
 
 The lowest channel value considered valid.  e.g. PWM/PPM pulse length 
 
-#### `rx_max_usec`
+#### `rx_pulse_max`
 
 The highest channel value considered valid.  e.g. PWM/PPM pulse length 
 
@@ -271,25 +276,16 @@ The highest channel value considered valid.  e.g. PWM/PPM pulse length
 
 See the Serial chapter for some some RX configuration examples.
 
-To setup spectrum on the Naze32 or clones in the GUI:
-1. Start on the "Ports" tab make sure that UART2 has serial RX.  If not set the checkbox, save and reboot.
-2. Move to the "Configuration" page and in the upper lefthand corner choose Serial RX as the receiver type.
-3. Below that choose the type of serial receiver that you are using.  Save and reboot.
+To set up serial RX in the GUI:
+1. On the "Ports" tab, make sure the UART your receiver is connected to has serial RX enabled. If not, set the checkbox, save and reboot.
+2. On the "Configuration" page choose Serial RX as the receiver type.
+3. Below that, choose the type of serial receiver you are using. Save and reboot.
 
 Using CLI:
 For Serial RX enable `RX_SERIAL` and set the `serialrx_provider` CLI setting as follows.
 
-| Serial RX Provider | Value |
-| ------------------ | ----- |
-| SPEKTRUM1024       | 0     |
-| SPEKTRUM2048       | 1     |
-| SBUS               | 2     |
-| SUMD               | 3     |
-| SUMH               | 4     |
-| XBUS_MODE_B        | 5     |
-| XBUS_MODE_B_RJ01   | 6     |
-| IBUS               | 7     |
-| JETIEXBUS          | 8     |
+The providers are: `SPEK1024`, `SPEK2048`, `SBUS`, `SUMD`, `SUMH`, `XB-B`, `XB-B-RJ01`, `IBUS`, `JETIEXBUS`, `CRSF`, `SRXL`, `CUSTOM`, `FPORT`, `SRXL2`, `GHST`, `SBUS2`, `FPORT2`, `FBUS`, `XB-A` and `IBUS2`. For example `set serialrx_provider = SBUS`.
+
 
 ### PPM/PWM input filtering.
 
@@ -310,7 +306,7 @@ Set the RX for 'No Pulses'.  Turn OFF TX and RX, Turn ON RX.  Press and release 
 
 ### Graupner GR-24 PWM
 
-Set failsafe on the throttle channel in the receiver settings (via transmitter menu) to a value below `rx_min_usec` using channel mode FAILSAFE.
+Set failsafe on the throttle channel in the receiver settings (via transmitter menu) to a value below `rx_pulse_min` using channel mode FAILSAFE.
 This is the prefered way, since this is *much faster* detected by the FC then a channel that sends no pulses (OFF).
 
 __NOTE:__
@@ -319,7 +315,7 @@ Do __NOT USE__ the mode indicated with FAILSAFE instead, as this combination is 
 
 ## Receiver Channel Range Configuration.
 
-The channels defined in CleanFlight are as follows:
+The channels defined in Wingflight are as follows:
 
 | Channel number | Channel name |
 | ----- | --------- |
@@ -329,7 +325,7 @@ The channels defined in CleanFlight are as follows:
 | 3     | Throttle |
 
 If you have a transmitter/receiver, that output a non-standard pulse range (i.e. 1070-1930 as some Spektrum receivers)
-you could use rx channel range configuration to map actual range of your transmitter to 1000-2000 as expected by Cleanflight.
+you could use rx channel range configuration to map actual range of your transmitter to 1000-2000 as expected by Wingflight.
 
 The low and high value of a channel range are often referred to as 'End-points'.  e.g. 'End-point adjustments / EPA'.
 
@@ -365,22 +361,22 @@ You can also use rxrange to reverse the direction of an input channel, e.g. `rxr
 
 ## Disabling the OpenTx/EdgeTx ADC Filter
 
-OpenTx and EdgeTx both enable an `ADC filter` by default.  Betaflight users should turn this off.
+OpenTx and EdgeTx both enable an `ADC filter` by default.  Wingflight users should turn this off.
 
 The `ADC filter` converts what would otherwise be smooth changes in channel values into a series of steps, where each step is about 1% of the full stick travel.  It is intended to reduce 'chatter' when the Rx is connected to a *servo, so that the servo only changes position when a meaningful change has occurred.  It is not intended for use with flight controllers.
 
-When the `ADC Filter` is active, Betaflight does not receive the most recent position of the gimabl with each new RC packet.  Instead, the Rx repeatedly provides the same data, until a moving-averaged smoothed estimate of gimbal position has increased by about 1% of full stick resolution.  
+When the `ADC Filter` is active, Wingflight does not receive the most recent position of the gimabl with each new RC packet.  Instead, the Rx repeatedly provides the same data, until a moving-averaged smoothed estimate of gimbal position has increased by about 1% of full stick resolution.  
 
-Betaflight needs a non-delayed, smooth and continuous representation of the stick travel to give the PID system a smooth target setpoint value.  Our RC Smoothing is based on the assumption that every packet is unique and that each is a new representation of the most recent position of the gimbal.  Feedforward is calculated from the packet-to-packet position difference, and absolutely relies on smooth and regular updates in measured gimbal position.
+Wingflight needs a non-delayed, smooth and continuous representation of the stick travel to give the PID system a smooth target setpoint value.  Our RC Smoothing is based on the assumption that every packet is unique and that each is a new representation of the most recent position of the gimbal.  Feedforward is calculated from the packet-to-packet position difference, and absolutely relies on smooth and regular updates in measured gimbal position.
 
-When active with Betaflight firmware, the `ADC filter` causes:
+When active with Wingflight firmware, the `ADC filter` causes:
 - delay (from the moving averaging)
 - sustained transient impacts
 - steps in setpoint
 - spikes and noise in feedforward, with reduced feedforward precision
 - spikes in motor control signals that may cause noticeable jerking in HD video
 
-This is why, whenever an OpenTx or EdgeTx user is using Betaflight, the OpenTx/EdgeTx `ADC Filter` **MUST** be disabled, for accurate smooth flight control.
+This is why, whenever an OpenTx or EdgeTx user is using Wingflight, the OpenTx/EdgeTx `ADC Filter` **MUST** be disabled, for accurate smooth flight control.
 
 The user only has to find the `ADC Filter` checkbox in the Hardware tab of the Global Settings for their radio, and ensure it is un-checked.  For example, with the Frsky Taranis X9D+ pre 2019 model:
 

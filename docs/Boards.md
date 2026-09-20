@@ -1,43 +1,36 @@
 # Flight controller hardware
 
-The current focus is geared towards flight controller hardware that use the STM32F303 and legacy STM32F103 series processors.  The core logic is separated from the hardware drivers, porting to other processors is possible.
+Wingflight runs on STM32 flight controllers, using a small set of **unified targets**, one per
+MCU family, rather than one firmware build per board:
 
-If you want a fully featured version of Cleanflight then the recommendation for new purchases is an STM32 F3 based board with 256KB of flash memory.  The F3 processor is faster, has built in USB support and supports more hardware without the need for additional adaptors and cables.
+| Target | MCU |
+|---|---|
+| `STM32F405` | STM32F405 |
+| `STM32F7X2` | STM32F722 |
+| `STM32F745` | STM32F745 |
+| `STM32H743` | STM32H743 |
+| `STM32F411` | STM32F411 (end of life, to be removed) |
+| `STM32G47X` | STM32G474 (end of life, to be removed) |
 
-The core set of recommended boards are:
+The board-specific part (which pin is a servo output, where the gyro is, which UART is which) is
+not in the firmware. It is a **board configuration** loaded on top of the unified target. The
+board configurations live in the
+[WingFlight/wingflight-targets](https://github.com/WingFlight/wingflight-targets) repository.
+Wingflight inherits its supported boards from Rotorflight, which supports the boards Betaflight
+4.3 does, as long as the board has enough suitable outputs for the servos and motors you need.
 
-* [Seriously Pro SPRacingF3Mini](boards/Board%20-%20SPRacingF3MINI.md)
-* [Seriously Pro SPRacingF3](boards/Board%20-%20SPRacingF3.md)
-* [Seriously Pro SPRacingF3EVO](boards/Board%20-%20SPRacingF3EVO.md)
-* [TBS Colibri Race](boards/Board%20-%20ColibriRace.md)
-* [AlienFlightF3](boards/Board%20-%20AlienFlight.md)
-* [TauLabs Sparky](boards/Board%20-%20Sparky.md)
+A board needs one output per servo plus one for each motor. A basic airplane needs four servos
+(two ailerons, elevator, rudder) and one motor.
 
-The core set of legacy boards are:
+There is also a `SITL` target that builds Wingflight as a native program for simulation. See
+`src/main/target/SITL/README.md`.
 
-* [AlienFlightF1](boards/Board%20-%20AlienFlight.md)
-* [OpenPilot CC3D](boards/Board%20-%20CC3D.md)
-* [CJMCU](boards/Board%20-%20CJMCU.md)
-* Flip32+
-* [AbuseMark Naze32](boards/Board%20-%20Naze32.md)
-* [RMRC Dodo](boards/Board%20-%20RMDO.md)
+## Flashing
 
-Cleanflight also runs on the following developer boards:
+Flash with the
+[Wingflight Configurator](https://github.com/WingFlight/wingflight-configurator/releases). See
+[Installation](Installation.md) and [USB Flashing](USB%20Flashing.md).
 
-* STM32F3Discovery - Recommended for developers.
-* Port103R - Recommended for F1 developers.
+## Custom hardware
 
-There is also limited support for the following boards which may be removed due to lack of users or commercial availability.
- 
-* STM32F3Discovery with Chebuzz F3 shield.
-
-NOTE: Users are advised against purhasing boards that have CPUs with less than 256KB of EEPROM space - available features may be limited.
-NOTE: Hardware developers should not design new boards that have CPUs with less than 256KB EEPROM space. 
-
-Each board has it's pros and cons, before purchasing hardware the main thing to check is if the board offers enough serial ports and input/output pins for the hardware you want to use with it and that you can use them at the same time.  On some boards some features are mutually exclusive.
-
-Please see the board-specific chapters in the manual for wiring details.
-
-There are off-shoots (forks) of the project that support the STM32F4 processors as found on the Revo and Quanton boards.
-
-Where applicable the chapters also provide links to other hardware that is known to work with Cleanflight, such as receivers, buzzers, etc.
+See [Custom Board Configuration](Custom%20Board%20Configuration.md).

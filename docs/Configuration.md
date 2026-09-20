@@ -1,35 +1,17 @@
 # Configuration
 
-Cleanflight is configured primarily using the Cleanflight Configurator GUI.
+Wingflight is configured mainly with the
+[Wingflight Configurator](https://github.com/WingFlight/wingflight-configurator). The Configurator
+and the command line interface (CLI) are both reached by connecting to a serial port on the
+board, whether that is the USB virtual serial port, or a hardware UART. See [Serial](Serial.md).
 
-Both the command line interface and GUI are accessible by connecting to a serial port on the target,
-be it a USB virtual serial port, physical hardware UART port or a SoftSerial port.
+The Configurator cannot configure every setting. Some features and settings can only be enabled
+or changed from the CLI. See [Cli](Cli.md).
 
-See the Serial section for more information and see the Board specific sections for details of the serial ports available on the board you are using.
+**Back up your settings with the CLI `dump` command before upgrading the firmware or the
+Configurator**, so that you can re-apply them if something changes or is reset.
 
-The GUI cannot currently configure all aspects of the system, the CLI must be used to enable or configure
-some features and settings.
+The Configurator also has a terminal tab that talks to the CLI.
 
-__Due to ongoing development, the fact that the GUI cannot yet backup all your settings and automatic chrome updates of the GUI app it is highly advisable to backup your settings (using the CLI) so that when a new version of the configurator or firmware is released you can re-apply your settings.__
-
-
-## GUI
-
-![Cleanflight Gui](Screenshots/cleanflight-gui.png)
-
-The GUI tool is the preferred way of configuration.  The GUI tool also includes a terminal which
-can be used to interact with the CLI.
-
-[Cleanflight Configurator on Chrome store](https://chrome.google.com/webstore/detail/cleanflight-configurator/enacoimjcgeinfnnnpajinjgmkahmfgb)
-
-If you cannot use the latest version of the GUI to access the FC due to firmware compatibility issues you can still access the FC via the CLI to backup your settings, or you can install an old version of the configurator.
-
-Old versions of the configurator can be downloaded from the configurator releases page: https://github.com/cleanflight/cleanflight-configurator/releases
-See the README file that comes with the configurator for installation instructions.
- 
-
-## CLI
-
-Cleanflight can also be configured by a command line interface.
-
-See the [CLI section](Cli.md) of the documentation for more details.
+Settings that you tune together are grouped into profiles. See [Profiles](Profiles.md).
+Transmitter-side tuning is covered in [Inflight Adjustments](Inflight%20Adjustments.md).

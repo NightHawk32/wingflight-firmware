@@ -246,9 +246,9 @@ Severity reflects consequence in flight, not effort to fix. **Confirmed** = foll
 - `FAILSAFE_MODE` is never set from link loss. No landing, no drop/disarm, and `failsafe_procedure`, `failsafe_delay`, `failsafe_off_delay` and `failsafe_throttle_low_delay` have no effect on link loss.
 - `GPS_RESCUE` cannot be entered by failsafe.
 - What does happen is [rx.c](../src/main/rx/rx.c) `detectAndApplySignalLossBehaviour()`: hold last value 300 ms, then per-channel fallback (default AUTO: roll/pitch/yaw centred, throttle just below the off-throttle threshold, **all other channels hold last value**, including the arm switch and any mode switches).
-- [docs/Failsafe.md](Failsafe.md) is Betaflight's text and describes the disabled stage-2 behaviour as if it works. The governor code already knows about the stub; the pilot-facing docs do not.
+- [Failsafe.md](Failsafe.md) used to be Betaflight's text and described the disabled stage-2 behaviour as if it worked. It has been rewritten to describe what actually happens. The governor code already knew about the stub; the CLI settings still exist and do nothing.
 
-*Fix.* Either enable and adapt stage 2 for wings (what should a plane do: level and cut, or RTH?), or delete the dead settings and rewrite `Failsafe.md`. Until then, tell pilots to configure the receiver's own failsafe, including the mode switches.
+*Fix.* Either enable and adapt stage 2 for wings (what should a plane do: level and cut, or RTH?), or delete the dead settings. Until then, tell pilots to configure the receiver's own failsafe, including the mode switches.
 
 **H-2. GPS Rescue does not steer or control altitude on a wing.** *Confirmed.*
 `gpsRescueGetYawRate()` and `gpsRescueGetThrottle()` ([gps_rescue.c:653](../src/main/flight/gps_rescue.c#L653), [:658](../src/main/flight/gps_rescue.c#L658)) are declared but called from nowhere, and `gpsRescueAngle[AI_ROLL]` is only ever set to 0. What remains active is the pitch angle from Betaflight's *quad* speed controller: below target ground speed it commands more nose-down pitch. In `GPS_RESCUE_MODE` a wing therefore levels the wings and pitches down with no heading correction and no thrust control. Only reachable via `BOXGPSRESCUE` today (see H-1), but it is a selectable mode.
@@ -317,7 +317,7 @@ The 25% rule was added so modes can be tested on the bench without snapping (com
 
 ### Not reviewed
 
-Dynamic notch and RPM filters, gyro/accelerometer drivers and calibration, `position.c` altitude estimation, `logic_condition.c`, `wiggle.c`, blackbox, MSP and CLI plumbing. `docs/Failsafe.md` and `docs/development/PID Internals.md` are Betaflight-era and were not checked line by line against the code.
+Dynamic notch and RPM filters, gyro/accelerometer drivers and calibration, `position.c` altitude estimation, `logic_condition.c`, `wiggle.c`, blackbox, MSP and CLI plumbing. The pilot-facing docs in `docs/` were audited separately.
 
 ---
 

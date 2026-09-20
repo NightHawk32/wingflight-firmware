@@ -1,29 +1,26 @@
 # Safety
 
-As many can attest, multirotors and RC models in general can be very dangerous, particularly on the test bench. Here are some simple golden rules to save you a trip to the local ER:
-* **NEVER** arm your model with propellers fitted unless you intend to fly!
-* **Always** remove your propellers if you are setting up for the first time, flashing firmware, or if in any doubt.
+Model aircraft can be dangerous, particularly on the test bench. Some simple rules:
 
-## Before Installing
+* **Never** arm the aircraft with the propeller fitted unless you intend to fly.
+* **Always** remove the propeller when setting up for the first time, flashing firmware, changing
+  the mixer or servo settings, or if in any doubt.
+* Keep clear of the propeller arc and the control surfaces when the aircraft is powered.
 
-Please consult the [Cli](Cli.md), [Controls](Controls.md), [Failsafe](Failsafe.md) and [Modes](Modes.md) 
-pages for further important information.
+## Before installing
 
-You are highly advised to use the Receiver tab in the CleanFlight Configurator, making sure your Rx channel 
-values are centered at 1500 (1520 for Futaba RC) with minimum & maximums of 1000 and 2000 (respectively) 
-are reached when controls are operated.  Failure to configure these ranges properly can create
-problems, such as inability to arm (because you can't reach the endpoints) or immediate activation of
-[failsafe](Failsafe.md).
+Read [Cli](Cli.md), [Controls](Controls.md), [Failsafe](Failsafe.md) and [Modes](Modes.md). In
+particular, read [Failsafe](Failsafe.md): the flight controller does **not** disarm or land the
+aircraft on its own when the link is lost, so configure the receiver's failsafe and check it.
 
-You may have to adjust your channel endpoints and trims/sub-trims on your RC transmitter to achieve the 
-expected range of 1000 to 2000.
+Use the Receiver tab in the Configurator to check that your channels are centred at 1500 (1520 for
+Futaba) and reach 1000 and 2000 at the ends of travel. If they do not, you may be unable to arm
+(the endpoints are not reachable) or you may trigger failsafe unexpectedly. Adjust the endpoints
+and sub-trims on your transmitter to get the range.
 
-The referenced values for each channel have marked impact on the operation of the flight controller and the 
-different flight modes.
+## Check the control directions
 
-## Props Spinning When Armed
-With the default configuration, when the controller is armed, the propellers *WILL* begin spinning at low speed.
-We recommend keeping this setting as it provides a good visual indication the craft is armed.
-
-If you wish to change this behavior, see the MOTOR_STOP feature in the Configurator and relevant documentation pages.
-Enabling this feature will stop the props from spinning when armed.
+After any change to the mixer, servo reversal, or board orientation, check on the bench (with the
+propeller removed) that every surface moves the right way for the stick, and that the stabilised
+response, such as moving the aircraft by hand, opposes the motion. Check MANUAL and PASSTHROUGH
+too, if you use them.

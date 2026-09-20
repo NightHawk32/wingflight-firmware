@@ -1,6 +1,6 @@
 # Display
 
-Cleanflight supports displays to provide information to you about your aircraft and cleanflight state.
+Wingflight supports displays to provide information to you about your aircraft and Wingflight state.
 
 When the aircraft is armed the display does not update so flight is not affected.  When disarmed the display cycles between various pages.
 
@@ -15,7 +15,7 @@ At this time no other displays are supported other than the SSD1306 / UG-2864HSW
 From the CLI enable the `DISPLAY` feature
 
 ```
-feature DISPLAY
+feature DASHBOARD
 ```
 
 
@@ -37,36 +37,8 @@ Links to displays:
 
 The banggood.com display is the cheapest at the time fo writing and will correctly send I2C ACK signals.
 
-#### Crius CO-16
-
-This display is best avoided but will work if you modify it.
-
-Step 1
-
-As supplied the I2C ack signal is not sent because the manufacturer did not bridge D1 and D2 together.  To fix this solder
-the two pins together as they enter the screen.  Failure to do this will result is a screen that doesn't display anything.
-
-Step 2
-
-Pin 14 must be disconnected from the main board using a scalpel. Then connect a 10nF or 100nF capacitor between pins 30 and the
-lifted pin 14.
-
-Step 3
-
-Connect a 100K resistor between Pin 9 and the lifted Pin 14.
-
-Failure to perform steps 2 and 3 will result in a display that only works on power up some of the time any may display random dots
-or other display corruption.
-
-More can be read about this procedure here: http://www.multiwii.com/forum/viewtopic.php?f=6&t=2705&start=10
-
-![Crius CO-16 Diagram](Wiring/Crius%20CO-16%20OLED%20diagram.png)
-![Crius CO-16 Modification](Wiring/Crius%20CO-16%20OLED%20modifications.jpg)
-
 ## Connections
 
 Connect +5v, Ground, I2C SDA and I2C SCL from the flight controller to the display.
-
-On Naze32 rev 5 boards the SDA and SCL pads are underneath the board.
 
 

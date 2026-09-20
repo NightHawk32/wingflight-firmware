@@ -1,6 +1,6 @@
 # Buzzer
 
-Cleanflight supports a buzzer which is used for the following purposes:
+Wingflight supports a buzzer which is used for the following purposes:
 
  * Low and critical battery alarms (when battery monitoring enabled)
  * Arm/disarm tones (and warning beeps while armed)
@@ -12,7 +12,7 @@ Cleanflight supports a buzzer which is used for the following purposes:
 
 If the arm/disarm is via the control stick, holding the stick in the disarm position will sound a repeating tone.  This can be used as a lost-model locator.
 
-Three beeps immediately after powering the board means that the gyroscope calibration has completed successfully. Cleanflight calibrates the gyro automatically upon every power-up. It is important that the copter stay still on the ground until the three beeps sound, so that gyro calibration isn't thrown off. If you move the copter significantly during calibration, Cleanflight will detect this, and will automatically re-start the calibration once the copter is still again. This will delay the "three beeps" tone. If you move the copter just a little bit, the gyro calibration may be incorrect, and the copter may not fly correctly. In this case, the gyro calibration can be performed manually via [stick command](Controls.md), or you may simply power cycle the board.
+Three beeps immediately after powering the board means that the gyroscope calibration has completed successfully. Wingflight calibrates the gyro automatically upon every power-up. It is important that the copter stay still on the ground until the three beeps sound, so that gyro calibration isn't thrown off. If you move the copter significantly during calibration, Wingflight will detect this, and will automatically re-start the calibration once the copter is still again. This will delay the "three beeps" tone. If you move the copter just a little bit, the gyro calibration may be incorrect, and the copter may not fly correctly. In this case, the gyro calibration can be performed manually via [stick command](Controls.md), or you may simply power cycle the board.
 
 There is a special arming tone used if a GPS fix has been attained, and there's a "ready" tone sounded after a GPS fix has been attained (only happens once).  The tone sounded via the TX-AUX-switch will count out the number of satellites (if GPS fix).
 
@@ -61,15 +61,4 @@ Examples of a known-working buzzers.
 
 ## Connections
 
-### Naze32
-
-Connect a supported buzzer directly to the BUZZ pins. Observe polarity. Also if you are working with flight controller outside of a craft, on a bench for example, you need to supply 5 volts and ground to one of the ESC connections or the buzzer will not function.
-
-
-### CC3D
-
-Buzzer support on the CC3D requires that a buzzer circuit be created to which the input is PA15.
-PA15 is unused and not connected according to the CC3D Revision A schematic.
-Connecting to PA15 requires careful soldering.
-
-See the [CC3D - buzzer circuit.pdf](Wiring/CC3D%20-%20buzzer%20circuit.pdf) for details.
+Connect a supported buzzer to the buzzer pins of your board, observing polarity. See your board's documentation. If you are working with the flight controller outside an aircraft, on a bench for example, you may need to supply 5 volts and ground to one of the ESC connections or the buzzer will not function.

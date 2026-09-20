@@ -1,8 +1,8 @@
 # Serial
 
-Betaflight has enhanced serial port flexibility but configuration is slightly more complex as a result.
+Wingflight has enhanced serial port flexibility but configuration is slightly more complex as a result.
 
-Betaflight has the concept of a function (MSP, GPS, Serial RX, etc) and a port (VCP, UARTx, SoftSerial x).
+Wingflight has the concept of a function (MSP, GPS, Serial RX, etc) and a port (VCP, UARTx, SoftSerial x).
 Not all functions can be used on all ports due to hardware pin mapping, conflicting features, hardware, and software
 constraints.
 
@@ -16,7 +16,7 @@ a dedicated USB to UART adapter.  VCP does not 'use' a physical UART port.
 UART is the most efficient in terms of CPU usage.
 SoftSerial is the least efficient and slowest, SoftSerial should only be used for low-bandwidth usages, such as telemetry transmission.
 
-UART ports are sometimes exposed via on-board USB to UART converters, such as the CP2102 as found on the Naze and Flip32 boards.
+UART ports are sometimes exposed via on-board USB to UART converters, such as the CP2102.
 If the flight controller does not have an on-board USB to UART converter and doesn't support VCP then an external USB to UART board is required.
 These are sometimes referred to as FTDI boards.  FTDI is just a common manufacturer of a chip (the FT232RL) used on USB to UART boards.
 
@@ -275,13 +275,13 @@ The Serial Port baudrates are defined as follows:
 
 ### Passthrough
 
-Betaflight can enter a special passthrough mode whereby it passes serial data through to a device connected to a UART/SoftSerial port. This is useful to change the configuration of a Betaflight peripheral such as an OSD, bluetooth dongle, serial RX etc.
+Wingflight can enter a special passthrough mode whereby it passes serial data through to a device connected to a UART/SoftSerial port. This is useful to change the configuration of a Wingflight peripheral such as an OSD, bluetooth dongle, serial RX etc.
 
 To initiate passthrough mode, use the CLI command `serialpassthrough` This command takes four arguments.
 
     serialpassthrough <port1 id> [port1 baud] [port1 mode] [port1 DTR PINIO] [port2 id] [port2 baud] [port2 mode]
 
-`PortX ID` is the internal identifier of the serial port from Betaflight source code (see serialPortIdentifier_e in the source). For instance UART1-UART4 are 0-3 and SoftSerial1/SoftSerial2 are 30/31 respectively. PortX Baud is the desired baud rate, and portX mode is a combination of the keywords rx and tx (rxtx is full duplex). The baud and mode parameters can be used to override the configured values for the specified port. `port1 DTR PINIO` identifies the PINIO resource which is optionally connected to a DTR line of the attached device.
+`PortX ID` is the internal identifier of the serial port from Wingflight source code (see serialPortIdentifier_e in the source). For instance UART1-UART4 are 0-3 and SoftSerial1/SoftSerial2 are 30/31 respectively. PortX Baud is the desired baud rate, and portX mode is a combination of the keywords rx and tx (rxtx is full duplex). The baud and mode parameters can be used to override the configured values for the specified port. `port1 DTR PINIO` identifies the PINIO resource which is optionally connected to a DTR line of the attached device.
 
 If port2 config(the last three arguments) is not specified, the passthrough will run between port1 and VCP. The last three arguments are used for `Passthrough between UARTs`, see that section to get detail.
 
@@ -291,7 +291,7 @@ For example. If you have your MWOSD connected to UART 2, you could enable commun
 
 If a baud rate is not specified, or is set to 0, then `serialpassthrough` supports changing of the baud rate over USB. This allows tools such as the MWOSD GUI to dynamically set the baud rate to, for example 57600 for reflashing the MWOSD firmware and then 115200 for adjusting settings without having to powercycle your flight control board between the two.
 
-_To use a tool such as the MWOSD GUI, it is necessary to disconnect or exit Betaflight configurator._
+_To use a tool such as the MWOSD GUI, it is necessary to disconnect or exit Wingflight Configurator._
 
 **To exit serial passthrough mode, power cycle your flight control board.**
 
@@ -338,7 +338,7 @@ Note that if DTR is left configured on a port being used with a standard build o
 
 ### Passthrough between UARTs
 
-in BetaFlight 4.1 or later, you can make a serial passthrough between UARTs.
+you can make a serial passthrough between UARTs.
 
 the last three arguments of `serialpassthrough` are used to the passthrough between UARTs: `[port2 id]` `[port2 baud]` `[port2 mode]`, if you don't need passthrough between UARTs, just ignore them, and use `serialpassthrough` according to above description.
 if you want passthrough between UARTs, `[port2 id]` is a required argument, the value range is same with `port1 ID` argument, it is the internal identifier of the serial port. `[port2 baud]`and`[port2 mode]` is optional argument, the default of them are `57600` and `MODE_RXTX`.

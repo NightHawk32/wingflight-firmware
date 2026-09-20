@@ -1,9 +1,19 @@
 # MSP Extensions
 
-Cleanflight includes a number of extensions to the MultiWii Serial Protocol (MSP). This document describes 
-those extensions in order that 3rd party tools may identify cleanflight firmware and react appropriately.
+> **Status.** The sections below are the original Cleanflight description of two extensions
+> (mode ranges and adjustment ranges). They are kept for reference and have **not** been
+> re-verified against Wingflight, which has since extended both (see `MSP_MODE_RANGES_EXTRA` and the
+> `adjfunc` slots in [Inflight Adjustments](../Inflight%20Adjustments.md)). The authoritative message list is
+> the source: `src/main/msp/msp_protocol.h` and `msp_protocol_v2_*.h`, with the handlers in
+> `src/main/msp/msp.c`.
 
-Issue the MSP_API_VERSION command to find out if the firmware supports them.
+Wingflight speaks MSP v1 and v2. The v2 commands added for it are in the `MSP2_WING_*` range,
+`0x5F00` and up, for example `MSP2_WING_GOVERNOR_CONFIG`, `MSP2_WING_TV_PID_CONFIG`,
+`MSP2_WING_EFFECTIVE_PID_GAINS` and `MSP2_WING_BOARD_MOUNT_TRIM`. The mixer, logic conditions, servo
+curves and servo trim have their own v1 commands (`MSP_MIXER_INPUTS`, `MSP_MIXER_RULES`,
+`MSP_MIXER_CURVES`, `MSP_LOGIC_CONDITIONS`, `MSP_SERVO_CURVES`, `MSP_SERVO_TRIM`).
+
+Issue the MSP_API_VERSION command to find out which API the firmware supports.
 
 ## Mode Ranges
 

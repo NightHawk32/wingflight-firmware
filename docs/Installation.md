@@ -1,30 +1,28 @@
 # Installation
 
 ## Using the configurator
-This is a generic procedure to flash a board using the configurator. The configurator does not yet support all boards, so please check the documentation corresponding to your board before proceeding.
 
-Make sure you have the [Cleanflight Configurator](https://github.com/cleanflight/cleanflight-configurator) installed, then:
+Flash Wingflight with the
+[Wingflight Configurator](https://github.com/WingFlight/wingflight-configurator/releases). Flashing
+with any other tool is not recommended.
 
-* Connect the flight controller to the PC.
-* Start the Cleanflight Configurator.
-* Click on "Disconnect" if the configurator connected to the board automatically.
-* Click on the "Firmware Flasher" tab.
-* Make sure you have internet connectivity and click on the "Load Firmware [Online]" button.
-* Click on the "Choose a Firmware / Board" dropdown menu, and select the latest stable version for your flight controller.
-* IMPORTANT: Read and understand the release notes that are displayed.  When upgrading review all release notes since your current firmware.
-* If this is the first time Cleanflight is flashed to the board, tick the "Full Chip Erase" checkbox.
-* Connect the flight controller board to the PC.  Ensure the correct serial port is selected.
-* Click on the "Flash Firmware" button and hold still (do not breathe, too).
-* When the progress bar becomes green and reads "Programming: SUCCESSFUL" you are done!
+1. Connect the flight controller to the PC.
+2. Start the Configurator. If it connects to the board automatically, click "Disconnect".
+3. Open the "Firmware Flasher" tab.
+4. Choose your board and the firmware version, and read the release notes shown. When upgrading,
+   read the notes for every release since your current one.
+5. If this is the first time Wingflight is going on the board, tick "Full Chip Erase".
+6. Select the correct serial port and click "Flash Firmware".
+7. When the progress bar is green and reads "Programming: SUCCESSFUL", you are done.
 
-## Manually
+Some boards must be flashed in USB DFU mode. See [USB Flashing](USB%20Flashing.md).
 
-See the board specific flashing instructions.
+## Upgrading
 
-# Upgrading
+Before upgrading, back up your settings with the CLI `dump` command (see [Cli](Cli.md)). Some
+releases are not backwards compatible and reset settings to their defaults. After an upgrade,
+compare the new defaults against your backup before restoring it.
 
-When upgrading be sure to backup / dump your existing settings.  Some firmware releases are not backwards compatible and default settings are restored when the FC detects an out of date configuration.
+## Building from source
 
-## Backup/Restore process
-
-See the CLI section of the docs for details on how to backup and restore your configuration via the CLI.
+See the build guides in [development](development/Building.md).

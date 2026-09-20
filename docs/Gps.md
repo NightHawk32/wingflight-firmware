@@ -1,12 +1,44 @@
 # GPS
 
-GPS features in Cleanflight are experimental.  Please share your findings with the developers.
+GPS features in Wingflight are experimental.  Please share your findings with the developers.
 
 GPS works best if the GPS receiver is mounted above and away from other sources of interference.
 
 The compass/mag sensor should be well away from sources of magnetic interference, e.g. keep it away from power wires, motors, ESCs.
 
 Two GPS protocols are supported. NMEA text and UBLOX binary.
+
+## Navigation: RTH and Loiter
+
+With a GPS fix, two modes can steer the aircraft. See [Modes](Modes.md) for the switches:
+
+* **GPS RTH** flies back to the point where the aircraft was armed and climbs or descends to `nav_rth_altitude`.
+* **GPS LOITER** orbits the point where the mode was switched on.
+
+Both work by giving the ANGLE-mode leveling a bank and pitch target. Roll follows the difference
+between the GPS course over ground and the bearing to the target, and pitch follows the altitude
+error. **Throttle stays under the pilot's control**, and there is no wind or airspeed compensation.
+If the GPS becomes unhealthy or has fewer than `nav_min_sats` satellites, navigation stops and the
+aircraft levels.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `nav_rth_altitude` | 50 | RTH altitude, metres |
+| `nav_loiter_radius` | 75 | Loiter radius, metres |
+| `nav_loiter_direction` | CW | Loiter direction |
+| `nav_min_sats` | 8 | Minimum satellites |
+| `nav_max_bank_angle` | 25 | Largest bank the navigation commands, degrees |
+| `nav_max_pitch_angle` | 15 | Largest pitch the navigation commands, degrees |
+| `nav_bearing_kp` | 200 | Bank per unit of course error, percent |
+| `nav_altitude_kp` | 100 | Pitch per metre of altitude error, percent |
+
+**These modes are experimental.** The review in [Flight Dynamics](FlightDynamics.md) (H-3, M-2) found
+that `nav_loiter_direction` appears inverted, and that the altitude-hold direction of RTH looks
+reversed. Neither has been verified in flight. Test them on a safe day, at height, before you
+depend on them.
+
+The `GPS RESCUE` mode and the `gps_rescue_*` settings are Betaflight's multirotor recovery. They do
+not steer or control altitude on a wing, so do not use them.
 
 ## Configuration
 
@@ -131,7 +163,7 @@ Select `Save current configuration` and click `Send`.
 
 ### UBlox Navigation model
 
-Cleanflight will use `Pedestrian` when gps auto config is used.
+Wingflight will use `Pedestrian` when gps auto config is used.
 
 From the UBlox documentation:
 

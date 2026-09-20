@@ -4,7 +4,7 @@ Rotorflight supports the use of addressable LED strips.  Addressable LED strips 
 
 ## LED Strip Profiles
 
-The LED strip feature supports 4 LED strip profiles: RACE, BEACON, STATUS and STATUS_ALT. The selected profile can be changed from the CLI, OSD LED strip menu or from an adjustment channel, i.e. switch on your radio.  Take note that the adjustment channel from your radio overrides all other LED strip profile selection options.
+The LED strip feature supports 4 LED strip profiles: RACE, BEACON, STATUS and STATUS_ALT. The selected profile can be changed from the CLI or from an adjustment channel, i.e. switch on your radio.  Take note that the adjustment channel from your radio overrides all other LED strip profile selection options.
 
 
 ### STATUS Profile
@@ -61,13 +61,6 @@ The BEACON profile is used to find a lost heli, it flashes all LEDs white once p
 4. Type ```save``` followed by enter to save the selected LED strip profile.
 
 
-###### OPTION 4: By using the OSD
-1. Open the OSD menu by yawing left and pitching forward on your radio.
-2. Using the pitch stick, move down to the LED Strip menu and roll right to enter the menu.
-3. The profile and race color can be configured using the left stick to go back and the right stick to navigate up/down and to change the selected value.
-4. Use the left stick to go to the top level menu and select save & reboot to complete.
-
-
 ###### RACE COLOR: The Race color can be configured using the CLI:
 1. Open the CLI.
 2. Type ```get ledstrip_race_color``` followed by enter to display the currently selected race color number.
@@ -94,7 +87,6 @@ Note: Not all WS2812 ICs use the same timings, some batches use different timing
 
 * [Adafruit NeoPixel Jewel 7](https://www.adafruit.com/products/2226) (preliminary testing)
   * Measured current consumption in all white mode ~ 350 mA.
-  * Fits well under motors on mini 250 quads.
 * [Adafruit NeoPixel Stick](https://www.adafruit.com/products/1426) (works well)
   * Measured current consumption in all white mode ~ 350 mA.
 * [Aliexpress SK6812 RBGWW strip](https://www.aliexpress.com/wholesale?SearchText=rgbw+sk6812) (works well)
@@ -549,165 +541,11 @@ Examples (using the default colors):
 
 ## Positioning
 
-Cut the strip into sections as per diagrams below.  When the strips are cut ensure you reconnect each output to each input with cable where the break is made. e.g. connect 5V out to 5V in, GND to GND and Data Out to Data In.
-
-Orientation is when viewed with the front of the aircraft facing away from you and viewed from above.
-
-### Example 12 LED config
-
-The default configuration is as follows
-```
-led 0 15,15:ES:IA:0
-led 1 15,8:E:WF:0
-led 2 15,7:E:WF:0
-led 3 15,0:NE:IA:0
-led 4 8,0:N:F:0
-led 5 7,0:N:F:0
-led 6 0,0:NW:IA:0
-led 7 0,7:W:WF:0
-led 8 0,8:W:WF:0
-led 9 0,15:SW:IA:0
-led 10 7,15:S:WF:0
-led 11 8,15:S:WF:0
-led 12 7,7:U:WF:0
-led 13 8,7:U:WF:0
-led 14 7,8:D:WF:0
-led 15 8,8:D:WF:0
-led 16 8,9::R:3
-led 17 9,10::R:3
-led 18 10,11::R:3
-led 19 10,12::R:3
-led 20 9,13::R:3
-led 21 8,14::R:3
-led 22 7,14::R:3
-led 23 6,13::R:3
-led 24 5,12::R:3
-led 25 5,11::R:3
-led 26 6,10::R:3
-led 27 7,9::R:3
-led 28 0,0:::0
-led 29 0,0:::0
-led 30 0,0:::0
-led 31 0,0:::0
-```
-
-Which translates into the following positions:
-
-```
-     6             3
-      \           /
-       \   5-4   /
-        \ FRONT /
-    7,8 | 12-15 | 1,2
-        /  BACK \
-       /  10,11  \
-      /           \
-     9             0
-       RING 16-27
-```
-
-LEDs 0,3,6 and 9 should be placed underneath the quad, facing downwards.
-LEDs 1-2, 4-5, 7-8 and 10-11 should be positioned so the face east/north/west/south, respectively.
-LEDs 12-13 should be placed facing down, in the middle
-LEDs 14-15 should be placed facing up, in the middle
-LEDs 16-27 should be placed in a ring and positioned at the rear facing south.
-
-This is the default so that if you don't want to place LEDs top and bottom in the middle just connect the first 12 LEDs.
-
-### Example 16 LED config
-
-```
-led 0 15,15:SD:IA:0
-led 1 8,8:E:FW:0
-led 2 8,7:E:FW:0
-led 3 15,0:ND:IA:0
-led 4 7,7:N:FW:0
-led 5 8,7:N:FW:0
-led 6 0,0:ND:IA:0
-led 7 7,7:W:FW:0
-led 8 7,8:W:FW:0
-led 9 0,15:SD:IA:0
-led 10 7,8:S:FW:0
-led 11 8,8:S:FW:0
-led 12 7,7:D:FW:0
-led 13 8,7:D:FW:0
-led 14 7,7:U:FW:0
-led 15 8,7:U:FW:0
-```
-
-Which translates into the following positions:
-
-```
-     6             3
-      \           /
-       \   5-4   /
-      7 \ FRONT / 2
-        | 12-15 |
-      8 /  BACK \ 1
-       /  10-11  \
-      /           \
-     9             0
-```
-
-LEDs 0,3,6 and 9 should be placed underneath the quad, facing downwards.
-LEDs 1-2, 4-5, 7-8 and 10-11 should be positioned so the face east/north/west/south, respectively.
-LEDs 12-13 should be placed facing down, in the middle
-LEDs 14-15 should be placed facing up, in the middle
-
-### Example 28 LED config
-
-```
-#right rear cluster
-led 0 9,9:S:FWT:0
-led 1 10,10:S:FWT:0
-led 2 11,11:S:IA:0
-led 3 11,11:E:IA:0
-led 4 10,10:E:AT:0
-led 5 9,9:E:AT:0
-# right front cluster
-led 6 10,5:S:F:0
-led 7 11,4:S:F:0
-led 8 12,3:S:IA:0
-led 9 12,2:N:IA:0
-led 10 11,1:N:F:0
-led 11 10,0:N:F:0
-# center front cluster
-led 12 7,0:N:FW:0
-led 13 6,0:N:FW:0
-led 14 5,0:N:FW:0
-led 15 4,0:N:FW:0
-# left front cluster
-led 16 2,0:N:F:0
-led 17 1,1:N:F:0
-led 18 0,2:N:IA:0
-led 19 0,3:W:IA:0
-led 20 1,4:S:F:0
-led 21 2,5:S:F:0
-# left rear cluster
-led 22 2,9:W:AT:0
-led 23 1,10:W:AT:0
-led 24 0,11:W:IA:0
-led 25 0,11:S:IA:0
-led 26 1,10:S:FWT:0
-led 27 2,9:S:FWT:0
-```
-
-```
-       16-18  9-11
-19-21 \           / 6-8
-       \  12-15  /
-        \ FRONT /
-        /  BACK \
-       /         \
-22-24 /           \ 3-5
-       25-27   0-2
-```
-
-All LEDs should face outwards from the chassis in this configuration.
-
-Note:
-This configuration is specifically designed for the [Alien Spider AQ50D PRO 250mm frame](http://www.goodluckbuy.com/alien-spider-aq50d-pro-250mm-mini-quadcopter-carbon-fiber-micro-multicopter-frame.html).
-
+You can place LEDs anywhere along the strip and give each one a position on a grid, functions and
+colours, with the Configurator's LED Strip tab or the `led` CLI command. Which function suits
+which position depends on your airframe: for example, an indicator LED on each wing tip, and a
+warning or status LED where you can see it. The layout examples that used to be here were for
+multirotor frames and have been removed. Run `led` in the CLI to see the syntax.
 
 ## Troubleshooting
 

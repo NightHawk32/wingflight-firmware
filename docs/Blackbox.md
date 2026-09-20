@@ -8,19 +8,13 @@ This feature transmits your flight data information on every control loop iterat
 logging device like an OpenLog to be recorded, to an onboard dataflash chip which is present on some flight controllers,
 or to an onboard SD card socket.
 
-After your flight, you can view the resulting logs using the interactive log viewer:
-
-https://github.com/cleanflight/blackbox-log-viewer
-
-You can also use the `blackbox_decode` tool to turn the logs into CSV files for analysis, or render your flight log as a
-video using the `blackbox_render` tool. Those tools can be found in this repository:
-
-https://github.com/cleanflight/blackbox-tools
+After your flight, you can view the resulting logs with the Wingflight Blackbox Explorer, which is
+linked from the [WingFlight GitHub organization](https://github.com/WingFlight).
 
 ## Logged data
 The blackbox records flight data on every iteration of the flight control loop. It records the current time in
 microseconds, P, I and D corrections for each axis, your RC command stick positions (after applying expo curves),
-gyroscope data, accelerometer data (after your configured low-pass filtering), barometer and sonar readings, 3-axis
+gyroscope data, accelerometer data (after your configured low-pass filtering), barometer readings, 3-axis
 magnetometer readings, raw VBAT and current measurements, RSSI, and the command being sent to each motor speed
 controller. This is all stored without any approximation or loss of precision, so even quite subtle problems should be
 detectable from the fight data log.
@@ -33,19 +27,15 @@ renderer does not yet show any of the GPS information (this will be added later)
 The maximum data rate that can be recorded to the flight log is fairly restricted, so anything that increases the load
 can cause the flight log to drop frames and contain errors.
 
-The Blackbox is typically used on tricopters and quadcopters. Although it will work on hexacopters and octocopters,
-because these craft have more motors to record, they must transmit more data to the flight log. This can increase the
-number of dropped frames. Although the browser-based log viewer supports hexacopters and octocopters, the command-line 
-`blackbox_render` tool currently only supports tri- and quadcopters.
+Each extra servo and motor output, and each extra logged field, adds to the data rate.
 
-Cleanflight's `looptime` setting decides how frequently an update is saved to the flight log. The default looptime on
-Cleanflight is 3500. If you're using a looptime smaller than about 2400, you may experience some dropped frames due to
-the high required data rate. In that case you will need to reduce the sampling rate in the Blackbox settings, or
-increase your logger's baudrate to 250000. See the later section on configuring the Blackbox feature for details.
+The PID loop rate (see `pid_process_denom`) decides how frequently an update can be saved to the flight log. If you run
+a fast loop you may see dropped frames due to the high required data rate. In that case reduce the sampling rate in the
+Blackbox settings, or increase your logger's baud rate to 250000. See the later section on configuring the Blackbox feature for details.
 
 ## Setting up logging
 
-First, you must enable the Blackbox feature. In the [Cleanflight Configurator][] enter the Configuration tab,
+First, you must enable the Blackbox feature. In the [Wingflight Configurator][] enter the Configuration tab,
 tick the "BLACKBOX" feature at the bottom of the page, and click "Save and reboot" 
 
 Now you must decide which device to store your flight logs on. You can either transmit the log data over a serial port
@@ -60,7 +50,7 @@ flights to a MicroSD card.
 The OpenLog ships from SparkFun with standard "OpenLog 3" firmware installed. Although this original OpenLog firmware
 will work with the Blackbox, in order to reduce the number of dropped frames it should be reflashed with the
 higher performance [OpenLog Blackbox firmware][]. The special Blackbox variant of the OpenLog firmware also ensures that
-the OpenLog is using Cleanflight compatible settings, and defaults to 115200 baud.
+the OpenLog is using Wingflight compatible settings, and defaults to 115200 baud.
 
 You can find the Blackbox version of the OpenLog firmware [here](https://github.com/cleanflight/blackbox-firmware), 
 along with instructions for installing it onto your OpenLog.
@@ -96,7 +86,7 @@ First, tell the Blackbox to log using a serial port (rather than to an onboard d
 Configurator's CLI tab, enter `set blackbox_device=SERIAL` to switch logging to serial, and
 save.
 
-You need to let Cleanflight know which of [your serial ports][] you connect your OpenLog to (i.e. the Blackbox port),
+You need to let Wingflight know which of [your serial ports][] you connect your OpenLog to (i.e. the Blackbox port),
 which you can do on the Configurator's Ports tab.
 
 You should use a hardware serial port (such as UART1 on the Naze32, the two-pin Tx/Rx header in the center of the
@@ -125,7 +115,7 @@ telemetry pins.
 
 Pin RC3 on the side of the board is UART2's Tx pin. If Blackbox is configured on UART2, MSP can still be used on UART1
 when the board is armed, which means that the Configurator will continue to work simultaneously with Blackbox logging.
-Note that in `PARALLEL_PWM` mode this leaves the board with 6 input channels as RC3 and RC4 pins are used by UART2 as Tx and Rx. Cleanflight automatically shifts logical channel mapping for you when UART2 is enabled in `Ports` tab so you'll have to shift receiver pins that are connected to Naze32 pins 3 to 6 by two.
+Note that in `PARALLEL_PWM` mode this leaves the board with 6 input channels as RC3 and RC4 pins are used by UART2 as Tx and Rx. Wingflight automatically shifts logical channel mapping for you when UART2 is enabled in `Ports` tab so you'll have to shift receiver pins that are connected to Naze32 pins 3 to 6 by two.
 
 The OpenLog tolerates a power supply of between 3.3V and 12V. If you are powering your Naze32 with a standard 5V BEC,
 then you can use a spare motor header's +5V and GND pins to power the OpenLog with.
@@ -194,7 +184,7 @@ On the Configurator's CLI tab, you must enter `set blackbox_device=SPIFLASH` to 
 then save.
 
 [your serial ports]: https://github.com/cleanflight/cleanflight/blob/master/docs/Serial.md
-[Cleanflight Configurator]: https://chrome.google.com/webstore/detail/cleanflight-configurator/enacoimjcgeinfnnnpajinjgmkahmfgb?hl=en
+[Wingflight Configurator]: https://chrome.google.com/webstore/detail/cleanflight-configurator/enacoimjcgeinfnnnpajinjgmkahmfgb?hl=en
 
 ### Onboard SD card socket
 Some flight controllers have an SD or Micro SD card socket on their circuit boards. This allows for very high speed
@@ -203,19 +193,19 @@ logging (1KHz or faster, which is a looptime of 1000 or lower) on suitable cards
 The card can be either Standard (SDSC) or High capacity (SDHC), and must be formatted with the FAT16 or FAT32
 filesystems. This covers a range of card capacities from 1 to 32GB. Extended capacity cards (SDXC) are not supported.
 
-The first time you power up Cleanflight with a new card inserted, the flight controller will spend a few seconds
+The first time you power up Wingflight with a new card inserted, the flight controller will spend a few seconds
 scanning the disk for free space and collecting this space together into a file called "FREESPAC.E". During flight,
-Cleanflight will carve chunks from this file to create new log files. You must not edit this file on your computer (i.e.
+Wingflight will carve chunks from this file to create new log files. You must not edit this file on your computer (i.e.
 open it in a program and save changes) because this may cause it to become fragmented. Don't run any defragmentation
 tools on the card either.
 
-You can delete the FREESPAC.E file if you want to free up space on the card to fit non-Blackbox files (Cleanflight will 
+You can delete the FREESPAC.E file if you want to free up space on the card to fit non-Blackbox files (Wingflight will 
 recreate the FREESPAC.E file next time it starts, using whatever free space was left over).
 
 The maximum size of the FREESPAC.E file is currently 4GB. Once 4GB worth of logs have been recorded, the FREESPAC.E
 file will be nearly empty and no more logs will be able to be recorded. At this point you should either delete the 
 FREESPAC.E file (and any logs left on the card to free up space), or just reformat the card. A new FREESPAC.E file 
-will be created by Cleanflight on its next boot.
+will be created by Wingflight on its next boot.
 
 #### Enable recording to SD card
 On the Configurator's CLI tab, you must enter `set blackbox_device=SDCARD` to switch to logging to an onboard SD card,
@@ -223,44 +213,36 @@ then save.
 
 ## Configuring the Blackbox
 
-The Blackbox currently provides two settings (`blackbox_rate_num` and `blackbox_rate_denom`) that allow you to control 
-the rate at which data is logged. These two together form a fraction (`blackbox_rate_num / blackbox_rate_denom`) which
-decides what portion of the flight controller's control loop iterations should be logged. The default is 1/1 which logs 
-every iteration.
+The `blackbox_rate_denom` setting controls the rate at which data is logged: one in every `blackbox_rate_denom`
+control loop iterations is logged. The default of 1 logs every iteration.
 
 If you're using a slower MicroSD card, you may need to reduce your logging rate to reduce the number of corrupted
-logged frames that `blackbox_decode` complains about. A rate of 1/2 is likely to work for most craft.
+logged frames the log viewer complains about. A denominator of 2 is likely to work for most aircraft.
 
-You can change the logging rate settings by entering the CLI tab in the [Cleanflight Configurator][] and using the `set`
+You can change the logging rate settings by entering the CLI tab in the [Wingflight Configurator][] and using the `set`
 command, like so:
 
 ```
-set blackbox_rate_num = 1
 set blackbox_rate_denom = 2
 ```
 
-The data rate for my quadcopter using a looptime of 2400 and a rate of 1/1 is about 10.25kB/s. This allows about 18
-days of flight logs to fit on my OpenLog's 16GB MicroSD card, which ought to be enough for anybody :).
-
-If you are logging using SoftSerial, you will almost certainly need to reduce your logging rate to 1/32. Even at that
-logging rate, looptimes faster than about 1000 cannot be successfully logged.
+If you are logging using SoftSerial, you will almost certainly need to reduce your logging rate a lot (a large
+`blackbox_rate_denom`).
 
 If you're logging to an onboard dataflash chip instead of an OpenLog, be aware that the 2MB of storage space it offers
-is pretty small. At the default 1/1 logging rate, and a 2400 looptime, this is only enough for about 3 minutes of
-flight. This could be long enough for you to investigate some flying problem with your craft, but you may want to reduce
+is pretty small. At the default logging rate this is only enough for a few minutes of
+flight, depending on your loop rate and how many fields you log. This could be long enough for you to investigate some flying problem with your craft, but you may want to reduce
 the logging rate in order to extend your recording time.
 
-To maximize your recording time, you could drop the rate all the way down to 1/32 (the smallest possible rate) which
-would result in a logging rate of about 10-20Hz and about 650 bytes/second of data. At that logging rate, a 2MB
-dataflash chip can store around 50 minutes of flight data, though the level of detail is severely reduced and you could
-not diagnose flight problems like vibration or PID setting issues.
+To maximize your recording time you can raise `blackbox_rate_denom` and choose which fields are logged with the
+`blackbox_log_*` settings. The level of detail is reduced, and you could not diagnose flight problems like vibration or PID setting issues.
 
 ## Usage
 
 The Blackbox starts recording data as soon as you arm your craft, and stops when you disarm.
 
-If your craft has a buzzer attached, you can use Cleanflight's arming beep to synchronize your Blackbox log with your
-flight video. Cleanflight's arming beep is a "long, short" pattern. The beginning of the first long beep will be shown 
+If your craft has a buzzer attached, you can use Wingflight's arming beep to synchronize your Blackbox log with your
+flight video. Wingflight's arming beep is a "long, short" pattern. The beginning of the first long beep will be shown 
 as a blue line in the flight data log, which you can sync against your recorded audio track.
 
 You should wait a few seconds after disarming your craft to allow the Blackbox to finish saving its data.
@@ -273,7 +255,7 @@ tools will ask you to pick which one of these flights you want to display/decode
 Don't insert or remove the SD card while the OpenLog is powered up.
 
 ### Usage - Dataflash chip
-After your flights, you can use the [Cleanflight Configurator][] to download the contents of the dataflash to your
+After your flights, you can use the [Wingflight Configurator][] to download the contents of the dataflash to your
 computer. Go to the "dataflash" tab and click the "save flash to file..." button. Saving the log can take 2 or 3
 minutes.
 
@@ -286,13 +268,13 @@ nothing will be recorded.
 
 ### Usage - Onboard SD card socket
 You must insert your SD card before powering on your flight controller. You can remove the SD card while the board is
-powered up, but you must wait 5 seconds after disarming before you do so in order to give Cleanflight a chance to finish
+powered up, but you must wait 5 seconds after disarming before you do so in order to give Wingflight a chance to finish
 saving your log (otherwise the filesystem may become corrupted).
 
-Cleanflight will create a new log file in the "LOG" directory each time the craft is armed. If you are using a Blackbox
+Wingflight will create a new log file in the "LOG" directory each time the craft is armed. If you are using a Blackbox
 logging switch and you keep it paused for the entire flight, the resulting empty log file will be deleted after disarming.
 
-To read your logs, you must remove the SD card and insert it into a card reader on your computer (Cleanflight doesn't
+To read your logs, you must remove the SD card and insert it into a card reader on your computer (Wingflight doesn't
 support reading these logs directly through the Configurator).
 
 ### Usage - Logging switch
@@ -306,17 +288,8 @@ while in flight.
 ## Viewing recorded logs
 After your flights, you'll have a series of flight log files with a .TXT extension.
 
-You can view these .TXT flight log files interactively using your web browser with the Cleanflight Blackbox Explorer:
-
-https://github.com/cleanflight/blackbox-log-viewer
+You can view these .TXT flight log files interactively with the Wingflight Blackbox Explorer, which is linked from
+the [WingFlight GitHub organization](https://github.com/WingFlight).
 
 This allows you to scroll around a graphed version of your log and examine your log in detail. You can also export a
 video of your log to share it with others!
-
-You can decode your logs with the `blackbox_decode` tool to create CSV (comma-separated values) files for analysis,
-or render them into a series of PNG frames with `blackbox_render` tool, which you could then convert into a video using
-another software package.
-
-You'll find those tools along with instructions for using them in this repository:
-
-https://github.com/cleanflight/blackbox-tools

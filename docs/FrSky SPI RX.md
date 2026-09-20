@@ -2,7 +2,7 @@
 
 ## Basics
 
-'SPI RX' in Betaflight is a framework that allows for radio chips to be connected directly to the flight controller's MCU, and to be controlled by the firmware. This allows for the implementation of the functionality that controls the radio chip, and translates the received signals into RC control signals as part of the firmware.
+'SPI RX' in Wingflight is a framework that allows for radio chips to be connected directly to the flight controller's MCU, and to be controlled by the firmware. This allows for the implementation of the functionality that controls the radio chip, and translates the received signals into RC control signals as part of the firmware.
 
 This has a number of advantages:
 - the RX can be directly added to the flight controller board, allowing for smaller builds (after all, not many people want to use a flight controller _without_ an RX);
@@ -16,7 +16,7 @@ But there are also disadvantages:
 
 ## The FrSky SPI RX
 
-This driver uses the SPI RX framework in Betaflight to provide support for the FrSky 2.4 GHz RC protocols, based on a CC2500 radio chip, with additional support for a PA/LNA (power amplifier / low noise amplifier) chip with antenna diversity, in order to provide sufficient power / sensitivity for outdoor flying.
+This driver uses the SPI RX framework in Wingflight to provide support for the FrSky 2.4 GHz RC protocols, based on a CC2500 radio chip, with additional support for a PA/LNA (power amplifier / low noise amplifier) chip with antenna diversity, in order to provide sufficient power / sensitivity for outdoor flying.
 
 The supported protocols are:
 
@@ -42,7 +42,7 @@ The supported protocols are:
 
 ## Configuration
 
-1. in Betaflight configurator, go to the 'Configuration' tab, in 'Receiver' box, select 'SPI RX support' for 'Receiver mode':
+1. in Wingflight Configurator, go to the 'Configuration' tab, in 'Receiver' box, select 'SPI RX support' for 'Receiver mode':
 
 ![FrSky SPI RX mode selection](assets/images/frsky_spi_rx_mode.png)
 
@@ -82,9 +82,6 @@ FrSky X and X_LBT protocol:
 
 ## Boards with FrSky SPI RX
 
-- [Midelic F3](https://github.com/betaflight/betaflight/wiki/Board-Midelic-F3) (prototype only, not commercially available);
 - [Matek F411-ONE](http://www.mateksys.com/?portfolio=f411-one);
-- [CrazyBee F3 FR](boards/Board%20-%20CrazyBeeF3FR.md);
-- [CrazyBee F4 FR Pro](boards/Board%20-%20CrazyBeeF4FRPro.md);
 - [BetaFPV F4]
 - more to come...
