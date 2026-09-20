@@ -69,8 +69,6 @@ typedef struct {
     int16_t         override[MIXER_INPUT_COUNT];
     uint16_t        saturation[MIXER_INPUT_COUNT];
 
-    float           cyclicTotal;
-
     bitmap_t        cyclicMapping;
 
 } mixerData_t;
@@ -88,11 +86,6 @@ float mixerGetInput(uint8_t index)
 float mixerGetOutput(uint8_t index)
 {
     return mixer.output[index];
-}
-
-float getCyclicDeflection(void)
-{
-    return mixer.cyclicTotal;
 }
 
 bool mixerSaturated(uint8_t index)
@@ -217,16 +210,6 @@ static void mixerSetInput(int index, float value)
     mixerApplyInputLimit(index, value);
 }
 
-static void mixerUpdateCyclic(void)
-{
-    const float SR = mixer.input[MIXER_IN_STABILIZED_ROLL];
-    const float SP = mixer.input[MIXER_IN_STABILIZED_PITCH];
-
-    // Total cyclic deflection (combined roll+pitch magnitude, used e.g. by
-    // smartfuel's stick-load sag compensation)
-    mixer.cyclicTotal = sqrtf(sq(SP) + sq(SR));
-}
-
 // Curves have at most MIXER_CURVE_POINTS (9) points, so a linear scan is
 // negligible cost.
 static float mixerEvaluateCurve(const mixerCurve_t *curve, float x)
@@ -328,9 +311,6 @@ static void mixerUpdateInputs(void)
         mixer.input[MIXER_IN_STABILIZED_PITCH] = getManualDeflection(FD_PITCH);
         mixer.input[MIXER_IN_STABILIZED_YAW]   = getManualDeflection(FD_YAW);
     }
-
-    // Calculate cyclic
-    mixerUpdateCyclic();
 
     // Update throttle (governor holds RPM/throttle per its configured mode when BOXGOVERNOR is engaged)
     float throttle = getThrottle();
