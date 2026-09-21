@@ -80,6 +80,8 @@
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
 #include "hardware/pio.h"
+#include "hardware/timer.h"
+#include "pico/time.h"
 
 #if defined(USE_SOFTSERIAL1) && defined(USE_SOFTSERIAL2)
 #define MAX_SOFTSERIAL_PORTS 2
@@ -97,6 +99,13 @@ typedef struct picoSoftSerial_s {
     int8_t rxSm;
     bool active;
     bool bidirTxActive; // BIDIR only: true while the shared pin is driven by the TX program
+
+    // BIDIR only: timing the end of a transmit burst - see softSerialServiceDrains()
+    bool drainPending;      // ring drained; waiting for the wire to go idle
+    uint64_t txStartUs;     // timer time at which the current burst started shifting
+    uint32_t txBytesQueued; // characters put into the TX FIFO since txStartUs
+    uint64_t drainDueUs;    // predicted instant the TX program parks idle again
+    uint32_t charTimeUsQ8;  // one character on the wire, in us at 24.8 fixed point
     volatile uint8_t rxBuffer[SOFTSERIAL_BUFFER_SIZE];
     volatile uint8_t txBuffer[SOFTSERIAL_BUFFER_SIZE];
 } picoSoftSerial_t;
@@ -254,6 +263,7 @@ static bool softSerialRxProgramInit(PIO pio, uint sm, uint pin, uint32_t baud, b
 // softSerialWriteByte() the moment a write arrives while still listening.
 static bool softSerialBidirSwitchToTx(picoSoftSerial_t *s)
 {
+    s->drainPending = false;
     pio_sm_set_enabled(softSerialPio, s->rxSm, false);
 
     const uint pin = IO_Pin(s->txIO);
@@ -272,6 +282,7 @@ static bool softSerialBidirSwitchToTx(picoSoftSerial_t *s)
 // see softSerialPioIrqHandler().
 static void softSerialBidirSwitchToRx(picoSoftSerial_t *s)
 {
+    s->drainPending = false;
     pio_sm_set_enabled(softSerialPio, s->txSm, false);
 
     const uint pin = IO_Pin(s->rxIO);
@@ -309,6 +320,106 @@ static uint32_t txBytesUsed(const picoSoftSerial_t *s)
     return (s->port.txBufferHead - s->port.txBufferTail) & (SOFTSERIAL_BUFFER_SIZE - 1);
 }
 
+// --- BIDIR turnaround without spinning in the interrupt handler ----------
+//
+// The wire may only go back to the RX program once the TX program has shifted
+// its last stop bit and parked on its `pull` again, and nothing interrupts on
+// that. Leaving the level-triggered TX-FIFO-not-full source enabled as a
+// retrigger does work, but it re-enters the handler back to back for as long
+// as the 8-entry FIFO takes to drain: around 0.2ms per frame at FBUS speed,
+// 1.6ms at the 57600 baud of S.Port, and close to 19ms at the 4800 baud of
+// SmartAudio - dozens of PID cycles lost to one VTX command.
+//
+// Same cure as the hardware UART (serial_uart_pico.c): the TX program shifts
+// continuously while its FIFO has data, exactly ten bit times per character,
+// so a burst ends (characters queued x character time) after it began. Mask
+// the source, take one timer interrupt at that instant, and let the idle test
+// stay the authority - an early wake-up just looks again a fraction of a
+// character later.
+#define SOFTSERIAL_DRAIN_MIN_LEAD_US  3  // never arm closer than this: a target already past never calls back
+#define SOFTSERIAL_DRAIN_RECHECK_MIN_US 10
+
+static int softSerialDrainAlarm = -1;
+
+// Time count characters occupy on the wire. 8N1 only (the PIO programs):
+// start + 8 data + stop. charTimeUsQ8 is that character time in microseconds
+// at 24.8 fixed point, cached per baud rate: whole microseconds would hand a
+// 39-byte FBUS frame back 12us late, and working from nanoseconds costs a
+// 64-bit division in the interrupt handler for every byte-at-a-time write.
+static uint32_t softSerialCharsTimeUs(const picoSoftSerial_t *s, uint32_t count)
+{
+    return (uint32_t)(((uint64_t)count * s->charTimeUsQ8) >> 8);
+}
+
+static void softSerialUpdateCharTime(picoSoftSerial_t *s)
+{
+    const uint32_t baud = s->port.baudRate ? s->port.baudRate : 9600;
+    s->charTimeUsQ8 = (uint32_t)(2560000000ULL / baud);
+}
+
+static void softSerialServiceDrains(void)
+{
+    for (;;) {
+        uint64_t earliest = 0;
+
+        for (int i = 0; i < MAX_SOFTSERIAL_PORTS; i++) {
+            picoSoftSerial_t *s = &softSerialPorts[i];
+            if (!s->active || !s->drainPending) {
+                continue;
+            }
+
+            if (txBytesUsed(s)) {
+                // More was queued meanwhile; the write path re-enables the TX
+                // source and the handler times the burst afresh once it drains.
+                s->drainPending = false;
+                continue;
+            }
+
+            if (softSerialTxFullyIdle(s)) {
+                softSerialBidirSwitchToRx(s);
+                continue;
+            }
+
+            const uint64_t now = time_us_64();
+            if (s->drainDueUs <= now + SOFTSERIAL_DRAIN_MIN_LEAD_US) {
+                // Woke ahead of the wire. Look again a fraction of a character on.
+                const uint32_t recheckUs = softSerialCharsTimeUs(s, 1) / 8;
+                s->drainDueUs = now + (recheckUs > SOFTSERIAL_DRAIN_RECHECK_MIN_US ? recheckUs : SOFTSERIAL_DRAIN_RECHECK_MIN_US);
+            }
+            if (!earliest || s->drainDueUs < earliest) {
+                earliest = s->drainDueUs;
+            }
+        }
+
+        if (!earliest) {
+            return;
+        }
+        if (!hardware_alarm_set_target(softSerialDrainAlarm, from_us_since_boot(earliest))) {
+            return; // armed
+        }
+        // Deadline slipped past while arming - go round and re-evaluate.
+    }
+}
+
+static void softSerialDrainAlarmHandler(uint alarmNum)
+{
+    UNUSED(alarmNum);
+    softSerialServiceDrains();
+}
+
+static void softSerialDrainAlarmInit(void)
+{
+    if (softSerialDrainAlarm >= 0) {
+        return;
+    }
+    const int alarm = hardware_alarm_claim_unused(false);
+    if (alarm < 0) {
+        return; // the handler falls back to retriggering itself
+    }
+    hardware_alarm_set_callback(alarm, softSerialDrainAlarmHandler);
+    softSerialDrainAlarm = alarm;
+}
+
 // --- interrupt handler: RX drain + TX FIFO refill for every active port ---
 
 static void softSerialPioIrqHandler(void)
@@ -336,29 +447,42 @@ static void softSerialPioIrqHandler(void)
         }
 
         if (s->txSm >= 0 && (!(s->port.options & SERIAL_BIDIR) || s->bidirTxActive)) {
+            const bool bidirTx = (s->port.options & SERIAL_BIDIR) && s->bidirTxActive;
+
+            if (bidirTx && txBytesUsed(s) && softSerialTxFullyIdle(s)) {
+                // First character of a burst: everything queued from here
+                // shifts back to back, which is what the turnaround is timed
+                // from (see softSerialServiceDrains()).
+                s->txStartUs = time_us_64();
+                s->txBytesQueued = 0;
+            }
+
             while (txBytesUsed(s) && !pio_sm_is_tx_fifo_full(softSerialPio, s->txSm)) {
                 pio_sm_put(softSerialPio, s->txSm, s->port.txBuffer[s->port.txBufferTail]);
                 s->port.txBufferTail = (s->port.txBufferTail + 1) & (SOFTSERIAL_BUFFER_SIZE - 1);
+                s->txBytesQueued++;
             }
+
             if (!txBytesUsed(s)) {
-                const bool bidirTx = (s->port.options & SERIAL_BIDIR) && s->bidirTxActive;
-                if (!bidirTx || softSerialTxFullyIdle(s)) {
-                    // Ring drained (and, for BIDIR, the wire itself is
-                    // confirmed idle): mask the (level-triggered)
+                const bool idle = !bidirTx || softSerialTxFullyIdle(s);
+                if (idle || softSerialDrainAlarm >= 0) {
+                    // Ring drained: mask the (level-triggered)
                     // TX-FIFO-not-full source until more data is queued.
                     pio_set_irqn_source_enabled(softSerialPio, 0, pio_get_tx_fifo_not_full_interrupt_source(s->txSm), false);
-                    if (bidirTx) {
+                    if (bidirTx && idle) {
                         softSerialBidirSwitchToRx(s);
+                    } else if (bidirTx) {
+                        // The trailing characters are still shifting out: let
+                        // the timer hand the wire back when they are done.
+                        s->drainPending = true;
+                        s->drainDueUs = s->txStartUs + softSerialCharsTimeUs(s, s->txBytesQueued);
+                        softSerialServiceDrains();
                     }
                 }
-                // else: BIDIR, ring drained but the trailing frame is still
-                // shifting out - leave the source enabled. It is
-                // level-triggered on FIFO-empty (definitely true here), so
-                // this handler is re-entered immediately; other active
-                // ports' RX/TX are still serviced on every re-entry (the
-                // loop above covers all of them), so this doesn't starve
-                // them - it just re-checks softSerialTxFullyIdle() until the
-                // last frame (bounded by a handful of bit periods) is done.
+                // else: BIDIR with no timer alarm to be had - leave the source
+                // enabled as a retrigger. It is level-triggered on FIFO-empty,
+                // so this handler is re-entered immediately and re-checks
+                // softSerialTxFullyIdle() until the last frame is done.
             }
         }
     }
@@ -366,6 +490,23 @@ static void softSerialPioIrqHandler(void)
 
 // --- serialPort API (names match serial_softserial.h; the STM32
 // timer-based serial_softserial.c is excluded from PICO builds) ---
+
+// Start (or keep) the TX pump running for whatever is in the ring. The data
+// must already be queued - see the ordering note in softSerialWriteByte().
+// False if a BIDIR port could not take the wire.
+static bool softSerialKickTx(picoSoftSerial_t *s)
+{
+    if ((s->port.options & SERIAL_BIDIR) && !s->bidirTxActive) {
+        if (!softSerialBidirSwitchToTx(s)) {
+            return false;
+        }
+    }
+
+    // Unmasking TX-FIFO-not-full immediately takes the IRQ (FIFO has room),
+    // which moves ring bytes into the FIFO.
+    pio_set_irqn_source_enabled(softSerialPio, 0, pio_get_tx_fifo_not_full_interrupt_source(s->txSm), true);
+    return true;
+}
 
 void softSerialWriteByte(serialPort_t *instance, uint8_t ch)
 {
@@ -390,17 +531,40 @@ void softSerialWriteByte(serialPort_t *instance, uint8_t ch)
     s->port.txBuffer[s->port.txBufferHead] = ch;
     s->port.txBufferHead = (s->port.txBufferHead + 1) & (SOFTSERIAL_BUFFER_SIZE - 1);
 
-    if ((s->port.options & SERIAL_BIDIR) && !s->bidirTxActive) {
-        if (!softSerialBidirSwitchToTx(s)) {
-            // Roll the byte back out - the wire never left RX.
-            s->port.txBufferHead = (s->port.txBufferHead - 1) & (SOFTSERIAL_BUFFER_SIZE - 1);
+    if (!softSerialKickTx(s)) {
+        // Roll the byte back out - the wire never left RX.
+        s->port.txBufferHead = (s->port.txBufferHead - 1) & (SOFTSERIAL_BUFFER_SIZE - 1);
+    }
+}
+
+// Queue a whole block, then start the pump once. Byte-at-a-time, every
+// character costs its own trip through the interrupt handler; a frame written
+// in one go costs one, and a BIDIR port sees exactly one "ring ran dry" edge
+// per frame to time its turnaround from. Blocks while the ring is full, like
+// the generic serialWriteBuf() fallback it replaces.
+static void softSerialWriteBuf(serialPort_t *instance, const void *data, int count)
+{
+    picoSoftSerial_t *s = (picoSoftSerial_t *)instance;
+    const uint8_t *p = (const uint8_t *)data;
+
+    if (s->txSm < 0 || !(s->port.mode & MODE_TX)) {
+        return;
+    }
+
+    while (count > 0) {
+        uint32_t added = 0;
+        while (count > 0 && txBytesUsed(s) < SOFTSERIAL_BUFFER_SIZE - 1) {
+            s->port.txBuffer[s->port.txBufferHead] = *p++;
+            s->port.txBufferHead = (s->port.txBufferHead + 1) & (SOFTSERIAL_BUFFER_SIZE - 1);
+            count--;
+            added++;
+        }
+
+        if (!softSerialKickTx(s)) {
+            s->port.txBufferHead = (s->port.txBufferHead - added) & (SOFTSERIAL_BUFFER_SIZE - 1);
             return;
         }
     }
-
-    // Kick the pump: unmasking TX-FIFO-not-full immediately takes the IRQ
-    // (FIFO has room), which moves ring bytes into the FIFO.
-    pio_set_irqn_source_enabled(softSerialPio, 0, pio_get_tx_fifo_not_full_interrupt_source(s->txSm), true);
 }
 
 uint32_t softSerialRxBytesWaiting(const serialPort_t *instance)
@@ -469,6 +633,7 @@ void softSerialSetBaudRate(serialPort_t *instance, uint32_t baudRate)
         }
     }
     s->port.baudRate = baudRate;
+    softSerialUpdateCharTime(s);
 }
 
 bool isSoftSerialTransmitBufferEmpty(const serialPort_t *instance)
@@ -534,6 +699,10 @@ serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallb
         if (!tagTx || !(mode & MODE_RX)) {
             return NULL;
         }
+
+        // The turnaround is timed rather than polled; claim the timer the
+        // first time any port opens half duplex.
+        softSerialDrainAlarmInit();
     } else {
         if (((mode & MODE_RX) && !tagRx) || ((mode & MODE_TX) && !tagTx)) {
             return NULL;
@@ -574,6 +743,7 @@ serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallb
 
     s->port.vTable = &picoSoftSerialVTable;
     s->port.baudRate = baud;
+    softSerialUpdateCharTime(s);
     s->port.mode = mode;
     s->port.options = options;
     s->port.rxCallback = rxCallback;
@@ -691,7 +861,7 @@ static const struct serialPortVTable picoSoftSerialVTable = {
     .setMode = softSerialSetMode,
     .setCtrlLineStateCb = NULL,
     .setBaudRateCb = NULL,
-    .writeBuf = NULL,
+    .writeBuf = softSerialWriteBuf,
     .beginWrite = NULL,
     .endWrite = NULL
 };

@@ -1769,3 +1769,56 @@ transmit queue, and the consumer loop. Nothing else is cheap to move: the UART
 receive callbacks, the FBUS frame, DShot and the gyro read are all either
 control-path or protected by core-local `ATOMIC_BLOCK`s, and the remaining
 core-0 load (about 6%) is the control chain itself.
+
+### Twenty-first iteration (2026-09-21) — serial cost, with every telemetry protocol in mind
+
+The target still `#undef`s the telemetry and serial-RX protocols as untested,
+but they are all product features (STM32_UNIFIED ships them) and a trial
+RP2350A build with all 23 `#undef`s removed compiles and links unchanged - at
+93.7% RAM, since the image runs from RAM. Moving `telemetryProcess()` to core 1
+was looked at and rejected: MSP-over-telemetry (S.Port, FPort, CRSF) can write
+config, CRSF guards its MSP buffer with a core-local `ATOMIC_BLOCK`, the
+shared-wire protocols transmit from the RX code in slots timed off the incoming
+frame, and the UART kick and half-duplex switch exclude their interrupt handler
+by masking on their own core. What telemetry needs from this port is cheap
+serial I/O on core 0, which is what this iteration delivers. All measured on
+the RP2350A board.
+
+- **PIO soft serial had the same half-duplex interrupt storm the hardware UART
+  had.** Waiting for the TX program to park idle by leaving the level-triggered
+  TX-FIFO source enabled re-enters the handler for the whole drain. Measured
+  with FBUS master moved onto soft serial 1 (same pin, config restored and
+  diffed afterwards): 1004us per frame, 21.5% of core 0, late on every run, PID
+  loop down to 2852Hz. At SmartAudio's 4800 baud the same wait is ~19ms per
+  command. Now timed like the UART: one timer interrupt at the predicted end of
+  the burst, idle test still the authority. After: 26us per frame, PID back at
+  3204Hz. On-target counters: one timer arm per frame, zero re-checks, wake-up
+  within 2us of the prediction (24.8 fixed-point microseconds; whole
+  microseconds were handing a 39-byte frame back 12us late).
+- `softSerialWriteBuf()` added - one trip through the handler per frame
+  instead of one per character.
+- **Hardware UART, byte-at-a-time writers** (FrSky hub, HoTT, iBus, LTM,
+  MAVLink, S.Port, S.Port master all write this way).
+  `uartEnableTxInterrupt()` unmasked the level-triggered TX source on every
+  call, buying an interrupt per character that found the ring empty and masked
+  itself again. It now only asks for the interrupt when the FIFO could not take
+  everything; a half-duplex port extends the pending turnaround deadline with a
+  store instead of re-arming the timer (the handler re-arms itself if it wakes
+  early). Exercised on hardware by temporarily writing the FBUS frame byte by
+  byte: 2.3us -> 1.35us per character, about 3 timer wake-ups per 39-byte frame
+  instead of 39 TX interrupts, one turnaround per frame and none with the
+  shifter still busy. Full-duplex ports no longer take a TX interrupt at all
+  for writes that fit the FIFO.
+- **USB receive ring.** Core 1 lifts received bytes into an SPSC ring, core 0
+  pops them. Core 0 no longer takes the TinyUSB mutex anywhere - that was the
+  last place the flight core could wait on the helper core - and
+  `serialRxBytesWaiting()` on the VCP now reports a real count (it was a bool).
+  A full ring stops core 1 reading and the endpoint NAKs, so the host is flow
+  controlled. A 1620-byte burst of 60 commands in a single write: 60 answered;
+  `dump all` byte-identical across runs.
+
+Not validated: soft-serial byte-at-a-time and full-duplex paths (no second
+port wired), and FBUS receive on either driver (nothing attached that talks).
+Only PICO driver files changed; all four RP targets and a `USE_MULTICORE`-off
+build compile.
+

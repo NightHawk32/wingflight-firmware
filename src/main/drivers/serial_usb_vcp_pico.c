@@ -73,6 +73,19 @@ static uint8_t vcpTxRingBuffer[VCP_TX_RING_SIZE];
 static multicoreRingBuffer_t vcpTxRing = MULTICORE_RINGBUFFER_INIT(vcpTxRingBuffer, VCP_TX_RING_SIZE);
 static bool vcpTxOffloaded;
 
+// Receive goes the other way through a ring of its own: core 1 lifts bytes out
+// of the USB stack, core 0 pops them. Reading directly meant core 0 taking the
+// TinyUSB mutex, which core 1 holds for as long as a tud_task() pass lasts - the
+// one remaining place the flight core could be made to wait for the helper
+// core. With both directions ringed, core 0 never touches the stack or its
+// lock. A full ring simply stops core 1 reading, the endpoint NAKs, and the
+// host waits: flow control for free.
+#define VCP_RX_RING_SIZE 1024 // power of two
+#define VCP_RX_CHUNK_SIZE 64  // one full-speed bulk packet
+
+static uint8_t vcpRxRingBuffer[VCP_RX_RING_SIZE];
+static multicoreRingBuffer_t vcpRxRing = MULTICORE_RINGBUFFER_INIT(vcpRxRingBuffer, VCP_RX_RING_SIZE);
+
 // Drains one bounded chunk per call - the contract multicoreRegisterConsumer()
 // requires, so the VCP cannot starve core 1's other consumers. Only ever hands
 // the stack as much as the endpoint can take right now, so cdc_usb_write()
@@ -98,6 +111,17 @@ static void vcpTxDrain(void *ctx)
         return;
     }
 
+    // Receive: one bounded chunk per pass, only as much as core 0 has room for.
+    const uint16_t rxRoom = multicoreRingBufferBytesFree(&vcpRxRing);
+    if (rxRoom && cdc_usb_bytes_available()) {
+        uint8_t chunk[VCP_RX_CHUNK_SIZE];
+        const int got = cdc_usb_read(chunk, MIN(rxRoom, sizeof(chunk)));
+        if (got > 0) {
+            multicoreRingBufferPushBuf(&vcpRxRing, chunk, (uint16_t)got);
+        }
+    }
+
+    // Transmit
     const uint32_t canTake = cdc_usb_tx_bytes_free();
     if (!canTake) {
         return;
@@ -196,12 +220,29 @@ static bool isUsbVcpTransmitBufferEmpty(const serialPort_t *instance)
 static uint32_t usbVcpRxBytesAvailable(const serialPort_t *instance)
 {
     UNUSED(instance);
+#ifdef USE_MULTICORE
+    if (vcpTxOffloaded) {
+        return multicoreRingBufferBytesUsed(&vcpRxRing);
+    }
+#endif
     return cdc_usb_bytes_available();
 }
 
 static uint8_t usbVcpRead(serialPort_t *instance)
 {
     UNUSED(instance);
+
+#ifdef USE_MULTICORE
+    if (vcpTxOffloaded) {
+        // Callers check usbVcpRxBytesAvailable() first, so this does not
+        // normally wait; if it has to, it waits on core 1 like the inline
+        // path waits on the stack.
+        uint8_t c;
+        while (!multicoreRingBufferPop(&vcpRxRing, &c)) {
+        }
+        return c;
+    }
+#endif
 
     uint8_t buf[1];
 
