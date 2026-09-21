@@ -21,6 +21,31 @@ These initial thresholds need bench/flight validation: hand movement can
 imitate a response, and flight without a qualifying input remains undetected.
 See `src/main/flight/airborne.c`.
 
+TRAINER now keeps normal rate-mode I-term decay independently on roll and pitch
+until its envelope limiter changes that axis's rate command. Stronger pilot
+input back into the envelope also retains normal decay. Active limiting still
+suspends decay to sustain correction (`src/main/flight/trainer.c`,
+`src/main/flight/pid.c`). Mode exit and profile reload clear limiter state.
+
+
+ANGLE and TRAINER now support independent roll and pitch limits per PID profile
+(`src/main/flight/leveling.c`, `src/main/flight/trainer.c`). Explicit roll limits
+use 10–90° and pitch limits 10–75°, matching SAFE's documented configuration
+ranges. ANGLE commands attitude and self-levels; TRAINER retains rate control
+with envelope limiting and no self-leveling. This does not change the trainer's
+prediction algorithm or airborne detection, and is not stall protection.
+
+New CLI settings: `angle_roll_limit`, `angle_pitch_limit`,
+`acro_trainer_roll_limit`, `acro_trainer_pitch_limit`. Zero inherits the existing
+`angle_level_limit` / `acro_trainer_angle_limit`; positive values below 10 are
+effectively 10. Inherited legacy values remain unchanged, including pitch limits
+above 75°. The new PG_ATTITUDE_LIMITS array preserves existing PID-profile
+storage and participates in profile copy/reset. MSP API 22.4 appends four U8
+values to PID_PROFILE in ANGLE roll/pitch, TRAINER roll/pitch order. Older writes
+leave them intact; updated clients expose the independent controls. The ANGLE
+limits also apply to the shared leveling path used by HORIZON and GPS navigation.
+
+
 Fixed-wing cross-axis relax is added for normal stabilization. When enabled,
 yaw/rudder command can attenuate roll and/or pitch P and D feedback, and slow
 the I accumulation (the I output itself is not scaled), so rudder-induced
