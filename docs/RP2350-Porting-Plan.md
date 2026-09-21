@@ -1822,3 +1822,75 @@ port wired), and FBUS receive on either driver (nothing attached that talks).
 Only PICO driver files changed; all four RP targets and a `USE_MULTICORE`-off
 build compile.
 
+### Twenty-second iteration (2026-09-21) — core 1 is watched, and sleeps
+
+Two items from the review of what core 1 was still doing badly. Both measured
+on the RP2350A board.
+
+**Core 1 is now watched, and core 0 stops leaning on it when it stops.** The
+heartbeat had existed since the seventeenth iteration but nothing read it, so
+the porting plan's failure-isolation requirement was only half met: a wedged
+core 1 would have stalled every console and MSP write for the full 250ms
+backpressure budget, repeatedly, inside taskHandleSerial(). Now
+`multicoreCheckCore1Alive()` (core 0, rate-limited to 10Hz, hooked into the
+VCP's own `serialRxBytesWaiting()` - a driver-level call whose answer depends
+on core 1 being alive) wakes core 1 and checks the loop counter advanced,
+latching a verdict after three consecutive misses. On failure the VCP stops
+offloading and every entry point returns immediately: the port goes quiet,
+because core 1 owns the USB stack and there is no inline path to fall back to,
+and losing the console beats stalling the flight loop. Three further bounds
+went in alongside: the read path no longer waits unbounded for a byte core 1
+has not delivered (1ms cap), the transmit stall budget is cut to 5ms when the
+loop counter is not moving at all (only a *live* core 1 earns the full 250ms
+a slow host gets), and `serialTotalTxFree()` claims room in the failed state so
+writers that gate on it do not spin.
+
+Validated by fault injection: a build whose core-1 loop entered `while(true){}`
+after 20 seconds of uptime. Read over SWD 3s apart, with the board running:
+heartbeat frozen at 289, `core1Alive` 0, `vcpCore1Failed` 1 - and
+`uartBidir[0].txStartUs` advancing by 3.00s of wire time, i.e. the FBUS master
+still shifting frames at 500Hz off core 0. The flight loop did not notice. The
+USB device stayed enumerated (core 1's interrupts still fire; only its loop was
+stuck) but the CLI was silent, as designed.
+
+**Core 1 sleeps when idle.** It was spinning at ~400kHz through a
+`tight_loop_contents()` no-op. Consumers now return whether they moved
+anything, and a pass in which nothing did ends in WFI.
+
+Two things had to be got right. WFE is unusable: the SDK's lock primitives SEV
+on release, so core 1 signals itself twice per pass through
+`mutex_try_enter`/`queue_try_remove` and a WFE never waits - the first attempt
+measured *566kHz*, worse than the spin it replaced. WFI ignores events, so the
+cross-core wake is an RP2350 doorbell (`multicoreSignalWork()`), which is a
+real latching interrupt: rung before core 1 has unmasked it, it is still
+delivered. The wait is done with interrupts masked, so an interrupt arriving in
+the window stays pending rather than being taken and consumed, and a pending
+interrupt wakes WFI anyway - no lost-wakeup window. Core 0 signals after every
+VCP transmit push, after freeing receive-ring space, on RPC queueing, on
+consumer and IRQ registration; the 10Hz liveness probe is a backstop that
+bounds any path missed. With no doorbell available core 1 keeps spinning rather
+than risk sleeping through work.
+
+Idle wake rate went from ~400,000/s to ~78/s. **It made no measurable
+difference to core 0** - like-for-like under three back-to-back `dump all`
+runs, PID max 25us and avg 9us either way, total 5.7% vs 5.9%, gyro and filter
+unchanged. So the SRAM contention this was partly aimed at is not measurable on
+this workload; the gain is power and heat, plus not having a core spin at full
+clock to discover there is nothing to do. Kept on those grounds, and because it
+matters more once blackbox lands on core 1.
+
+Also validated: config save (the flash lockout parks a sleeping core 1 and
+brings it back), warm reset via SYSRESETREQ, a 1620-byte 60-command USB burst
+(60 answered), `dump all` byte-identical across runs, and the board's config
+diffed line-for-line against a backup taken before the session. STM32F405
+byte-identical (481502/10600/111972). All four RP targets and a
+`USE_MULTICORE`-off build compile.
+
+**Rejected after looking:** moving the PIO UART interrupt to core 1 (its
+half-duplex direction switch and several RX callbacks rely on core-local
+interrupt masking; the storm that made it attractive is fixed instead), the
+dynamic notch (shared flight code, safety-critical), MSP command processing
+(writes config, arms, reboots), and per-peripheral DMA interrupt splitting
+(the handler is microseconds). Blackbox and MSC remain the right next
+consumers and are blocked only on a storage backend.
+

@@ -50,8 +50,39 @@ void multicoreExecuteBlocking(core1_func_t *func);
 // verbatim (typically a pointer to the consumer's own ring buffer/state);
 // drainFn must not block (no queue_*_blocking, no long loops) since it runs
 // inline in core 1's loop.
-typedef void (multicoreConsumerDrainFn_t)(void *ctx);
+//
+// Return true if this call moved data, meaning there may be more to do right
+// now; core 1 then goes straight round again. Return false when the consumer
+// is idle or is waiting on something that will interrupt (a USB endpoint the
+// host has yet to drain, say) - once every consumer says false, core 1 sleeps
+// in WFE until an interrupt or multicoreSignalWork() wakes it. A consumer that
+// always returns true turns core 1 back into a spin loop.
+typedef bool (multicoreConsumerDrainFn_t)(void *ctx);
 bool multicoreRegisterConsumer(multicoreConsumerDrainFn_t *drainFn, void *ctx);
+
+// Wake core 1 if it is sleeping. Core 0 must call this after making work
+// visible to a consumer (queueing bytes, freeing space a consumer is blocked
+// on), or core 1 may sleep through it. Cheap - a single SEV instruction - and
+// safe to call redundantly: the event flag is sticky, so a signal that lands
+// before core 1 reaches WFE simply makes that WFE return at once, and there is
+// no lost-wakeup window to reason about.
+void multicoreSignalWork(void);
+
+// Core-0-only liveness probe, and the latched verdict.
+//
+// Core 0 must never depend on a core-1 result for flight (see the porting
+// plan's "failure isolation"), which means noticing when core 1 stops. Call
+// multicoreCheckCore1Alive() periodically from any core-0 context: it wakes
+// core 1 and checks the loop counter moved since the previous call, latching
+// false after several consecutive misses. Since core 1 sleeps when idle, the
+// probe is what guarantees it wakes at all - a healthy but idle core 1 would
+// otherwise look identical to a wedged one.
+//
+// Latched, never re-armed: a core 1 that has stopped once is not trusted
+// again until reboot. Callers are expected to stop handing it work and stop
+// waiting on it, not to try to revive it.
+bool multicoreCheckCore1Alive(void);
+bool multicoreIsCore1Alive(void);
 
 // Peripheral interrupt affinity. Each Cortex-M33 has its own NVIC, so
 // irq_set_enabled() only ever unmasks an interrupt on the core that calls it -

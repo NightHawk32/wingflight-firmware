@@ -69,6 +69,25 @@ static vcpPort_t vcpPort = { 0 };
 // dropped rather than the loop stalled indefinitely.
 #define VCP_TX_STALL_TIMEOUT_US 250000
 
+// The budget above is for a host that has stopped reading. A core 1 that has
+// stopped running does not earn it: if the loop counter has not moved at all
+// while we waited, there is nobody to drain the ring and waiting a quarter of
+// a second in taskHandleSerial() for that is the one thing this offload must
+// never do to the flight loop.
+#define VCP_TX_DEAD_CORE1_US 5000
+
+// Longest the read path will wait for a byte core 1 has not delivered yet.
+// Callers check usbVcpRxBytesAvailable() first, so this normally returns at
+// once; the bound only exists so that a core 1 which dies mid-read cannot
+// park core 0 in a loop forever.
+#define VCP_RX_POP_TIMEOUT_US 1000
+
+// Latched once core 1 is declared dead (multicoreCheckCore1Alive()). Core 1
+// owns the USB stack, so there is no inline path to fall back to - the port
+// goes quiet instead, and every entry point returns immediately. Losing the
+// console is survivable; stalling the flight loop is not.
+static bool vcpCore1Failed;
+
 static uint8_t vcpTxRingBuffer[VCP_TX_RING_SIZE];
 static multicoreRingBuffer_t vcpTxRing = MULTICORE_RINGBUFFER_INIT(vcpTxRingBuffer, VCP_TX_RING_SIZE);
 static bool vcpTxOffloaded;
@@ -91,7 +110,7 @@ static multicoreRingBuffer_t vcpRxRing = MULTICORE_RINGBUFFER_INIT(vcpRxRingBuff
 // the stack as much as the endpoint can take right now, so cdc_usb_write()
 // returns without spinning and the TinyUSB mutex is held only briefly (core 0
 // still takes it to read).
-static void vcpTxDrain(void *ctx)
+static bool vcpTxDrain(void *ctx)
 {
     UNUSED(ctx);
 
@@ -108,8 +127,10 @@ static void vcpTxDrain(void *ctx)
         while ((n = multicoreRingBufferPeekRun(&vcpTxRing, &run)) != 0) {
             multicoreRingBufferConsume(&vcpTxRing, n);
         }
-        return;
+        return false;
     }
+
+    bool moved = false;
 
     // Receive: one bounded chunk per pass, only as much as core 0 has room for.
     const uint16_t rxRoom = multicoreRingBufferBytesFree(&vcpRxRing);
@@ -118,28 +139,30 @@ static void vcpTxDrain(void *ctx)
         const int got = cdc_usb_read(chunk, MIN(rxRoom, sizeof(chunk)));
         if (got > 0) {
             multicoreRingBufferPushBuf(&vcpRxRing, chunk, (uint16_t)got);
+            moved = true;
         }
     }
 
-    // Transmit
+    // Transmit. With no room at the endpoint there is nothing to do until the
+    // host reads, which arrives as an interrupt - so report idle and let core 1
+    // sleep rather than spinning on a full FIFO.
     const uint32_t canTake = cdc_usb_tx_bytes_free();
-    if (!canTake) {
-        return;
+    if (canTake) {
+        const uint8_t *run;
+        uint16_t n = multicoreRingBufferPeekRun(&vcpTxRing, &run);
+        if (n) {
+            if (n > canTake) {
+                n = (uint16_t)canTake;
+            }
+            const int written = cdc_usb_write(run, n);
+            if (written > 0) {
+                multicoreRingBufferConsume(&vcpTxRing, (uint16_t)written);
+                moved = true;
+            }
+        }
     }
 
-    const uint8_t *run;
-    uint16_t n = multicoreRingBufferPeekRun(&vcpTxRing, &run);
-    if (!n) {
-        return;
-    }
-    if (n > canTake) {
-        n = (uint16_t)canTake;
-    }
-
-    const int written = cdc_usb_write(run, n);
-    if (written > 0) {
-        multicoreRingBufferConsume(&vcpTxRing, (uint16_t)written);
-    }
+    return moved;
 }
 #endif // USE_MULTICORE
 
@@ -148,17 +171,42 @@ static void vcpTxDrain(void *ctx)
 static bool usbVcpSend(const uint8_t *data, int count)
 {
 #ifdef USE_MULTICORE
+    if (vcpCore1Failed) {
+        return false; // core 1 owns the stack and is not running it
+    }
+
     if (vcpTxOffloaded) {
         timeUs_t lastProgressUs = microsISR();
+        timeUs_t core1SeenUs = lastProgressUs;
+        uint32_t core1SeenHeartbeat = multicoreGetHeartbeat();
+
         while (count > 0) {
             const uint16_t taken = multicoreRingBufferPushBuf(&vcpTxRing, data, (uint16_t)MIN(count, UINT16_MAX));
             data += taken;
             count -= taken;
 
             if (taken) {
+                multicoreSignalWork(); // there is something to drain now
                 lastProgressUs = microsISR();
-            } else if (cmpTimeUs(microsISR(), lastProgressUs) > VCP_TX_STALL_TIMEOUT_US) {
-                return false; // nothing is draining the ring; drop the rest
+                continue;
+            }
+
+            // Ring full. Nudge core 1 and watch that it is actually running:
+            // a live core 1 gets the full stall budget, a silent one gets
+            // VCP_TX_DEAD_CORE1_US.
+            multicoreSignalWork();
+
+            const timeUs_t nowUs = microsISR();
+            const uint32_t heartbeat = multicoreGetHeartbeat();
+            if (heartbeat != core1SeenHeartbeat) {
+                core1SeenHeartbeat = heartbeat;
+                core1SeenUs = nowUs;
+            } else if (cmpTimeUs(nowUs, core1SeenUs) > VCP_TX_DEAD_CORE1_US) {
+                return false;
+            }
+
+            if (cmpTimeUs(nowUs, lastProgressUs) > VCP_TX_STALL_TIMEOUT_US) {
+                return false; // host has stopped reading; drop the rest
             }
         }
         return true;
@@ -222,7 +270,19 @@ static uint32_t usbVcpRxBytesAvailable(const serialPort_t *instance)
     UNUSED(instance);
 #ifdef USE_MULTICORE
     if (vcpTxOffloaded) {
+        // taskHandleSerial() polls this about 100 times a second, which makes
+        // it the natural place to run core 1's liveness probe: a driver-level
+        // hook, and the call whose answer depends on core 1 being alive. The
+        // probe rate-limits itself internally.
+        if (!multicoreCheckCore1Alive()) {
+            vcpCore1Failed = true;
+            vcpTxOffloaded = false;
+            return 0;
+        }
         return multicoreRingBufferBytesUsed(&vcpRxRing);
+    }
+    if (vcpCore1Failed) {
+        return 0;
     }
 #endif
     return cdc_usb_bytes_available();
@@ -233,13 +293,20 @@ static uint8_t usbVcpRead(serialPort_t *instance)
     UNUSED(instance);
 
 #ifdef USE_MULTICORE
+    if (vcpCore1Failed) {
+        return 0;
+    }
     if (vcpTxOffloaded) {
-        // Callers check usbVcpRxBytesAvailable() first, so this does not
-        // normally wait; if it has to, it waits on core 1 like the inline
-        // path waits on the stack.
-        uint8_t c;
+        uint8_t c = 0;
+        const timeUs_t startUs = microsISR();
         while (!multicoreRingBufferPop(&vcpRxRing, &c)) {
+            if (cmpTimeUs(microsISR(), startUs) > VCP_RX_POP_TIMEOUT_US) {
+                return 0; // never wait on core 1 without a bound
+            }
         }
+        // Space has come free; core 1 stops reading when the ring fills, and
+        // nothing else would wake it to start again.
+        multicoreSignalWork();
         return c;
     }
 #endif
@@ -294,6 +361,12 @@ static uint32_t usbTxBytesFree(const serialPort_t *instance)
 #ifdef USE_MULTICORE
     if (vcpTxOffloaded) {
         return multicoreRingBufferBytesFree(&vcpTxRing);
+    }
+    if (vcpCore1Failed) {
+        // Claim room rather than 0: writers that gate on free space would
+        // otherwise spin waiting for a port that is never going to drain.
+        // usbVcpSend() discards what they hand over.
+        return VCP_TX_RING_SIZE;
     }
 #endif
     return cdc_usb_tx_bytes_free();

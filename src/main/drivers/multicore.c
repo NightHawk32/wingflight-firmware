@@ -21,11 +21,13 @@
 
 #include "platform.h"
 #include "common/utils.h"
+#include "drivers/time.h"
 #include "platform/multicore.h"
 #include "pico/multicore.h"
 #include "pico/util/queue.h"
 #include "pico/flash.h"
 #include "hardware/irq.h"
+#include "hardware/sync.h"
 
 #ifdef USE_MULTICORE
 
@@ -52,6 +54,71 @@ static volatile uint8_t multicoreConsumerCount;
 
 static volatile uint32_t multicoreHeartbeat;
 
+// --- core-1 liveness, as seen from core 0 (multicoreCheckCore1Alive()) ---
+#define MULTICORE_HEALTH_INTERVAL_MS 100
+#define MULTICORE_HEALTH_STRIKES     3 // ~300ms before core 1 is written off
+
+static bool multicoreCore1Alive = true;
+static uint32_t multicoreCore1SeenHeartbeat;
+static timeMs_t multicoreCore1LastCheckMs;
+static uint8_t multicoreCore1Strikes;
+
+// Cross-core wake. SEV is not usable for this: the SDK's own lock primitives
+// execute SEV on release, so core 1 signals itself several times per pass and
+// a WFE would never actually wait (measured: 566k passes a second, higher than
+// the plain spin it replaced). WFI ignores events, and RP2350's doorbells are
+// the matching wake - a latching, per-core interrupt one core can raise on the
+// other. Latching matters: a doorbell rung before core 1 has unmasked the IRQ
+// is still delivered when it does.
+static int multicoreDoorbell = -1;
+
+static void multicoreDoorbellHandler(void)
+{
+    // Clearing is all it has to do; waking core 1 out of WFI is the point.
+    multicore_doorbell_clear_current_core(multicoreDoorbell);
+}
+
+void multicoreSignalWork(void)
+{
+    if (multicoreDoorbell >= 0) {
+        multicore_doorbell_set_other_core(multicoreDoorbell);
+    }
+}
+
+bool multicoreIsCore1Alive(void)
+{
+    return multicoreCore1Alive;
+}
+
+bool multicoreCheckCore1Alive(void)
+{
+    if (!multicoreCore1Alive) {
+        return false;
+    }
+
+    const timeMs_t nowMs = millis();
+    if (multicoreCore1LastCheckMs && (int32_t)(nowMs - multicoreCore1LastCheckMs) < MULTICORE_HEALTH_INTERVAL_MS) {
+        return true; // not due yet
+    }
+    multicoreCore1LastCheckMs = nowMs ? nowMs : 1; // 0 means "never checked"
+
+    const uint32_t heartbeat = multicoreHeartbeat;
+    if (heartbeat != multicoreCore1SeenHeartbeat) {
+        multicoreCore1SeenHeartbeat = heartbeat;
+        multicoreCore1Strikes = 0;
+    } else if (++multicoreCore1Strikes >= MULTICORE_HEALTH_STRIKES) {
+        // Core 1 has not been round its loop once in three intervals despite
+        // being woken each time. It is not coming back.
+        multicoreCore1Alive = false;
+    }
+
+    // Wake it, so an idle-but-healthy core 1 has moved the counter on by the
+    // next check. Without this the probe could not tell asleep from dead.
+    multicoreSignalWork();
+
+    return multicoreCore1Alive;
+}
+
 // IRQs core 1 must unmask on its own NVIC - see multicoreEnableIrqOnCore1().
 #define MAX_MULTICORE_CORE1_IRQS 8
 
@@ -65,6 +132,7 @@ bool multicoreEnableIrqOnCore1(uint irqNum)
         return false;
     }
     multicoreCore1Irqs[multicoreCore1IrqCount] = (uint8_t)irqNum;
+    multicoreSignalWork();
     // Release fence, as in multicoreRegisterConsumer(): core 1 polls the
     // count, and must not see it before the entry it refers to.
     __atomic_thread_fence(__ATOMIC_RELEASE);
@@ -93,6 +161,7 @@ bool multicoreRegisterConsumer(multicoreConsumerDrainFn_t *drainFn, void *ctx)
     }
     multicoreConsumers[multicoreConsumerCount].drainFn = drainFn;
     multicoreConsumers[multicoreConsumerCount].ctx = ctx;
+    multicoreSignalWork();
     // Release fence: core 1 polls multicoreConsumerCount from its loop, and
     // Armv8-M normal memory is weakly ordered - without this it could
     // observe the incremented count before the entry stores above and call
@@ -128,9 +197,14 @@ static void core1_main(void)
     // parsing) are designed in docs/RP2350-Porting-Plan.md's "Core-1 task
     // consumer design" and get added here as those producers materialise.
     while (true) {
+        // Set by anything that did work this pass; while it stays false there
+        // is nothing to come back for, and core 1 sleeps at the bottom of the
+        // loop rather than spinning.
+        bool busy = false;
 
         core_message_t msg;
         if (queue_try_remove(&core1_queue, &msg)) {
+            busy = true;
             switch (msg.command) {
             case MULTICORE_CMD_FUNC:
                 if (msg.func) {
@@ -175,7 +249,7 @@ static void core1_main(void)
         __atomic_thread_fence(__ATOMIC_ACQUIRE);
         for (uint8_t i = 0; i < consumerCount; i++) {
             if (multicoreConsumers[i].drainFn) {
-                multicoreConsumers[i].drainFn(multicoreConsumers[i].ctx);
+                busy |= multicoreConsumers[i].drainFn(multicoreConsumers[i].ctx);
             }
         }
 
@@ -183,12 +257,37 @@ static void core1_main(void)
 
         multicoreHeartbeat++;
 
-        tight_loop_contents();
+        if (!busy && multicoreDoorbell >= 0) {
+            // Idle: wait for an interrupt of our own (USB, mostly) or the
+            // doorbell core 0 rings from multicoreSignalWork(). Spinning
+            // instead would fetch instructions and data out of the same SRAM
+            // the flight loop runs from - the whole image lives in RAM on this
+            // port - and burn the power for it, hundreds of thousands of times
+            // a second, to find there is nothing to do.
+            //
+            // Masking interrupts around the wait is what closes the race with
+            // core 0: an interrupt that arrives from here on stays pending
+            // instead of being taken and silently consumed, and a pending
+            // interrupt still wakes WFI even with PRIMASK set. So work that
+            // lands in this window is not slept through.
+            const uint32_t irqState = save_and_disable_interrupts();
+            __wfi();
+            restore_interrupts(irqState);
+        }
     }
 }
 
 void multicoreStart(void)
 {
+    // Claim the wake doorbell before launching, so core 1 has it unmasked on
+    // its first pass and can never sleep unwakeably. Without one, core 1 keeps
+    // spinning rather than risk sleeping through work (see core1_main()).
+    multicoreDoorbell = multicore_doorbell_claim_unused(0x3, false);
+    if (multicoreDoorbell >= 0) {
+        irq_set_exclusive_handler(multicore_doorbell_irq_num(multicoreDoorbell), multicoreDoorbellHandler);
+        multicoreEnableIrqOnCore1(multicore_doorbell_irq_num(multicoreDoorbell));
+    }
+
     // Put core 1 back in the bootrom's wait loop before handing it a new
     // entry point. multicore_launch_core1()'s handshake talks to that wait
     // loop over the inter-core FIFO, and a core 1 already running
@@ -217,6 +316,7 @@ void multicoreStop(void)
     msg.func = NULL;
 
     queue_add_blocking(&core1_queue, &msg);
+    multicoreSignalWork();
 
     // Wait for core 1 to acknowledge (deinit done, exiting its main loop),
     // then reset it from here - the only core allowed to (see the STOP
@@ -232,6 +332,21 @@ bool multicoreRegisterConsumer(multicoreConsumerDrainFn_t *drainFn, void *ctx)
     UNUSED(drainFn);
     UNUSED(ctx);
     return false; // no core 1 to run it on
+}
+
+void multicoreSignalWork(void)
+{
+    // no core 1 to wake
+}
+
+bool multicoreCheckCore1Alive(void)
+{
+    return false;
+}
+
+bool multicoreIsCore1Alive(void)
+{
+    return false;
 }
 
 bool multicoreEnableIrqOnCore1(uint irqNum)
@@ -257,6 +372,7 @@ void multicoreExecuteBlocking(core1_func_t *func)
     bool result;
 
     queue_add_blocking(&core1_queue, &msg);
+    multicoreSignalWork();
     // Wait for the command to complete
     queue_remove_blocking(&core0_queue, &result);
 #else
@@ -275,6 +391,7 @@ void multicoreExecute(core1_func_t *func)
     msg.func = func;
 
     queue_add_blocking(&core1_queue, &msg);
+    multicoreSignalWork();
 #else
     // If multicore is not used, execute the command directly
     if (func) {

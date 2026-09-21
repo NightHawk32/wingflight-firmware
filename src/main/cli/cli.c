@@ -4935,9 +4935,11 @@ static void cliStatus(const char *cmdName, char *cmdline)
     // is otherwise invisible: the loop counter stalling between two `status`
     // calls is what gives it away.
     {
-        const uint32_t core1Loops = multicoreGetHeartbeat();
-        const uint32_t uptimeMs = millis();
-        cliPrintLinef("Core 1: %u loops, avg %u kHz", core1Loops, uptimeMs ? (core1Loops / uptimeMs) : 0);
+        // Core 1 sleeps when idle, so the loop count tracks how much work it
+        // has been given, not how fast it spins.
+        cliPrintLinef("Core 1: %s, %u loops",
+            multicoreIsCore1Alive() ? "running" : "STOPPED RESPONDING (USB offload disabled)",
+            multicoreGetHeartbeat());
     }
 #endif
 
