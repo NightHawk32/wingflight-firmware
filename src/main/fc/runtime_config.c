@@ -61,7 +61,6 @@ const char *armingDisableFlagNames[]= {
     "MOTOR_PROTO",
     "OVERRIDE",
     "BACKUPRX",
-    "NO_NOTCH",
     "ARMSWITCH",
 };
 

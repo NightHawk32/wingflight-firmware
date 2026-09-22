@@ -498,6 +498,10 @@ static void validateAndFixConfig(void)
     }
 #endif
 
+#ifdef USE_RPM_FILTER
+    validateAndFixRPMFilterConfig();
+#endif
+
 #if defined(USE_BEEPER)
 #ifdef USE_TIMER
     if (beeperDevConfig()->frequency && !timerGetConfiguredByTag(beeperDevConfig()->ioTag)) {
@@ -549,11 +553,6 @@ static void validateAndFixConfig(void)
 #endif // USE_DSHOT_TELEMETRY
 #endif // USE_DSHOT
 
-#ifdef USE_RPM_FILTER
-    // Must run after the DSHOT telemetry validity fixups above, since it
-    // needs the final, resolved useDshotTelemetry value.
-    validateAndFixRPMFilterConfig();
-#endif
 
     validateAndFixRatesSettings();  // constrain the various rates settings to limits imposed by the rates type
 
