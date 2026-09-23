@@ -69,6 +69,16 @@
 #define USE_BARO
 #define USE_FAKE_BARO
 
+// Onboard dataflash for blackbox, backed by a file next to eeprom.bin
+// (drivers/flash_file.c). Blackbox logs to it by default, as on an FC with a
+// flash chip, and the Configurator can download and erase it over MSP.
+#define USE_FLASH_FILE
+#define FLASH_FILE_NAME "blackbox_flash.bin"
+#define USE_FLASHFS
+#define USE_FLASHFS_LOOP        // as on STM32_UNIFIED: rolling erase once the flash is full
+#define USE_FLASH_TOOLS         // CLI flash_read / flash_write / flash_erase_sector
+#define ENABLE_BLACKBOX_LOGGING_ON_SPIFLASH_BY_DEFAULT
+
 // Must match the synthetic timerHardware[] table in target.c (4 motor + 8 servo).
 #define USABLE_TIMER_CHANNEL_COUNT 12
 

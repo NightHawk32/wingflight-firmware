@@ -42,6 +42,20 @@ interrupt would, on the port's own thread. Anything such a callback touches
 runs concurrently with the main loop; `micros()`/`millis()` are locked for
 that reason (see target.c).
 
+### Blackbox
+
+SITL has onboard dataflash: `blackbox_flash.bin` in the working directory,
+next to `eeprom.bin`, driven by [drivers/flash_file.c](../../drivers/flash_file.c)
+as a 128 MiB NOR chip (`USE_FLASH_FILE`). flashfs, the blackbox FLASH device
+(the default here), rolling erase, the CLI's `flash_*` commands and MSP's
+dataflash commands all run on it unchanged. The file only grows as far as
+data has been written, and every write is flushed, so logs survive SITL being
+killed. SITL also sets its RTC from the host clock at boot, so logs carry
+real start times.
+
+The file flash deliberately registers no `flashConfig` PG: a newly registered
+PG missing from `eeprom.bin` makes the firmware reset the whole config.
+
 ### eeprom.bin
 
 `eeprom.bin` in the working directory holds the saved config. Its size is

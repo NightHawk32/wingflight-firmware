@@ -31,6 +31,7 @@
 #endif
 
 #include "common/maths.h"
+#include "common/time.h"
 
 #include "drivers/io.h"
 #include "drivers/dma.h"
@@ -403,6 +404,16 @@ void systemInit(void) {
         printf("Create udpWorker error!\n");
         exit(1);
     }
+
+#ifdef USE_RTC_TIME
+    // No RTC chip, but the host has a clock. A real FC waits for GPS or the
+    // Configurator to set its time; without one, every blackbox log would be
+    // stamped 0000-01-01 and they could not be told apart.
+    struct timespec wallClock;
+    clock_gettime(CLOCK_REALTIME, &wallClock);
+    rtcTime_t rtcNow = rtcTimeMake(wallClock.tv_sec, wallClock.tv_nsec / 1000000);
+    rtcSet(&rtcNow);
+#endif
 
     // Note: task attributes (tasks[].attribute) aren't initialized until
     // tasksInitData() runs, which happens after systemInit() returns (see
