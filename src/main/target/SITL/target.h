@@ -139,6 +139,13 @@
 #undef USE_GPS_NAV
 #undef USE_SERIAL_4WAY_BLHELI_BOOTLOADER
 #undef USE_SERIAL_4WAY_SK_BOOTLOADER
+// USE_ESC_SENSOR stays on for SITL (see common_post.h) so ESC telemetry can
+// arrive over the FBUS master. What it drags in besides needs hardware SITL
+// doesn't have: ESC programming through the 4-way interface, and SRXL2 ESCs,
+// whose driver timestamps bytes with microsISR() from drivers/system.c.
+#undef USE_BLHELI_FORWARD_PROGRAMMING
+#undef USE_AM32_FORWARD_PROGRAMMING
+#undef USE_SRXL2_ESC
 
 #undef USE_I2C
 #undef USE_SPI
@@ -262,6 +269,16 @@ typedef struct {
     double velocity_xyz[3];             // m/s, earth frame
     double position_xyz[3];             // meters, NED from origin
 } fdm_packet;
+// Barometer reading from the simulator, sent on the same UDP port as
+// fdm_packet and told apart from it by its size alone. That keeps both
+// directions compatible: firmware without this struct drops the short
+// datagram (udpThread() only accepts sizeof(fdm_packet)), and a simulator
+// that never sends it leaves target.c on its ISA-from-position fallback.
+typedef struct {
+    double timestamp;                   // in seconds, same clock as fdm_packet
+    double pressure_pa;                 // absolute static pressure, Pa
+    double temperature_c;               // sensor temperature, degC
+} baro_packet;
 typedef struct {
     float motor_speed[4];   // normal: [0.0, 1.0], 3D: [-1.0, 1.0]
     float servo[8];         // wing control-surface outputs S1-S8, in microseconds (e.g. 1000-2000)

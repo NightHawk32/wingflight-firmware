@@ -983,7 +983,9 @@ static void sendDShotTelemetryReqeust(timeMs_t currentTimeMs)
 
     dshotTriggerTimestamp = currentTimeMs;
 
+#ifdef USE_DSHOT
     getMotorDmaOutput(currentEsc)->protocolControl.requestTelemetry = true;
+#endif
 }
 
 static void blSelectNextEsc(void)
@@ -3661,7 +3663,7 @@ typedef struct {
     uint16_t    current_max;
     uint16_t    rpm;
     uint16_t    rpm_max;
-} __packed GraupnerTelemetryFrame_t;
+} __attribute__((__packed__)) GraupnerTelemetryFrame_t;
 
 
 static uint8_t graupnerCalculateChecksum(uint8_t *ptr, size_t length)

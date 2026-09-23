@@ -24,7 +24,10 @@
 
 #include "build/version.h"
 
-#ifndef USE_DSHOT
+// SITL has no DShot, but it does read ESC telemetry: over the FBUS master,
+// from the simulator's emulated FrSky ESC (wingflight-sitl-hitl
+// sitl/jsbsim_bridge.py), which needs no DShot at all.
+#if !defined(USE_DSHOT) && !defined(SIMULATOR_BUILD)
 #undef USE_ESC_SENSOR
 #endif
 
