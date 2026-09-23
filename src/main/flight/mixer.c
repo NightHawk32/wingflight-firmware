@@ -42,6 +42,7 @@
 
 #include "flight/autohover.h"
 #include "flight/failsafe.h"
+#include "flight/gps_nav.h"
 #include "flight/pid.h"
 #include "flight/tv_pid.h"
 #include "flight/imu.h"
@@ -346,13 +347,22 @@ static void mixerUpdateInputs(void)
     // no-op (returns 0) whenever the mode is inactive or the assist isn't configured/triggered.
     throttle = constrainf(throttle + autoHoverThrottleBoost(), 0.0f, 1.0f);
 #endif
-    // While any failsafe procedure is active (auto-land, drop, or GPS rescue -- not just the
-    // rescue case), command failsafe_throttle instead of whatever rcInput[THROTTLE] currently
-    // reads. That's normally the RX's own per-channel fallback, which by default cuts the
-    // motor -- fine for a plain glide-down, but a GPS rescue flying home needs real cruise
-    // power. failsafe_throttle already existed as a CLI/MSP setting (documented "throttle level
-    // used for landing") but was never wired into the flight code; its default (1000us = off)
-    // keeps existing configs' behaviour unchanged unless the user raises it. Once failsafe.c
+#ifdef USE_GPS_NAV
+    // GPS LOITER/RTH fly at the configured nav_throttle rather than wherever the pilot's stick
+    // happened to be when the switch was flipped -- nav only commands attitude, so manual
+    // throttle left the aircraft sinking through every turn. Only once the in-flight latch has
+    // set (see INFLIGHT_MODE), so a nav switch left on while armed on the ground can't spin the
+    // motor up to cruise power.
+    if (FLIGHT_MODE(LOITER_MODE | RTH_MODE) && FLIGHT_MODE(INFLIGHT_MODE)) {
+        throttle = navGetThrottle();
+    }
+#endif
+    // While any failsafe procedure is active (auto-land, drop, or GPS rescue), command
+    // failsafeGetThrottle() instead of whatever rcInput[THROTTLE] currently reads. That's
+    // normally the RX's own per-channel fallback, which by default cuts the motor. The GPS
+    // rescue phase flies home at nav_throttle, the same cruise power as a switch RTH; landing
+    // and drop use failsafe_throttle (documented "throttle level used for landing"), whose
+    // default (1000us = off) glides the aircraft down. See failsafeGetThrottle(). Once failsafe.c
     // actually disarms (FAILSAFE_LANDED), motors.c's own independent ARMING_FLAG(ARMED) gate
     // zeroes motor output regardless of this value, so no extra phase-gating is needed here.
     if (failsafeIsActive()) {

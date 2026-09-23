@@ -220,6 +220,13 @@ float angleModeApply(int axis, float pidSetpoint)
 
         pidSetpoint = errorAngle * level.Gain;
     }
+#ifdef USE_GPS_NAV
+    else if (axis == FD_YAW && FLIGHT_MODE(LOITER_MODE | RTH_MODE)) {
+        // Nav banks the aircraft but leaves yaw in rate mode; add the coordinated-turn yaw rate
+        // so the yaw PID stops holding rudder against every nav turn. Pilot yaw still adds on top.
+        pidSetpoint += navTurnCoordinationYawRate();
+    }
+#endif
 
     return pidSetpoint;
 }

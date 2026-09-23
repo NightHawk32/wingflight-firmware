@@ -14,9 +14,8 @@
  * See the GNU General Public License for more details.
  */
 
-// Loiter orbit direction. The aircraft is put on each side of the target, inside the loiter
-// radius, and flown along the tangent that a clockwise (or anticlockwise) orbit needs. Flying
-// the right tangent needs no correction; the opposite tangent needs a full correction.
+// GPS nav guidance: loiter orbit direction and convergence, bank slew, altitude hold gain and
+// damping, turn coordination and nav throttle.
 
 #include <cmath>
 
@@ -26,6 +25,7 @@ extern "C" {
 #include "common/axis.h"
 #include "fc/runtime_config.h"
 #include "flight/gps_nav.h"
+#include "flight/imu.h"
 #include "io/gps.h"
 #include "pg/gps_nav.h"
 #include "pg/pg.h"
@@ -35,12 +35,22 @@ extern "C" {
 // Stubs for what gps_nav.c pulls in.
 gpsSolutionData_t gpsSol;
 int32_t GPS_home[2];
+attitudeEulerAngles_t attitude;
 bool gpsIsHealthy(void) { return true; }
 // STATE(GPS_FIX_HOME) (navCanRTH()) reads this global directly, same as the real firmware.
 uint8_t stateFlags = 0;
 // Settable by tests directly, same pattern as gpsSol.llh.lat/lon below.
 int32_t stubAltitudeCm = 0;
 int getEstimatedAltitudeCm(void) { return stubAltitudeCm; }
+int32_t stubVarioCms = 0;
+int getEstimatedVarioCms(void) { return stubVarioCms; }
+
+// Every millis() call advances the clock by stubMillisStep. The default of 10 s is long enough
+// that the bank slew limit never bites, so tests see the unslewed bank command; the slew test
+// shortens it.
+timeMs_t stubMillis = 0;
+timeMs_t stubMillisStep = 10000;
+timeMs_t millis(void) { stubMillis += stubMillisStep; return stubMillis; }
 
 // Same contract as io/gps.c: the bearing FROM the current position TO the destination, in
 // centidegrees clockwise from north, in [0, 36000). Positions are 1e-7 degrees. Flat-earth with
@@ -64,8 +74,12 @@ void GPS_distance_cm_bearing(int32_t *currentLat1, int32_t *currentLon1, int32_t
 
 namespace {
 
+constexpr double kPi = 3.14159265358979323846;
+
 // 1e-7 degrees per meter at the equator: 1 degree of latitude is 111.19 km.
 constexpr int32_t UNITS_PER_METER = 90;
+
+constexpr int32_t RADIUS_M = 75;
 
 constexpr int32_t NORTH = 0, EAST = 900, SOUTH = 1800, WEST = 2700;       // decidegrees
 
@@ -76,13 +90,13 @@ struct Side {
     int32_t clockwise;  // the ground course a clockwise orbit needs there, in decidegrees
 };
 
-// Seen from above with north up: clockwise means south of the target flies west, west flies
-// north, north flies east, east flies south.
+// On the loiter circle. Seen from above with north up: clockwise means south of the target flies
+// west, west flies north, north flies east, east flies south.
 const Side SIDES[] = {
-    { "south of target", -40 * UNITS_PER_METER, 0, WEST },
-    { "west of target", 0, -40 * UNITS_PER_METER, NORTH },
-    { "north of target", 40 * UNITS_PER_METER, 0, EAST },
-    { "east of target", 0, 40 * UNITS_PER_METER, SOUTH },
+    { "south of target", -RADIUS_M * UNITS_PER_METER, 0, WEST },
+    { "west of target", 0, -RADIUS_M * UNITS_PER_METER, NORTH },
+    { "north of target", RADIUS_M * UNITS_PER_METER, 0, EAST },
+    { "east of target", 0, RADIUS_M * UNITS_PER_METER, SOUTH },
 };
 
 int32_t opposite(int32_t decidegrees)
@@ -90,49 +104,66 @@ int32_t opposite(int32_t decidegrees)
     return (decidegrees + 1800) % 3600;
 }
 
+// Bank in centidegrees a coordinated turn needs to fly a circle of radius r at speed v.
+int32_t curvatureBankCdeg(double speedMs, double radiusM)
+{
+    return static_cast<int32_t>(std::lround(std::atan2(speedMs * speedMs, 9.80665 * radiusM) * 180.0 / kPi * 100.0));
+}
+
 class GpsNavLoiterTest : public ::testing::Test {
   protected:
     void SetUp() override
     {
         pgResetAll();
-        gpsNavConfigMutable()->loiterRadiusM = 75;
+        gpsNavConfigMutable()->loiterRadiusM = RADIUS_M;
         gpsNavConfigMutable()->minSats = 6;
         gpsNavConfigMutable()->maxBankAngleDeg = 30;
         gpsNavConfigMutable()->bearingKp = 100;
         gpsSol.numSat = 12;
         gpsSol.llh.lat = 0;
         gpsSol.llh.lon = 0;
+        gpsSol.groundSpeed = 1500; // 15 m/s
+        stubMillisStep = 10000;
         stateFlags = GPS_FIX; // navIsHealthy() requires a fix, not just numSat/link health
     }
 
-    // Start loitering about the origin, then put the aircraft on `side` flying `course`.
+    // Start loitering about the origin, then put the aircraft at (dLat, dLon) flying `course`.
     // Returns the roll command in centidegrees; positive is a turn to the right.
-    int32_t rollAt(const Side &side, uint8_t direction, int32_t course)
+    int32_t rollAt(int32_t dLat, int32_t dLon, uint8_t direction, int32_t course)
     {
         gpsNavConfigMutable()->loiterDirection = direction;
         gpsSol.llh.lat = 0;
         gpsSol.llh.lon = 0;
         navLoiterStart();
 
-        gpsSol.llh.lat = side.dLat;
-        gpsSol.llh.lon = side.dLon;
+        gpsSol.llh.lat = dLat;
+        gpsSol.llh.lon = dLon;
         gpsSol.groundCourse = static_cast<uint16_t>(course);
         updateGpsNav();
         return navAngle[AI_ROLL];
     }
+
+    int32_t rollAt(const Side &side, uint8_t direction, int32_t course)
+    {
+        return rollAt(side.dLat, side.dLon, direction, course);
+    }
 };
 
-TEST_F(GpsNavLoiterTest, ClockwiseFliesTheClockwiseTangentWithoutCorrection)
+TEST_F(GpsNavLoiterTest, ClockwiseTangentOnTheCircleBanksJustForTheCurvature)
 {
+    // Flying the clockwise tangent on the circle needs no correction, only the steady right bank
+    // that keeps the aircraft turning round the circle.
+    const int32_t expected = curvatureBankCdeg(15.0, RADIUS_M);
     for (const Side &side : SIDES) {
-        EXPECT_EQ(0, rollAt(side, NAV_LOITER_CW, side.clockwise)) << side.name;
+        EXPECT_NEAR(expected, rollAt(side, NAV_LOITER_CW, side.clockwise), 60) << side.name;
     }
 }
 
-TEST_F(GpsNavLoiterTest, AnticlockwiseFliesTheAnticlockwiseTangentWithoutCorrection)
+TEST_F(GpsNavLoiterTest, AnticlockwiseTangentOnTheCircleBanksLeftForTheCurvature)
 {
+    const int32_t expected = -curvatureBankCdeg(15.0, RADIUS_M);
     for (const Side &side : SIDES) {
-        EXPECT_EQ(0, rollAt(side, NAV_LOITER_CCW, opposite(side.clockwise))) << side.name;
+        EXPECT_NEAR(expected, rollAt(side, NAV_LOITER_CCW, opposite(side.clockwise)), 60) << side.name;
     }
 }
 
@@ -154,19 +185,43 @@ TEST_F(GpsNavLoiterTest, ClockwiseBanksRightWhenTheCourseIsLeftOfTheTangent)
     EXPECT_LT(rollAt(SIDES[0], NAV_LOITER_CW, 3150), 0);
 }
 
-TEST_F(GpsNavLoiterTest, TheApproachIgnoresTheLoiterDirection)
+TEST_F(GpsNavLoiterTest, OutsideTheCircleTheTangentIsCorrectedInward)
 {
-    // Outside the radius the aircraft heads straight for the target whichever way it will orbit.
-    const Side farSouth = { "150 m south", -150 * UNITS_PER_METER, 0, WEST };
-    EXPECT_EQ(0, rollAt(farSouth, NAV_LOITER_CW, NORTH));
-    EXPECT_EQ(0, rollAt(farSouth, NAV_LOITER_CCW, NORTH));
+    // 1.5x the radius south, flying the clockwise tangent (west): the target is to the right, so
+    // the aircraft must turn right, harder than just following the circle -- the old controller's
+    // bare tangent had no such radial correction and drifted outward.
+    const int32_t onCircle = rollAt(SIDES[0], NAV_LOITER_CW, WEST);
+    const int32_t outside = rollAt(-RADIUS_M * 3 / 2 * UNITS_PER_METER, 0, NAV_LOITER_CW, WEST);
+    EXPECT_GT(outside, onCircle + 1000);
 }
 
-// Altitude hold sign (regression test for H-3, see Flight Dynamics tech reference). Pitch in
-// this codebase's convention is positive NOSE-DOWN, same as attitude.raw[]/navAngle[] throughout
-// (see gps_nav.c's own comment, cross-referenced against autohover.c's bench-confirmed +900 =
-// nose-down / -900 = nose-up). Below target altitude must command a negative (nose-up, climb)
-// pitch target; above target must command positive (nose-down, descend).
+TEST_F(GpsNavLoiterTest, InsideTheCircleTheTangentIsCorrectedOutward)
+{
+    // Half the radius south, flying the clockwise tangent: turn left, away from the target.
+    EXPECT_LT(rollAt(-RADIUS_M / 2 * UNITS_PER_METER, 0, NAV_LOITER_CW, WEST), 0);
+}
+
+TEST_F(GpsNavLoiterTest, FarOutsideHeadsNearlyStraightAtTheTarget)
+{
+    // Ten radii south, flying north at the target: only a few degrees off the desired track,
+    // whichever way the orbit will go.
+    const int32_t farSouth = -10 * RADIUS_M * UNITS_PER_METER;
+    EXPECT_LT(std::abs(rollAt(farSouth, 0, NAV_LOITER_CW, NORTH)), 500);
+    EXPECT_LT(std::abs(rollAt(farSouth, 0, NAV_LOITER_CCW, NORTH)), 500);
+}
+
+TEST_F(GpsNavLoiterTest, BankCommandIsSlewLimited)
+{
+    // 100 ms after engaging, a saturating correction may only have ramped 45 deg/s * 0.1 s.
+    stubMillisStep = 100;
+    EXPECT_EQ(450, std::abs(rollAt(SIDES[0], NAV_LOITER_CW, opposite(SIDES[0].clockwise))));
+}
+
+// Altitude hold (regression tests for H-3, see Flight Dynamics tech reference, and for the gain
+// being applied in the wrong unit). Pitch in this codebase's convention is positive NOSE-DOWN,
+// same as attitude.raw[]/navAngle[] throughout (see gps_nav.c's own comment, cross-referenced
+// against autohover.c's bench-confirmed +900 = nose-down / -900 = nose-up). Below target altitude
+// must command a negative (nose-up, climb) pitch target; above target must command positive.
 class GpsNavAltitudeTest : public ::testing::Test {
   protected:
     void SetUp() override
@@ -175,6 +230,7 @@ class GpsNavAltitudeTest : public ::testing::Test {
         gpsNavConfigMutable()->minSats = 6;
         gpsNavConfigMutable()->maxPitchAngleDeg = 15;
         gpsNavConfigMutable()->altitudeKp = 100; // 1.0 deg pitch per meter of altitude error
+        gpsNavConfigMutable()->altitudeKd = 200; // 2.0 deg pitch per m/s of climb rate
         gpsNavConfigMutable()->rthAltitudeM = 50;
         gpsSol.numSat = 12;
         gpsSol.llh.lat = 0;
@@ -182,16 +238,19 @@ class GpsNavAltitudeTest : public ::testing::Test {
         GPS_home[GPS_LATITUDE] = 0;
         GPS_home[GPS_LONGITUDE] = 0;
         stubAltitudeCm = 0;
+        stubVarioCms = 0;
+        stubMillisStep = 10000;
         stateFlags = GPS_FIX; // navIsHealthy() requires a fix, not just numSat/link health
     }
 
     // Starts an RTH toward GPS_home (0,0) with the configured rthAltitudeM as target, then
-    // reports the current altitude as currentAltitudeM and returns the resulting pitch command
-    // in centidegrees.
-    int32_t pitchAt(int32_t currentAltitudeM)
+    // reports the current altitude and climb rate and returns the resulting pitch command in
+    // centidegrees.
+    int32_t pitchAt(int32_t currentAltitudeM, int32_t climbRateCms = 0)
     {
         navRthStart();
         stubAltitudeCm = currentAltitudeM * 100;
+        stubVarioCms = climbRateCms;
         updateGpsNav();
         return navAngle[AI_PITCH];
     }
@@ -214,12 +273,90 @@ TEST_F(GpsNavAltitudeTest, AtTargetCommandsLevelPitch)
     EXPECT_EQ(0, pitchAt(50));
 }
 
+TEST_F(GpsNavAltitudeTest, AltitudeKpIsDegreesPerMeterInHundredths)
+{
+    // altitudeKp 100 is 1.0 deg per meter: 10 m low is 10 deg nose-up. This used to come out as
+    // 1 deg (the gain was applied in decidegrees), which sank the aircraft through every RTH.
+    EXPECT_EQ(-1000, pitchAt(40));
+}
+
+TEST_F(GpsNavAltitudeTest, ClimbRateDampsTheCorrection)
+{
+    // 10 m low but already climbing at 3 m/s: 10 deg - 2 deg/(m/s) * 3 m/s = 4 deg nose-up.
+    EXPECT_EQ(-400, pitchAt(40, 300));
+}
+
 TEST_F(GpsNavAltitudeTest, PitchIsClampedToMaxPitchAngleDeg)
 {
     // Grossly below target: clamped to -maxPitchAngleDeg (15 deg = 1500 centidegrees).
     EXPECT_EQ(-1500, pitchAt(-1000));
     // Grossly above target: clamped to +maxPitchAngleDeg.
     EXPECT_EQ(1500, pitchAt(1000));
+}
+
+// Coordinated-turn yaw rate and nav throttle.
+class GpsNavTurnTest : public ::testing::Test {
+  protected:
+    void SetUp() override
+    {
+        pgResetAll();
+        gpsNavConfigMutable()->minSats = 6;
+        gpsSol.numSat = 12;
+        gpsSol.llh.lat = 0;
+        gpsSol.llh.lon = 0;
+        gpsSol.groundSpeed = 2000; // 20 m/s
+        attitude.values.roll = 0;
+        attitude.values.pitch = 0;
+        stubMillisStep = 10000;
+        stateFlags = GPS_FIX;
+        navLoiterStart();
+    }
+};
+
+TEST_F(GpsNavTurnTest, LevelFlightNeedsNoYaw)
+{
+    EXPECT_FLOAT_EQ(0.0f, navTurnCoordinationYawRate());
+}
+
+TEST_F(GpsNavTurnTest, RightBankYawsAtTheCoordinatedRateWithTheGyroSign)
+{
+    // 30 deg right bank at 20 m/s: g*sin(30)/V = 0.245 rad/s = 14.05 deg/s. A right turn reads
+    // negative on the yaw gyro, so the setpoint must be negative too.
+    attitude.values.roll = 300;
+    EXPECT_NEAR(-14.05f, navTurnCoordinationYawRate(), 0.1f);
+    attitude.values.roll = -300;
+    EXPECT_NEAR(14.05f, navTurnCoordinationYawRate(), 0.1f);
+}
+
+TEST_F(GpsNavTurnTest, TurnCoordinationScalesWithItsGainAndCanBeDisabled)
+{
+    attitude.values.roll = 300;
+    gpsNavConfigMutable()->turnCoordination = 50;
+    EXPECT_NEAR(-7.03f, navTurnCoordinationYawRate(), 0.1f);
+    gpsNavConfigMutable()->turnCoordination = 0;
+    EXPECT_FLOAT_EQ(0.0f, navTurnCoordinationYawRate());
+}
+
+TEST_F(GpsNavTurnTest, NoYawWhenNavIsNotActive)
+{
+    attitude.values.roll = 300;
+    navStop();
+    EXPECT_FLOAT_EQ(0.0f, navTurnCoordinationYawRate());
+}
+
+TEST_F(GpsNavTurnTest, SlowGroundSpeedIsFlooredSoTheYawRateStaysSane)
+{
+    // At a reported 0 m/s the rate is worked out at the 8 m/s floor, not divided by zero.
+    attitude.values.roll = 300;
+    gpsSol.groundSpeed = 0;
+    EXPECT_NEAR(-35.1f, navTurnCoordinationYawRate(), 0.2f);
+}
+
+TEST_F(GpsNavTurnTest, NavThrottleIsAPercentage)
+{
+    EXPECT_FLOAT_EQ(0.6f, navGetThrottle()); // default
+    gpsNavConfigMutable()->throttle = 45;
+    EXPECT_FLOAT_EQ(0.45f, navGetThrottle());
 }
 
 // navIsHealthy()/nav.active health handling. UBLOX PVT sets gpsSol.numSat from the frame's
@@ -232,23 +369,24 @@ class GpsNavHealthTest : public ::testing::Test {
     void SetUp() override
     {
         pgResetAll();
-        gpsNavConfigMutable()->loiterRadiusM = 75;
+        gpsNavConfigMutable()->loiterRadiusM = RADIUS_M;
         gpsNavConfigMutable()->minSats = 6;
         gpsNavConfigMutable()->maxBankAngleDeg = 30;
         gpsNavConfigMutable()->bearingKp = 100;
         gpsSol.numSat = 12;
         gpsSol.llh.lat = 0;
         gpsSol.llh.lon = 0;
+        stubMillisStep = 10000;
         stateFlags = GPS_FIX;
     }
 
-    // Puts the aircraft 40 m south of the loiter target, inside the radius, flying the wrong
-    // way around a clockwise orbit -- the same "grossly wrong" setup GpsNavLoiterTest uses, so a
-    // healthy update always commands a full-scale (nonzero, saturated) roll correction here.
+    // Puts the aircraft on the circle south of the loiter target, flying the wrong way around a
+    // clockwise orbit -- the same "grossly wrong" setup GpsNavLoiterTest uses, so a healthy
+    // update always commands a full-scale (nonzero, saturated) roll correction here.
     void placeAircraftForNonzeroRoll()
     {
         gpsNavConfigMutable()->loiterDirection = NAV_LOITER_CW;
-        gpsSol.llh.lat = -40 * 90; // UNITS_PER_METER inlined: 1e-7 deg/m at the equator
+        gpsSol.llh.lat = -RADIUS_M * UNITS_PER_METER;
         gpsSol.llh.lon = 0;
         gpsSol.groundCourse = EAST; // opposite of the CW tangent (WEST) at this position
     }

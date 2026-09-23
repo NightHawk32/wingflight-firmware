@@ -31,3 +31,5 @@ void navRthStart(void);
 void navStop(void);
 void updateGpsNav(void);
 bool navCanRTH(void);
+float navGetThrottle(void);
+float navTurnCoordinationYawRate(void);

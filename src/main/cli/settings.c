@@ -998,6 +998,9 @@ const clivalue_t valueTable[] = {
     { "nav_max_pitch_angle",        VAR_UINT8  | MASTER_VALUE, .config.minmaxUnsigned = { 5, 45 }, PG_GPS_NAV, offsetof(gpsNavConfig_t, maxPitchAngleDeg) },
     { "nav_bearing_kp",             VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 1000 }, PG_GPS_NAV, offsetof(gpsNavConfig_t, bearingKp) },
     { "nav_altitude_kp",            VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 1000 }, PG_GPS_NAV, offsetof(gpsNavConfig_t, altitudeKp) },
+    { "nav_altitude_kd",            VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 1000 }, PG_GPS_NAV, offsetof(gpsNavConfig_t, altitudeKd) },
+    { "nav_throttle",               VAR_UINT8  | MASTER_VALUE, .config.minmaxUnsigned = { 0, 100 }, PG_GPS_NAV, offsetof(gpsNavConfig_t, throttle) },
+    { "nav_turn_coordination",      VAR_UINT8  | MASTER_VALUE, .config.minmaxUnsigned = { 0, 200 }, PG_GPS_NAV, offsetof(gpsNavConfig_t, turnCoordination) },
 #endif
 #endif
 

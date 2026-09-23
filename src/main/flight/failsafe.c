@@ -122,6 +122,17 @@ bool failsafeIsActive(void) // real or switch-induced stage 2 failsafe
 
 float failsafeGetThrottle(void)
 {
+#ifdef USE_GPS_NAV
+    // The GPS rescue phase flies home under the same nav controller as a switch RTH, so it
+    // uses the same cruise power: one nav_throttle setting for every GPS-guided flight. Only
+    // once the in-flight latch has set -- a signal loss while sitting armed on the ground must
+    // not throttle up to cruise. Landing and drop keep failsafe_throttle below (motor off by
+    // default), a glide-down being the safe end of a failsafe.
+    if (failsafeState.phase == FAILSAFE_GPS_RESCUE && FLIGHT_MODE(INFLIGHT_MODE)) {
+        return navGetThrottle();
+    }
+#endif
+
     // failsafe_throttle is documented and CLI-ranged around the standard absolute 1000-2000 PWM
     // convention ("specify value between 1000..2000 ... center throttle = 1500", pg/failsafe.h) --
     // matching every other absolute PWM value in this codebase (servo mid, rc_center, etc.), not
@@ -328,10 +339,9 @@ void failsafeUpdateState(void)
                                 // leveling pipeline already sums navAngle[] into every
                                 // angleModeApply() call regardless of which flag triggered it
                                 // (see leveling.c), so no PID/mixer change is needed for attitude.
-                                // Throttle during this phase comes from failsafe_throttle, wired
-                                // up in mixer.c's mixerUpdateInputs() -- deliberately a single
-                                // fixed cruise value, not an altitude-managed correction (see
-                                // Changes.md for what's intentionally out of scope here).
+                                // Throttle during this phase is nav_throttle (failsafeGetThrottle(),
+                                // applied in mixer.c's mixerUpdateInputs()), the same fixed cruise
+                                // value a switch RTH uses -- not an altitude-managed correction.
                                 navRthStart();
                                 ENABLE_FLIGHT_MODE(RTH_MODE);
                                 ENABLE_FLIGHT_MODE(FAILSAFE_MODE);

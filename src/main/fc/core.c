@@ -365,11 +365,13 @@ void updateArmingStatus(void)
             } else {
                 setArmingDisabled(ARMING_DISABLED_GPS);
             }
-            if (IS_RC_MODE_ACTIVE(BOXRTH)) {
-                setArmingDisabled(ARMING_DISABLED_RESC);
-            } else {
-                unsetArmingDisabled(ARMING_DISABLED_RESC);
-            }
+        }
+        // Never arm straight into a GPS nav mode. LOITER is covered as well as RTH: both take
+        // over the throttle (nav_throttle) once airborne, and neither is something to take off in.
+        if (IS_RC_MODE_ACTIVE(BOXRTH) || IS_RC_MODE_ACTIVE(BOXLOITER)) {
+            setArmingDisabled(ARMING_DISABLED_RESC);
+        } else {
+            unsetArmingDisabled(ARMING_DISABLED_RESC);
         }
 #endif
 

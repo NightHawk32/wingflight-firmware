@@ -82,6 +82,40 @@ wrong way round the target (`CW` orbited anticlockwise and the other way
 round). If you set the opposite value to get the direction you wanted, swap it
 back after updating.
 
+GPS LOITER and RTH reworked after a flight log showed wide, full-bank orbits
+and a steady descent (`src/main/flight/gps_nav.c`):
+
+- **Altitude gain was 10x too weak.** `nav_altitude_kp` was applied as
+  decidegrees per meter, so the documented 1.0 deg/m default gave 0.1 deg/m:
+  25 m below the RTH altitude commanded only 2.5 deg of nose-up. It now gives
+  the documented degrees per meter. Anyone who raised `nav_altitude_kp` to
+  compensate should divide it by 10. New `nav_altitude_kd` (default 200, 2.0
+  deg of pitch per m/s of climb rate) damps the now-stronger correction.
+- **Orbit guidance.** The two-phase approach/tangent logic had no correction for
+  distance from the circle, so an aircraft that could not turn as tight as
+  `nav_loiter_radius` circled at full bank on its own turn radius. The desired
+  track is now a vector field that converges onto the circle, plus a
+  feedforward of the bank needed to follow the circle at the current GPS ground
+  speed. The bank command is slew-limited to 45 deg/s (bank reversals were
+  logged at over 400 deg/s). Default `nav_loiter_radius` raised from 75 to
+  100 m; existing configs keep their stored value.
+- **Turn coordination.** Nav left yaw in rate mode with a zero setpoint, so the
+  yaw PID held about 10% rudder against every nav turn. LOITER/RTH now add the
+  coordinated-turn yaw rate (g*sin(bank)*cos(pitch)/ground speed) to the yaw
+  setpoint (`src/main/flight/leveling.c`). New `nav_turn_coordination`, percent,
+  default 100, 0 disables.
+- **Throttle.** New `nav_throttle`, percent, default 60. Switch LOITER/RTH and
+  the failsafe GPS-rescue phase now all fly at it, once the in-flight latch has
+  set (`src/main/flight/mixer.c`, `src/main/flight/failsafe.c`). Failsafe
+  landing and drop still use `failsafe_throttle`.
+- Arming is now blocked while the LOITER switch is on, as it already was for
+  RTH (`src/main/fc/core.c`).
+- The blackbox header logs the nav settings as `gps_nav`.
+
+`MSP2_WING_GPS_NAV_CONFIG` / `MSP2_WING_SET_GPS_NAV_CONFIG` append
+`nav_altitude_kd` (U16), `nav_throttle` (U8) and `nav_turn_coordination` (U8).
+Clients that send only the original fields leave them unchanged.
+
 ## Configuration Changes
 
 Added airborne re-arm grace settings `rearm_grace_seconds` and
@@ -798,7 +832,8 @@ Monitoring is re-enabled (`failsafeStartMonitoring()`), and each of the three
   AUTO-LAND/DROP already use. If GPS isn't healthy or no home position was ever recorded, it
   falls back to AUTO-LAND's behaviour outright, rather than flying toward `GPS_home == {0,0}`.
   **This is deliberately a bounded, first-cut rescue**: one fixed configured cruise throttle
-  (`failsafe_throttle`, below), no altitude-managed pitch-to-throttle correction, no stall/min-
+  (`failsafe_throttle`, below -- since superseded by `nav_throttle` for the fly-home phase, see
+  Flight Performance), no altitude-managed pitch-to-throttle correction, no stall/min-
   speed protection, no autoland/flare. A proper altitude-managed autoland (see iNav's
   `navigation_fixedwing.c` for prior art) is a substantial, separate, sensor-dependent
   (baro/airspeed) undertaking, tracked as a follow-up rather than attempted here.

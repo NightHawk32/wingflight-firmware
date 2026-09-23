@@ -1889,6 +1889,10 @@ static bool mspProcessOutCommand(int16_t cmdMSP, sbuf_t *dst)
         sbufWriteU8(dst, gpsNavConfig()->maxPitchAngleDeg);
         sbufWriteU16(dst, gpsNavConfig()->bearingKp);
         sbufWriteU16(dst, gpsNavConfig()->altitudeKp);
+        // Appended fields -- older clients that only read the bytes above are unaffected.
+        sbufWriteU16(dst, gpsNavConfig()->altitudeKd);
+        sbufWriteU8(dst, gpsNavConfig()->throttle);
+        sbufWriteU8(dst, gpsNavConfig()->turnCoordination);
         break;
 
     case MSP_RXFAIL_CONFIG:
@@ -3743,6 +3747,12 @@ static mspResult_e mspProcessInCommand(mspDescriptor_t srcDesc, int16_t cmdMSP, 
         gpsNavConfigMutable()->maxPitchAngleDeg = sbufReadU8(src);
         gpsNavConfigMutable()->bearingKp = sbufReadU16(src);
         gpsNavConfigMutable()->altitudeKp = sbufReadU16(src);
+        // Appended fields -- older clients that only send the bytes above leave these untouched.
+        if (sbufBytesRemaining(src) >= 4) {
+            gpsNavConfigMutable()->altitudeKd = sbufReadU16(src);
+            gpsNavConfigMutable()->throttle = sbufReadU8(src);
+            gpsNavConfigMutable()->turnCoordination = sbufReadU8(src);
+        }
         break;
 
     case MSP_SET_RXFAIL_CONFIG:

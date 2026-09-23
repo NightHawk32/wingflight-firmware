@@ -108,6 +108,7 @@ float pow_approx(float a, float b);
 #define DECIDEGREES_TO_DEGREES(angle)       ((angle) / 10)
 #define DECIDEGREES_TO_RADIANS(angle)       ((angle) / 10 * M_RADf)
 #define DEGREES_TO_RADIANS(angle)           ((angle) * M_RADf)
+#define RADIANS_TO_DEGREES(angle)           ((angle) / M_RADf)
 
 #define CM_S_TO_KM_H(cmps)                  ((cmps) * 9 / 250)
 #define CM_S_TO_MPH(cmps)                   ((cmps) * 125 / 5588)

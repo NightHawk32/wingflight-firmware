@@ -73,6 +73,7 @@
 #include "io/serial.h"
 
 #include "pg/blackbox.h"
+#include "pg/gps_nav.h"
 #include "pg/motor.h"
 #include "pg/rx.h"
 
@@ -1720,6 +1721,22 @@ static bool blackboxWriteSysinfo(void)
                                                                             currentPidProfile->cross_axis_relax_level,
                                                                             currentPidProfile->cross_axis_relax_cutoff,
                                                                             currentPidProfile->cross_axis_relax_pitch_strength);
+#ifdef USE_GPS_NAV
+        // Order: loiter_radius, loiter_direction, rth_altitude, min_sats, max_bank_angle,
+        // max_pitch_angle, bearing_kp, altitude_kp, altitude_kd, throttle, turn_coordination
+        BLACKBOX_PRINT_HEADER_LINE("gps_nav", "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+                                                                            gpsNavConfig()->loiterRadiusM,
+                                                                            gpsNavConfig()->loiterDirection,
+                                                                            gpsNavConfig()->rthAltitudeM,
+                                                                            gpsNavConfig()->minSats,
+                                                                            gpsNavConfig()->maxBankAngleDeg,
+                                                                            gpsNavConfig()->maxPitchAngleDeg,
+                                                                            gpsNavConfig()->bearingKp,
+                                                                            gpsNavConfig()->altitudeKp,
+                                                                            gpsNavConfig()->altitudeKd,
+                                                                            gpsNavConfig()->throttle,
+                                                                            gpsNavConfig()->turnCoordination);
+#endif
 
 
         BLACKBOX_PRINT_HEADER_LINE("deadband", "%d",                        rcControlsConfig()->rc_deadband);
