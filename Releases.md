@@ -1,3 +1,19 @@
+# 0.0.26
+
+Change the MSP API to 22.4: add independent bank (10-90°) and pitch (10-75°) limits for ANGLE and TRAINER. Use the 0.0.26 Configurator and Lua suites with this firmware; older clients keep working against the shared-limit fields.
+Re-enable failsafe stage 2 for fixed-wing, which had been dead code since this fork's rewrite: signal loss now actually drives AUTO-LAND/DROP or GPS Rescue instead of falling through to per-channel RX fallback only. GPS Rescue and the GPS RTH switch both fly home and orbit via the fixed-wing RTH controller (not the old multirotor hover-descent algorithm), then hand off to a motor-off self-level glide-down. The separate GPS RESCUE switch is retired as a redundant alias for GPS RTH; anyone using it should rewire to GPS RTH.
+Fix an inverted pitch sign in GPS RTH/Loiter altitude hold that commanded away from the target altitude instead of toward it, and fix GPS RTH/Loiter navigating on a stale GPS fix and not resuming after the fix recovers.
+Fix the loiter direction being inverted; anyone who set the opposite value to get the direction they wanted needs to swap it back.
+Add a GPS Navigation tab's worth of MSP support (nav_rth_altitude, nav_loiter_radius/direction, nav_max_bank/pitch_angle, nav_min_sats, nav_bearing/altitude_kp) and a failsafe_recovery_delay field on MSP_FAILSAFE_CONFIG, both previously CLI-only.
+Add a GPS fix-type telemetry sensor over CRSF and S.Port/FPort/FPort2, and clear the GPS fix state when CRSF- or MSP-fed GPS telemetry goes stale instead of latching the last-known fix forever.
+Block arming when GPS RTH is wired only to the GPS RTH switch and has no GPS fix, closing a gap where such a setup got no prearm protection at all.
+Change airborne detection to require sustained roll/pitch stick and gyro response (or altitude gain), so ANGLE/HORIZON/ATT HOLD/TV hold/AUTO HOVER keep full authority through hands-off flight and motor-off glides instead of dropping to ground-level authority after about a second of level cruising; authority now stays latched until disarm.
+Fix servo speed limiting coupling independent wing surfaces together (e.g. a slow aileron also slowing the elevator) when servo_speed is set to a nonzero value.
+Apply cross-axis relax to the I-term accumulation only, not its output, removing a jump/drop in I contribution when rudder is applied and released. Default strength is 0, so default configurations are unaffected.
+Rename the Governor Headspeed adjustment function to Governor RPM.
+Reduce SmartPort and CRSF telemetry memory usage.
+Guard the mixer and servo output paths against NaN/Inf reaching the hardware, including flooring rc.range to a minimum of 1 so an unchecked MSP_SET_RC_CONFIG deadband/deflection can no longer divide by zero.
+
 # 0.0.25
 
 Change the MSP API to 22.3, stripping the always-zero heli placeholder bytes from eight MSP messages (MSP_RC_TUNING, MSP_PID_PROFILE, MSP_PID_TUNING, MSP_SETPOINT, MSP_TELEMETRY_CONFIG, MSP_ESC_SENSOR_CONFIG, MSP_RC_CONFIG, MSP_SENSOR_CONFIG). This is a breaking layout change: use the 0.0.25 Configurator and Lua suites with this firmware.
