@@ -116,6 +116,7 @@
 #include "pg/board.h"
 #include "pg/dyn_notch.h"
 #include "pg/gyrodev.h"
+#include "pg/gps_nav.h"
 #include "pg/governor.h"
 #include "pg/motor.h"
 #include "pg/rx.h"
@@ -1872,6 +1873,22 @@ static bool mspProcessOutCommand(int16_t cmdMSP, sbuf_t *dst)
         sbufWriteU8(dst, failsafeConfig()->failsafe_switch_mode);
         sbufWriteU16(dst, failsafeConfig()->failsafe_throttle_low_delay);
         sbufWriteU8(dst, failsafeConfig()->failsafe_procedure);
+        // Appended field -- older clients that only read the six bytes above are unaffected.
+        sbufWriteU16(dst, failsafeConfig()->failsafe_recovery_delay);
+        break;
+
+    case MSP2_WING_GPS_NAV_CONFIG:
+        // gpsNavConfig_t (PG_GPS_NAV) -- the fixed-wing BOXRTH/BOXLOITER/GPS-rescue
+        // (FAILSAFE_PROCEDURE_GPS_RESCUE) nav controller's tuning, see gps_nav.c.
+        // No MSP command existed for this at all before -- CLI-only (nav_* settings).
+        sbufWriteU16(dst, gpsNavConfig()->loiterRadiusM);
+        sbufWriteU8(dst, gpsNavConfig()->loiterDirection);
+        sbufWriteU16(dst, gpsNavConfig()->rthAltitudeM);
+        sbufWriteU8(dst, gpsNavConfig()->minSats);
+        sbufWriteU8(dst, gpsNavConfig()->maxBankAngleDeg);
+        sbufWriteU8(dst, gpsNavConfig()->maxPitchAngleDeg);
+        sbufWriteU16(dst, gpsNavConfig()->bearingKp);
+        sbufWriteU16(dst, gpsNavConfig()->altitudeKp);
         break;
 
     case MSP_RXFAIL_CONFIG:
@@ -3484,6 +3501,7 @@ static mspResult_e mspProcessInCommand(mspDescriptor_t srcDesc, int16_t cmdMSP, 
         gpsSol.llh.lon = sbufReadU32(src);
         gpsSol.llh.altCm = sbufReadU16(src) * 100; // alt changed from 1m to 0.01m per lsb since MSP API 1.39 by RTH. Received MSP altitudes in 1m per lsb have to upscaled.
         gpsSol.groundSpeed = sbufReadU16(src);
+        gpsMspDataReceived();                // mark data fresh so gpsUpdate() doesn't consider it stale
         GPS_update |= GPS_MSP_UPDATE;        // MSP data signalisation to GPS functions
         break;
 #endif // USE_GPS
@@ -3709,6 +3727,22 @@ static mspResult_e mspProcessInCommand(mspDescriptor_t srcDesc, int16_t cmdMSP, 
         failsafeConfigMutable()->failsafe_switch_mode = sbufReadU8(src);
         failsafeConfigMutable()->failsafe_throttle_low_delay = sbufReadU16(src);
         failsafeConfigMutable()->failsafe_procedure = sbufReadU8(src);
+        // Appended field -- older clients that only send the six bytes above leave this
+        // untouched, same pattern used elsewhere in this function (e.g. MSP_SET_TELEMETRY_CONFIG).
+        if (sbufBytesRemaining(src) >= 2) {
+            failsafeConfigMutable()->failsafe_recovery_delay = sbufReadU16(src);
+        }
+        break;
+
+    case MSP2_WING_SET_GPS_NAV_CONFIG:
+        gpsNavConfigMutable()->loiterRadiusM = sbufReadU16(src);
+        gpsNavConfigMutable()->loiterDirection = sbufReadU8(src);
+        gpsNavConfigMutable()->rthAltitudeM = sbufReadU16(src);
+        gpsNavConfigMutable()->minSats = sbufReadU8(src);
+        gpsNavConfigMutable()->maxBankAngleDeg = sbufReadU8(src);
+        gpsNavConfigMutable()->maxPitchAngleDeg = sbufReadU8(src);
+        gpsNavConfigMutable()->bearingKp = sbufReadU16(src);
+        gpsNavConfigMutable()->altitudeKp = sbufReadU16(src);
         break;
 
     case MSP_SET_RXFAIL_CONFIG:

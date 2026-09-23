@@ -751,3 +751,177 @@ correct, since ordered comparisons are unaffected by `-ffast-math`) is
 unchanged; only the NaN fallthrough is now defined, resolving to the clamp's
 low bound or, at the servo/mixer state-protecting boundaries, to zero. No MSP
 or CLI changes.
+
+### Flight-controller failsafe stage 2 is re-enabled and adapted for fixed-wing
+
+`failsafeStartMonitoring()` had its body commented out ("RTFL: Keep disabled until code
+refactored"), so `failsafeIsMonitoring()` was always false and `failsafeUpdateState()` (run every
+10ms) returned immediately without ever executing. In practice, signal loss was handled entirely
+by `rx.c`'s per-channel RX fallback (hold last value 300ms, then configured fallback), never
+`FAILSAFE_MODE` -- no staged landing, no disarm-on-loss, no GPS rescue, and every
+`failsafe_*` setting was dead. This is documented as finding H-1 in the [Flight Dynamics tech
+reference](https://doc.wingflight.org/contributing/tech/flight-dynamics/).
+
+Monitoring is re-enabled (`failsafeStartMonitoring()`), and each of the three
+`failsafe_procedure` options now does something real and appropriate for a plane:
+
+- **AUTO-LAND** / **DROP** already worked correctly once monitoring was on, with no changes
+  needed: `FAILSAFE_MODE` was already wired into the self-leveling pipeline
+  (`pid.c`/`leveling.c`), and disarming a plane only cuts the motor (`motors.c` gates motor
+  output on `ARMING_FLAG(ARMED)` independently) -- control surfaces keep self-leveling
+  regardless of arm state. AUTO-LAND self-levels for `failsafe_off_delay` before cutting; DROP
+  cuts immediately.
+- **GPS-RESCUE** previously drove `gps_rescue.c`, a multirotor/heli hover-throttle-learning
+  descent algorithm -- neither meaningful nor safe on a fixed-wing airframe. It, and the
+  independent `BOXGPSRESCUE` pilot switch that triggered the same thing (already live today,
+  regardless of this fix -- see below), now both drive the existing fixed-wing-native
+  `navRthStart()`/`updateGpsNav()` controller (`gps_nav.c`, previously only reachable via
+  `BOXRTH`) via `RTH_MODE` instead: fly home and orbit at the configured loiter radius/altitude,
+  for up to `failsafe_off_delay`, then hand off to the same motor-off self-level glide-down
+  AUTO-LAND/DROP already use. If GPS isn't healthy or no home position was ever recorded, it
+  falls back to AUTO-LAND's behaviour outright, rather than flying toward `GPS_home == {0,0}`.
+  **This is deliberately a bounded, first-cut rescue**: one fixed configured cruise throttle
+  (`failsafe_throttle`, below), no altitude-managed pitch-to-throttle correction, no stall/min-
+  speed protection, no autoland/flare. A proper altitude-managed autoland (see iNav's
+  `navigation_fixedwing.c` for prior art) is a substantial, separate, sensor-dependent
+  (baro/airspeed) undertaking, tracked as a follow-up rather than attempted here.
+- `failsafe_throttle` (CLI/MSP setting, PWM 1000-2000, documented "throttle level used for
+  landing") existed but was never read anywhere in the flight code -- it's now wired into
+  `mixer.c`'s throttle input, applied whenever any failsafe procedure is active. Default (1000 =
+  off) preserves today's motor-cut behaviour for existing configs; raise it to fly the AUTO-LAND
+  glide or the GPS-RESCUE fly-home leg under power. `failsafe_stick_threshold` ("stick deflection
+  to exit GPS Rescue") is likewise still declared but unread -- left as a follow-up, same as the
+  altitude-managed rescue above.
+
+Two related correctness fixes, found while re-enabling this:
+
+- `BOXGPSRESCUE` ("GPS RESCUE") was already live and independent of this fix -- a pilot switch
+  that triggered the heli `gps_rescue.c` algorithm on any armed, GPS-fixed aircraft, switch or no
+  failsafe involved. Retargeting it to `RTH_MODE` (above) fixes this too, rather than just the
+  failsafe-triggered path. `GPS_RESCUE_MODE` is no longer set anywhere on this fork;
+  `gps_rescue.c` stays compiled in but is now a guaranteed no-op (its own internal
+  `if (!FLIGHT_MODE(GPS_RESCUE_MODE)) rescueStop();` check), and is a reasonable candidate for a
+  follow-up pruning pass, matching how #109 removed `mixerIsCyclicServo()`.
+- `BOXPASSTHROUGH`/`BOXMANUAL` bypass PID/leveling entirely at the mixer level, using whatever the
+  RC channel currently reads. Since aux/mode channels hold their last value through a real signal
+  loss (`RX_FAILSAFE_MODE_HOLD`, the default), a switch that happened to be left engaged the
+  moment the link dropped would otherwise keep commanding raw/stale stick position straight to
+  the surfaces for as long as failsafe was active -- silently defeating the self-leveling
+  `FAILSAFE_MODE` is specifically meant to provide, for all three procedures. `mixer.c` now defers
+  to failsafe whenever it's genuinely active, regardless of switch state.
+
+Also: `processRxModes()` (TASK_RX, ~33Hz) and `failsafeUpdateState()` (the 10ms scheduler path)
+are independently scheduled with no guaranteed ordering. `core.c`'s per-cycle `BOXRTH`/
+`BOXGPSRESCUE` re-evaluation would otherwise clobber `RTH_MODE` back off on any cycle where the
+pilot's switch itself isn't engaged (the normal case during a real signal loss) -- `core.c` now
+explicitly defers to failsafe.c for the duration of its own GPS-rescue phase.
+
+No unit test coverage exists for failsafe, leveling, airborne detection, or GPS navigation --
+verified with a full build and by tracing the state machine for each `failsafe_procedure`/
+`failsafe_switch_mode` combination; bench-test (props off) before trusting this in the field.
+
+### GPS RTH/loiter altitude hold was commanding the wrong pitch direction
+
+`updateGpsNav()`'s altitude term (`gps_nav.c`) computed `pitchDdeg = altitudeKp * (targetAltitude -
+currentAltitude)` and fed it straight into the pitch target, positive when below target. Pitch in
+this codebase's convention is positive **nose-down** (bench-confirmed in `autohover.c`: `+900`
+drives the elevator toward nose-down, `-900` is the physically-vertical nose-up target -- the same
+convention `attitude.raw[]`/`navAngle[]` use throughout, see `leveling.c`'s
+`calcLevelErrorAngle()`). So being below target altitude commanded nose-**down**, diving further
+away from it, and being above target commanded nose-up, climbing further away -- actively
+divergent, not just ineffective. This affected both `BOXRTH`/`BOXLOITER` (already live) and the
+new GPS-rescue failsafe procedure above, which now depends on this same code with no pilot able to
+intervene. The roll/bearing term was unaffected (already fixed in #139); only the pitch/altitude
+term was inverted. Fixed by negating it. Added `GpsNavAltitudeTest` to `gps_nav_unittest.cc`
+(below/above/at target, and clamping to `maxPitchAngleDeg`); confirmed the new tests fail without
+the fix and pass with it.
+
+### GPS RTH/Loiter could navigate on a stale position, and wouldn't resume after a fix drop
+
+Two bugs found in code review of the GPS Navigation work above, both in `gps_nav.c`:
+
+- `navIsHealthy()` checked `gpsIsHealthy()` (GPS frames are being received) and satellite count,
+  but not `STATE(GPS_FIX)`. `gpsIsHealthy()` says nothing about whether the last frame was
+  actually a fix, and UBLOX PVT sets `gpsSol.numSat` from the frame's `numSV` field
+  unconditionally, independent of `fixType`/`NAV_STATUS_FIX_VALID` -- so a receiver could report a
+  healthy satellite count with no valid fix at all, and RTH/Loiter would keep commanding bank/pitch
+  toward `gpsSol.llh.lat/lon` using that stale or invalid position. Fixed by requiring
+  `STATE(GPS_FIX)` too.
+- When GPS did become unhealthy, `updateGpsNav()` called `navStop()`, but `fc/core.c`'s
+  `wasRthActive`/`wasLoiterActive` switch-latch only calls `navRthStart()`/`navLoiterStart()`
+  again on the mode switch's off->on edge -- so once `nav.active` was cleared, it stayed cleared
+  (RTH_MODE/LOITER_MODE remained flagged "on", but nav commanded nothing) until the pilot cycled
+  the switch, even after GPS recovered. Fixed by zeroing the commanded bank/pitch on a health loss
+  instead of stopping nav outright, so it resumes toward the original target the moment health
+  returns, with no pilot action needed.
+
+Added `GpsNavHealthTest` to `gps_nav_unittest.cc` (healthy satellite count with no fix commands
+nothing; nav resumes toward the original target after a fix is lost and reacquired, without
+restarting).
+
+Also: `src/test/Makefile` unconditionally passed a few clang-only warning flags
+(`-Wno-c99-extensions`, `-Wno-reorder`, `-Wno-error=unused-command-line-argument`) that GCC
+rejects as unrecognized under `-Werror`, breaking `make test CC=gcc CXX=g++` on a machine without
+clang installed (the comment right above them already said they were clang-specific; they just
+weren't gated). Now gated behind `ifeq ($(CC),clang)`. Also fixed a latent MinGW portability gap
+in `gps_nav_unittest.cc`'s own test stub: `M_PI` isn't standard C++ and needs a platform-specific
+feature-test macro that MinGW's `<cmath>` doesn't define by default -- replaced with a local
+literal.
+
+### MSP_FAILSAFE_CONFIG / MSP_SET_FAILSAFE_CONFIG gain `failsafe_recovery_delay`
+
+Found while wiring up Configurator/Lua-suite UI for the failsafe stage-2 work above: this MSP
+pair only ever carried six of the seven `failsafeConfig_t` fields (`failsafe_delay`,
+`failsafe_off_delay`, `failsafe_throttle`, `failsafe_switch_mode`, `failsafe_throttle_low_delay`,
+`failsafe_procedure`) -- `failsafe_recovery_delay` (how long a recovered RX link must stay good
+before re-arming is allowed, `failsafeState.rxDataRecoveryPeriod`) was CLI-only, with no MSP
+path at all. Appended as a 7th field (U16) on both messages. `MSP_SET_FAILSAFE_CONFIG` only reads
+it when present (`sbufBytesRemaining(src) >= 2`, same pattern used elsewhere in `msp.c`, e.g.
+`MSP_SET_TELEMETRY_CONFIG`), so older clients that only send the original six fields are
+unaffected.
+
+### New MSP command: `gpsNavConfig` (BOXRTH/BOXLOITER/GPS-rescue tuning)
+
+`gpsNavConfig_t` (`PG_GPS_NAV` -- `nav_rth_altitude`, `nav_loiter_radius`, `nav_loiter_direction`,
+`nav_max_bank_angle`, `nav_max_pitch_angle`, `nav_min_sats`, `nav_bearing_kp`, `nav_altitude_kp`)
+had no MSP command at all -- CLI-only, so `BOXRTH`/`BOXLOITER` and, since the change above,
+`FAILSAFE_PROCEDURE_GPS_RESCUE`, were all untunable from the Configurator or the Lua suite even
+though they were flyable. New MSPv2 pair, `MSP2_WING_GPS_NAV_CONFIG`/
+`MSP2_WING_SET_GPS_NAV_CONFIG` (`0x5F16`/`0x5F17`, next free ID after
+`MSP2_WING_CRSF_SENSORS_STATUS`), one flat 12-byte record matching `gpsNavConfig_t`'s field order
+exactly. No existing MSP surface changed.
+
+### New custom-telemetry sensor: GPS fix type
+
+The only existing way to see GPS fix state over CRSF/S.Port was `armdisableflags`' GPS bit
+(`ARMING_DISABLED_GPS`) -- and that bit permanently clears the first time the model is ever armed
+(`WAS_EVER_ARMED`), so it stops reflecting reality right when GPS Rescue/RTH actually needs a
+live answer. Added `TELEM_GPS_FIX_TYPE` (custom-telemetry sensor id 119, next free id after
+`TELEM_TV_PROFILE`; ids 92-94 stay reserved, heli rescue/governor removed, not reused): `0` = no
+fix, `1` = fix, `2` = fix + home captured, read straight off `STATE(GPS_FIX)`/`STATE(GPS_FIX_HOME)`
+every time it's polled. Registered in both `crsf.c` (appId `0x112C` -- `0x112B` is taken by the Lua
+suite's synthetic GPS Longitude sensor split out of `0x1125` GPS Coord -- after the
+existing GPS block `0x1121`-`0x112A`) and `smartport.c` (appId `0x5124`, next free id after
+`ARMING_DISABLE_FLAGS`, which also covers FPort/FPort2 -- `smartport.c` already serves
+`FSSP_MSPC_FRAME_FPORT` frames on the same sensor table). Not added to any other telemetry
+protocol.
+
+### GPS RESCUE switch removed (was a redundant alias for GPS RTH)
+
+`BOXGPSRESCUE` and `BOXRTH` drove the identical fixed-wing RTH controller
+(`navRthStart()`/`gps_nav.c`) -- the old multirotor hover-descent GPS Rescue algorithm was
+disconnected from both switches earlier (see "Flight-controller failsafe stage 2" above). Two
+switches for the same behavior was confusing, and the prearm GPS-fix check only recognized the
+legacy `BOXGPSRESCUE`/failsafe-procedure trigger, so a craft wired with only `BOXRTH` -- the
+natural fixed-wing choice -- got no GPS-fix protection at all (already fixed separately).
+
+`BOXGPSRESCUE` is now retired: `msp_box.c` no longer registers it (permanentId 46 reserved, not
+reused), so it no longer appears in the Modes tab or any MSP box list. The `boxId_e` enum slot is
+kept and marked reserved (`fc/rc_modes.h`), matching this codebase's existing convention for
+retired boxes (`BOXRESCUE`, `BOXOSD`, `BOXVTXPITMODE`, etc.) -- no renumbering, so existing saved
+configs aren't affected. Any leftover `BOXGPSRESCUE` mode-activation-condition from an older
+config is now cleared unconditionally on load.
+
+The Failsafe tab's Stage 2 "GPS Rescue" *procedure* (`FAILSAFE_PROCEDURE_GPS_RESCUE`) is
+unaffected -- it's a separate config value that also drives the RTH controller automatically on
+signal loss, and still works exactly as before.
