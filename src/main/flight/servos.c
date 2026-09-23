@@ -434,14 +434,13 @@ void servoUpdate(void)
 
     for (int i = 0; i < servoCount; i++)
     {
-        const servoParam_t *servo = servoParams(i);
-
         if (!ARMING_FLAG(ARMED) && hasServoOverride(i))
             input[i] = servoOverride[i] / 1000.0f;
         else
             input[i] = mixerGetServoOutput(i);
 
 #ifdef USE_SERVO_GEOMETRY_CORRECTION
+        const servoParam_t *servo = servoParams(i);
         if (servo->flags & SERVO_FLAG_GEO_CORR)
             input[i] = geometryCorrection(input[i]);
 #endif
