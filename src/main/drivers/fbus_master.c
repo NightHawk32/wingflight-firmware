@@ -320,9 +320,14 @@ static FAST_CODE void dataReceive(uint16_t c, void *data)
     }
 }
 
-static float fbusMasterGetChannelValue(uint8_t channel)
+// Speed-limit state for F.Bus output, separate from SBUS output's so each
+// output steps only on its own frames.
+static float fbusMasterServoInput[FBUS_MASTER_CHANNELS];
+static timeUs_t fbusMasterLastFrameUs = 0;
+
+static float fbusMasterGetChannelValue(uint8_t channel, float dt)
 {
-    return sbusOutGetValueMixer(channel);
+    return sbusOutGetValueMixer(channel, &fbusMasterServoInput[channel], dt);
 }
 
 static uint16_t fbusMasterConvertToSbus(float value)
@@ -346,11 +351,18 @@ void fbusMasterUpdate(timeUs_t currentTimeUs)
         return;
     }
 
+    // Time since the previous frame, for the speed limit. The first frame
+    // assumes the configured frame rate; a long gap is capped at 100ms.
+    const float dt = fbusMasterLastFrameUs ?
+        constrainf(cmpTimeUs(currentTimeUs, fbusMasterLastFrameUs) * 1e-6f, 0.0f, 0.1f) :
+        1.0f / fbusMasterConfig()->frameRate;
+    fbusMasterLastFrameUs = currentTimeUs;
+
     // Start sending.
     fbusMasterFrame_t frame;
     uint16_t channels[FBUS_MASTER_CHANNELS];
     for (int ch = 0; ch < FBUS_MASTER_CHANNELS; ch++) {
-        float value = fbusMasterGetChannelValue(ch);
+        float value = fbusMasterGetChannelValue(ch, dt);
         channels[ch] = fbusMasterConvertToSbus(value);
         
         // Store the output value for getServoOutput() to retrieve
