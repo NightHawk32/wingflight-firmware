@@ -244,6 +244,14 @@ static const char * const lookupTableRxInputBackupProvider[] = {
 };
 #endif
 
+#if defined(USE_SBUS_OUTPUT) || defined(USE_FBUS_MASTER)
+// Keep in sync with pg/bus_servo.h's busOutChannels_e (same order). SBUS
+// uses the first three entries only (no 24-channel SBUS frame).
+static const char * const lookupTableBusOutChannels[] = {
+    "8", "12", "16", "24",
+};
+#endif
+
 #ifdef USE_CRSF_SENSORS
 // Keep in sync with pg/crsf_sensors.h's crsfSensorsBatterySource_e.
 static const char * const lookupTableCrsfSensorsBatterySource[] = {
@@ -506,6 +514,10 @@ const lookupTableEntry_t lookupTables[] = {
 #endif
 #ifdef USE_RX_INPUT_BACKUP
     LOOKUP_TABLE_ENTRY(lookupTableRxInputBackupProvider),
+#endif
+#if defined(USE_SBUS_OUTPUT) || defined(USE_FBUS_MASTER)
+    LOOKUP_TABLE_ENTRY(lookupTableBusOutChannels),
+    { lookupTableBusOutChannels, BUS_OUT_CHANNELS_16 + 1 },  // SBUS: 8, 12, 16
 #endif
 #ifdef USE_RX_SPI
     LOOKUP_TABLE_ENTRY(lookupTableRxSpi),
@@ -1417,6 +1429,7 @@ const clivalue_t valueTable[] = {
     { "sbus_out_frame_rate",        VAR_UINT8 | MASTER_VALUE, .config.minmaxUnsigned = {25, 250}, PG_DRIVER_SBUS_OUT_CONFIG, offsetof(sbusOutConfig_t, frameRate) },
     { "sbus_out_pinswap",           VAR_UINT8 | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_OFF_ON}, PG_DRIVER_SBUS_OUT_CONFIG, offsetof(sbusOutConfig_t, pinSwap) },
     { "sbus_out_inverted",          VAR_UINT8 | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_OFF_ON}, PG_DRIVER_SBUS_OUT_CONFIG, offsetof(sbusOutConfig_t, inverted) },
+    { "sbus_out_channels",          VAR_UINT8 | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_SBUS_OUT_CHANNELS }, PG_DRIVER_SBUS_OUT_CONFIG, offsetof(sbusOutConfig_t, channels) },
 #endif
 
 #ifdef USE_FBUS_MASTER
@@ -1426,6 +1439,7 @@ const clivalue_t valueTable[] = {
     { "fbus_master_telemetry_rate",    VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = {FBUS_MASTER_TELEMETRY_RATE_MIN_HZ, FBUS_MASTER_TELEMETRY_RATE_MAX_HZ}, PG_DRIVER_FBUS_MASTER_CONFIG, offsetof(fbusMasterConfig_t, telemetryRate) },
     { "fbus_master_discovery_ms",      VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = {FBUS_MASTER_DISCOVERY_TIME_MIN_MS, FBUS_MASTER_DISCOVERY_TIME_MAX_MS}, PG_DRIVER_FBUS_MASTER_CONFIG, offsetof(fbusMasterConfig_t, sensorDiscoveryTimeMs) },
     { "fbus_master_forwarded_sensors", VAR_UINT8 | MASTER_VALUE | MODE_ARRAY, .config.array.length = FBUS_MASTER_MAX_FORWARDED_SENSORS, PG_DRIVER_FBUS_MASTER_CONFIG, offsetof(fbusMasterConfig_t, forwardedSensors) },
+    { "fbus_master_channels",          VAR_UINT8 | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_BUS_OUT_CHANNELS }, PG_DRIVER_FBUS_MASTER_CONFIG, offsetof(fbusMasterConfig_t, channels) },
 #endif
 
 #if defined(USE_SBUS_OUTPUT) || defined(USE_FBUS_MASTER) || defined(USE_BUS_SERVO)

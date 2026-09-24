@@ -15,6 +15,12 @@ state now, so running both no longer steps it twice
 (`src/main/drivers/sbus_output.c`, `src/main/drivers/fbus_master.c`). Bus
 servos with a speed limit set will now move at the configured speed.
 
+The default bus servo scale (`rneg`/`rpos`) is now 500, as for PWM servos,
+instead of 1000. With the ±500us bus servo travel limits, 1000 reached full
+travel at half stick and the rest of the stick did nothing. Only new or reset
+configs get the new default; saved bus servos keep their scale, so set Scale
+neg/pos to 500 on the Servos tab (`src/main/pg/bus_servo.h`).
+
 
 ## Removed Protocols
 
@@ -38,6 +44,65 @@ stays configured but idle. A `serialrx_provider` still set to GHST leaves the
 receiver unconfigured. The FrSky Hub CLI settings (`frsky_default_lat`,
 `frsky_default_long`, `frsky_gps_format`, `frsky_unit`, `frsky_vfas_precision`)
 and `mavlink_mah_as_heading_divisor` are no longer available.
+
+
+## 24-Channel F.Bus (MSP API 22.5)
+
+### Output
+
+Bus output channel counts are set per output:
+
+| Setting | Values | Default | Frame |
+|---|---|---|---|
+| `fbus_master_channels` | `8`, `12`, `16`, `24` | `24` | 8 -> 8-channel, 12/16 -> 16-channel, 24 -> 24-channel F.Bus frame |
+| `sbus_out_channels` | `8`, `12`, `16` | `16` | Always the 16-channel SBUS frame (there is no 24-channel SBUS frame) |
+
+Channels past the count are sent at center. The two digital channels (CH17-18)
+are only sent with a count of 16 (`src/main/drivers/fbus_master.c`,
+`src/main/drivers/sbus_output.c`).
+
+Bus servos go from 18 to 24 (`BUS_SERVO_CHANNELS`), so servos are now S1-S32
+and `MSP_STATUS` reports 6 more servos. Bus servo N is always channel N on the
+wire.
+
+Mixer output numbers used before this change do not move, so saved mixer
+rules, CLI diffs and backups keep their meaning: 1-26 are S1-S26, 27-30 are
+M1-M4, and the new bus servos S27-S32 are outputs 31-36
+(`src/main/flight/mixer.h`).
+
+`MSP_MIXER_CONFIG` appends the SBUS count, the F.Bus count and the count the
+configured bus outputs drive (the larger if SBUS and F.Bus are both set up, 0
+with none). SBUS and F.Bus output can run at the same time.
+`MSP_SET_MIXER_CONFIG` accepts the SBUS and F.Bus counts as two optional
+trailing bytes.
+
+The 16-channel F.Bus frame used to fill the CH17-18 flag bits from past the end
+of its channel array. It now sends bus servos 17 and 18 as those two digital
+channels, on at 1500us and above.
+
+### Input
+
+RC channels go from 18 to 24 (`MAX_SUPPORTED_RC_CHANNEL_COUNT`), so a
+24-channel F.Bus receiver delivers CH19-24. Other receivers are unchanged.
+`MSP_RC` and `MSP_RXFAIL_CONFIG` report up to 24 channels, modes and
+adjustments can use AUX channels up to CH24, and `rxfail` accepts channels up to
+23. Saved failsafe settings for CH1-18 are kept.
+
+Mixer inputs CH19-CH24 are added after the thrust-vector inputs (input numbers
+30-35), so existing input numbers do not move. The mixer's input mapping is
+now 64-bit to fit them (`src/main/flight/mixer.c`).
+
+The backup receiver's F.Bus/F.Port2 decoder accepts the 8-, 16- and
+24-channel frames, like the main receiver
+(`src/main/drivers/rx_input_backup_fbus.c`). A backup provider's `update()`
+now returns how many channels the decoded frame carried. When the backup
+receiver takes over, channels its latest frame does not carry (for example
+CH19-24 from a 16-channel backup frame) go to stick center (`rc_center`)
+instead of dropping to minimum (`src/main/drivers/rx_input_backup.c`). A mode
+or switch on those channels therefore moves to its middle position on
+takeover. `MSP2_WING_RX_INPUT_BACKUP_STATUS` reports a backup value for every
+main RX channel, center for the ones the backup does not carry. F.Port (v1)
+stays at 16 + 2 channels on both receivers: its frame has no 24-channel form.
 
 
 ## Memory Usage

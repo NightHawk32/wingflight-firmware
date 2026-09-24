@@ -1391,7 +1391,10 @@ static bool mspProcessOutCommand(int16_t cmdMSP, sbuf_t *dst)
         const bool mainLinkUp = rxIsReceivingSignal();
         const bool linkUp = enabled && rxInputBackupIsActive();
         const bool rxInputBackupIsSource = linkUp && !mainLinkUp;
-        const uint8_t channelCount = rxInputBackupGetChannelCount();
+        // Every main RX channel gets a backup value; channels the backup's
+        // latest frame doesn't carry report stick center, the value a takeover
+        // would apply (rxInputBackupGetChannel()).
+        const uint8_t channelCount = enabled ? MAX(rxInputBackupGetChannelCount(), activeRcChannelCount) : 0;
 
         sbufWriteU8(dst, 3); // payload version
         sbufWriteU8(dst, enabled ? 1 : 0);
@@ -1780,6 +1783,19 @@ static bool mspProcessOutCommand(int16_t cmdMSP, sbuf_t *dst)
     case MSP_MIXER_CONFIG:
         sbufWriteU8(dst, mixerConfig()->model_type);
         sbufWriteU8(dst, busServoConfig()->cloneFromPwm);
+        // API 22.5: bus output channel counts (8, 12, 16 or 24; 0 when not
+        // built), then the count the configured bus output actually drives
+#ifdef USE_SBUS_OUTPUT
+        sbufWriteU8(dst, busOutChannelCount(sbusOutConfig()->channels));
+#else
+        sbufWriteU8(dst, 0);
+#endif
+#ifdef USE_FBUS_MASTER
+        sbufWriteU8(dst, busOutChannelCount(fbusMasterConfig()->channels));
+#else
+        sbufWriteU8(dst, 0);
+#endif
+        sbufWriteU8(dst, getBusServoOutputCount());
         break;
 
     case MSP_MIXER_INPUTS:
@@ -3604,6 +3620,21 @@ static mspResult_e mspProcessInCommand(mspDescriptor_t srcDesc, int16_t cmdMSP, 
     case MSP_SET_MIXER_CONFIG:
         mixerConfigMutable()->model_type = sbufReadU8(src);
         busServoConfigMutable()->cloneFromPwm = sbufReadU8(src);
+        // API 22.5: optional SBUS and F.Bus output channel counts. Takes
+        // effect on the next frame.
+        if (sbufBytesRemaining(src) >= 2) {
+            const uint8_t sbusSetting = busOutChannelSetting(sbufReadU8(src));
+            const uint8_t fbusSetting = busOutChannelSetting(sbufReadU8(src));
+            if (sbusSetting > BUS_OUT_CHANNELS_16 || fbusSetting >= BUS_OUT_CHANNELS_COUNT) {
+                return MSP_RESULT_ERROR;
+            }
+#ifdef USE_SBUS_OUTPUT
+            sbusOutConfigMutable()->channels = sbusSetting;
+#endif
+#ifdef USE_FBUS_MASTER
+            fbusMasterConfigMutable()->channels = fbusSetting;
+#endif
+        }
         break;
 
     case MSP_SET_MIXER_INPUT:
