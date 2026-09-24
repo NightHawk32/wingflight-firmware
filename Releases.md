@@ -1,3 +1,10 @@
+# 0.0.27
+
+Split the shared roll/pitch stick deadband into separate roll and pitch deadbands (CLI roll_deadband, pitch_deadband, yaw_deadband). This is a breaking MSP_RC_CONFIG/MSP_SET_RC_CONFIG layout change with no compatibility path, and the MSP API version stays 22.4, so an older client still connects but reads and writes the wrong deadband fields: use the 0.0.27 Configurator and Lua suites with this firmware. Updating resets the RC controls settings (stick center, deflection, throttle range, deadbands, smoothing) to defaults, so re-check them after flashing. The blackbox header's deadband is replaced by roll_deadband and pitch_deadband.
+Report GPS Loiter/RTH as unavailable in flight-mode telemetry when its switch is on but the mode can't fly (disarmed, no accelerometer, no healthy fix, or no home for RTH), so the radio can announce it. Flight behaviour is unchanged.
+Stop compiling in the GHOST and CPPM receivers and the FrSky Hub, MAVLink and LTM telemetry protocols. Feature and serial-function IDs are unchanged.
+Add a simulated barometer and blackbox logging to onboard flash in SITL, and fix the SITL build.
+
 # 0.0.26
 
 Rework GPS Loiter/RTH after a flight log showed oversized full-bank orbits and a steady descent. Fix the altitude gain being applied 10x too weak: nav_altitude_kp now gives the documented degrees of pitch per meter (divide it by 10 if you raised it to compensate). Add climb-rate damping (nav_altitude_kd), steer smoothly onto the loiter circle with a speed-based bank feedforward and a 45°/s bank slew limit, and feed rudder into nav turns instead of holding it against them (nav_turn_coordination). Default nav_loiter_radius is now 100 m; existing configs keep their value.
