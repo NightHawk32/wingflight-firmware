@@ -1,3 +1,20 @@
+# 0.0.28
+
+Add two packed status telemetry sensors over CRSF and S.Port/FPort/FPort2: SYSTEM_STATUS (120) with armed/airborne state, main and backup RX link, failsafe phase, GPS fix and health, LOITER/RTH blocked, battery state, control saturation, gyro overflow, autotrim and Blackbox state; and SYSTEM_CONFIG (121) with the PID/rates/battery/TV profile numbers, unsaved settings, reboot required and sensors present. The 0.0.28 Lua suites read their FC status from them. This is a hard cut: the arming flags (90), PID/rates/battery/LED profile (95-98), TV profile (118) and GPS fix type (119) sensors are removed, and FLIGHT_MODE (89) no longer carries the GPS-unavailable bit 15 (now NAV_BLOCKED in SYSTEM_STATUS). Jeti EX Bus is unchanged. Use the 0.0.28 Configurator and Lua suites with this firmware.
+IMPORTANT: updating keeps your saved telemetry_sensors list, which does not include the new sensors 120/121 that the Lua suites now need. After flashing, run this in the CLI and save (or press Default on the Ethos suite's Telemetry page, or select the sensors in the Configurator):
+set telemetry_sensors = 3,4,5,6,15,43,50,52,58,59,60,89,91,99,120,121
+Change the defaults for new and reset configs: telemetry is enabled with custom CRSF telemetry (set crsf_telemetry_mode = NATIVE for native CRSF), telemetry_sensors is the list above, and smartfuel = CURRENT (falls back to the voltage estimate without a current sensor or pack capacity). Existing configs keep their values.
+Fix the SmartFuel mode being cleared to OFF on save when no battery voltage source was configured yet.
+Move S.Port DEBUG_7 from 0x52F8 to 0x52F7, so debug 0-7 use 0x52F0-0x52F7.
+
+Change the MSP API to 22.5: receive 24 RC channels and drive 24 bus servos (S1-S32). Existing mixer numbers stay put: CH19-24 are mixer inputs 30-35 and bus servos 19-24 are outputs 31-36. Use the 0.0.28 Configurator and Lua suites with this firmware.
+Add per-output bus channel counts: fbus_master_channels (8/12/16/24, default 24; 24 uses the 24-channel F.Bus frame) and sbus_out_channels (8/12/16, default 16), reported in MSP_MIXER_CONFIG. Channels past the count are sent at center. Fix the 16-channel F.Bus frame reading CH17-18 from past the end of its channel array.
+Accept 8-, 16- and 24-channel F.Bus/F.Port2 frames on the backup receiver. On takeover, channels the backup frame doesn't carry go to stick center instead of minimum.
+Change the default bus servo scale to 500, so full mixer output gives full travel instead of reaching it at half stick. Saved configs keep their scale.
+Fix bus servos with a speed limit moving far slower than configured (about 20x at 50 Hz SBUS), and give SBUS and F.Bus output separate speed-limit state.
+Read the satellite count from FBUS GPS sensors that send it. Older FBUS GPS sensors report 0 satellites so they no longer pass the RTH/Loiter/GPS Rescue minimum-satellite checks; the CLI-only gps_fbus_assumed_sats sets an assumed count for them.
+Stop compiling in the parallel PWM receiver. Configs with it enabled have it cleared at boot.
+
 # 0.0.27
 
 Split the shared roll/pitch stick deadband into separate roll and pitch deadbands (CLI roll_deadband, pitch_deadband, yaw_deadband). This is a breaking MSP_RC_CONFIG/MSP_SET_RC_CONFIG layout change with no compatibility path, and the MSP API version stays 22.4, so an older client still connects but reads and writes the wrong deadband fields: use the 0.0.27 Configurator and Lua suites with this firmware. Updating resets the RC controls settings (stick center, deflection, throttle range, deadbands, smoothing) to defaults, so re-check them after flashing. The blackbox header's deadband is replaced by roll_deadband and pitch_deadband.
