@@ -3,6 +3,81 @@
 This file is collecting the changes in the firmware that are affecting
 the APIs or flight performance.
 
+## FBUS GPS Satellite Count
+
+FBUS GPS sensors that report the FrSky GPS satellite-count app ID range
+`0x0860`-`0x086F` now feed the real satellite count into `gpsSol.numSat`
+(`src/main/drivers/fbus_sensor.c`). Older FBUS GPS sensors that do not send
+that value report `0` satellites, so RTH, Loiter, GPS Rescue and other
+minimum-satellite checks are not satisfied by a guessed count. Users who accept
+that risk can set the CLI-only `gps_fbus_assumed_sats` value to provide an
+assumed satellite count for older FBUS GPS sensors; real sensor data always
+overrides the assumed value when the satellite-count app ID is present.
+
+
+## Telemetry Status Words
+
+Two new telemetry sensors carry the flight controller's status as packed
+bitfields, so a radio script can decode many flags from one sensor slot
+(`src/main/telemetry/status.h`, `src/main/telemetry/status.c`):
+
+| ID | Sensor | S.Port | CRSF | Rate |
+|---|---|---|---|---|
+| 120 | `SYSTEM_STATUS` | `0x5140` | `0x1230` | 100 ms |
+| 121 | `SYSTEM_CONFIG` | `0x5141` | `0x1231` | 500 ms |
+
+`SYSTEM_STATUS` holds live state: armed, airborne, motors running, main and
+backup RX link, backup RX in control, failsafe phase, GPS fix and GPS health,
+LOITER/RTH switched on but unable to fly, battery state, control surfaces at
+their mixer limit, gyro overflow, ACC not calibrated, Configurator test
+override active, a flight aid holding, autotrim state, Blackbox logging, and
+logic conditions 1-4.
+
+`SYSTEM_CONFIG` holds slower state: PID, rates, battery and TV profile
+numbers, unsaved settings, save in progress, reboot required, beeper on,
+ACC/baro/mag/GPS present, backup RX configured, Blackbox full, and RPM
+telemetry present.
+
+The radio Lua decodes by bit position, so a layout change needs a matching Lua
+update. Bit 31 is never set because S.Port sends a signed value.
+
+This is a hard cut. These sensors are removed, and their IDs are free for reuse:
+
+- 90 `ARMING_FLAGS` (the ARMED bit is in `SYSTEM_STATUS`)
+- 95-98 `PID_PROFILE`, `RATES_PROFILE`, `BATTERY_PROFILE`, `LED_PROFILE`
+- 118 `TV_PROFILE`
+- 119 `GPS_FIX_TYPE`
+
+`FLIGHT_MODE` (89) is plain `flightModeFlags` again. Bit 15 ("GPS mode
+unavailable") and the requested-mode bit that came with it are gone; that state
+is the `NAV_BLOCKED` field of `SYSTEM_STATUS`. Models that had the removed
+sensors selected need `SYSTEM_STATUS` and `SYSTEM_CONFIG` selected instead. The
+Jeti EX Bus arming-flag and profile values are unchanged.
+
+`telemetry_sensors` now defaults to the sensors the Wingflight Lua suites read,
+instead of none (`src/main/pg/telemetry.c`). It is the same list, in the same
+order, that the Ethos suite's "Default" button writes:
+
+```
+set telemetry_sensors = 3,4,5,6,15,43,50,52,58,59,60,89,91,99,120,121,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+```
+
+New and reset configs also have telemetry on (`FEATURE_TELEMETRY`, all targets,
+`src/main/pg/feature.c`) and CRSF telemetry in custom mode
+(`crsf_telemetry_mode = CUSTOM`, `src/main/pg/telemetry.c`), which the Lua
+suites decode. Native CRSF telemetry (standard battery, attitude and GPS
+frames) is still available by setting `crsf_telemetry_mode = NATIVE`.
+
+SmartFuel now defaults to current mode (`smartfuel = CURRENT`,
+`src/main/pg/battery.c`). With no current sensor, or no pack capacity set, it
+falls back to its voltage estimate. SmartFuel stays inactive until a battery
+voltage source is set, but the saved mode is no longer cleared to OFF when
+there isn't one, so the default survives first setup
+(`src/main/sensors/smartfuel.c`).
+
+Saved configs keep their current settings; only new or reset configs get
+these defaults.
+
 
 ## Bus Servo Speed Limit
 
