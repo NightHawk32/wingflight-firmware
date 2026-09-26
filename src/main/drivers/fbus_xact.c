@@ -26,6 +26,7 @@
 #include "common/time.h"
 #include "common/utils.h"
 #include "drivers/time.h"
+#include "fc/runtime_config.h"
 #include "rx/frsky_crc.h"
 #include "rx/fbus.h"
 
@@ -276,6 +277,16 @@ bool fbusXactIsInitialized(void)
 bool fbusXactProcessQueue(fbusMasterDownlink_t *downlink)
 {
     if (!xactInitialized) {
+        return false;
+    }
+
+    // No XACT traffic while armed: writes queued just before arming and background reads wait
+    // until disarm, and the downlink slot stays with telemetry polling. A read waiting for its
+    // answer is sent again after disarm rather than timing out and being skipped.
+    if (ARMING_FLAG(ARMED)) {
+        if (xactReadState == XACT_READ_STATE_WAIT_POLL) {
+            xactReadState = XACT_READ_STATE_READING;
+        }
         return false;
     }
 
