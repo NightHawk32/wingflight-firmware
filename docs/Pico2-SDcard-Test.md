@@ -75,6 +75,21 @@ assignment first with `resource <NAME> <index> NONE`.
 ## Checking
 
 - `sd_info` shows the card state, size and filesystem (FAT32).
+- `sd_bench [<MB>] [slow]` measures how long each block read/write keeps the
+  card busy (histogram and worst case), in unused space of the log
+  reservation. For logging the worst-case write should stay well below
+  250ms. `slow` runs at a 4MHz SPI clock, to tell a slow card from a
+  marginal SPI link. Remove `USE_SDCARD_BENCH` from the target to leave the
+  command out of the build. Measured on this setup (16MB, full clock):
+
+  | Card | Read | Single-block write | Multi-block write |
+  |---|---|---|---|
+  | no-name `SD16G` (mfr 0x27) | 31 kB/s, max 60ms | 74 kB/s, max 2431ms | 974 kB/s, max 165ms |
+  | SanDisk `SB16G` (mfr 0x03) | 1475 kB/s, max 3.2ms | 516 kB/s, max 5.3ms | 2321 kB/s, max 6.3ms |
+
+  The no-name card's second-long write stalls outlast the driver's write
+  timeout, and the reset in the middle of a write leaves the card
+  unresponsive until power cycled. The SanDisk logs at full rate cleanly.
 - A card that has never been formatted (no boot signature in sector 0) is
   formatted as FAT32 automatically; `sd_info` shows `Formatting blank card`
   meanwhile (about 20s for a 16GB card). Cards with any existing partition

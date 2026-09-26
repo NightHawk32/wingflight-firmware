@@ -206,6 +206,7 @@
 #if !defined(USE_SDCARD)
 #undef USE_SDCARD_SDIO
 #undef USE_SDCARD_SPI
+#undef USE_SDCARD_BENCH
 #endif
 
 #if !defined(USE_VCP)

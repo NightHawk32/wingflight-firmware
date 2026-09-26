@@ -3792,6 +3792,32 @@ static void afatfs_initContinue(void)
     }
 }
 
+#ifdef USE_SDCARD_BENCH
+/**
+ * Get the physical sectors of the freefile: space that is allocated on the card but holds no data, so can be
+ * overwritten freely (e.g. to benchmark the card). Returns false if there is no freefile.
+ */
+bool afatfs_getFreeFileSectors(uint32_t *firstSector, uint32_t *sectorCount)
+{
+#ifdef AFATFS_USE_FREEFILE
+    if (afatfs.filesystemState != AFATFS_FILESYSTEM_STATE_READY || afatfs.freeFile.type == AFATFS_FILE_TYPE_NONE
+            || afatfs.freeFile.physicalSize == 0) {
+        return false;
+    }
+
+    *firstSector = afatfs_fileClusterToPhysical(afatfs.freeFile.firstCluster, 0);
+    *sectorCount = afatfs.freeFile.physicalSize / AFATFS_SECTOR_SIZE;
+
+    return true;
+#else
+    UNUSED(firstSector);
+    UNUSED(sectorCount);
+
+    return false;
+#endif
+}
+#endif
+
 /**
  * True while initialization is formatting a blank card.
  */

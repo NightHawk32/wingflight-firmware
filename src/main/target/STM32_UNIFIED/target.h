@@ -86,6 +86,7 @@
 
 #define USE_SDCARD
 #define USE_SDCARD_SPI
+#define USE_SDCARD_BENCH        // CLI sd_bench, remove to leave it out of the build
 
 #define USE_FLASHFS
 #define USE_FLASHFS_LOOP

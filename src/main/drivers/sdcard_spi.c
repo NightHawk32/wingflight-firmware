@@ -25,6 +25,8 @@
 
 #ifdef USE_SDCARD_SPI
 
+#include "common/maths.h"
+
 #include "drivers/bus_spi.h"
 #include "drivers/dma.h"
 #include "drivers/dma_reqmap.h"
@@ -521,6 +523,24 @@ static bool sdcard_checkInitDone(void)
     return status == 0x00;
 }
 
+// Operating clock once the card is initialized; see sdcardSpi_setClockHz()
+static uint32_t sdcardSpiClockHz = SDCARD_MAX_SPI_CLK_HZ;
+
+#ifdef USE_SDCARD_BENCH
+/**
+ * Run the card at a lower SPI clock than the usual maximum, e.g. to tell a slow card from a marginal SPI link.
+ * 0 restores the maximum. Applies from the next operation, and persists across card resets.
+ */
+void sdcardSpi_setClockHz(uint32_t clockHz)
+{
+    sdcardSpiClockHz = clockHz ? MIN(clockHz, (uint32_t)SDCARD_MAX_SPI_CLK_HZ) : SDCARD_MAX_SPI_CLK_HZ;
+
+    if (sdcard.state >= SDCARD_STATE_READY) {
+        spiSetClkDivisor(&sdcard.dev, spiCalculateDivider(sdcardSpiClockHz));
+    }
+}
+#endif
+
 void sdcardSpi_preInit(const sdcardConfig_t *config)
 {
     spiPreinitRegister(config->chipSelectTag, IOCFG_IPU, 1);
@@ -735,7 +755,7 @@ static bool sdcardSpi_poll(void)
 
                 // Now we're done with init and we can switch to the full speed clock (<25MHz)
 
-                spiSetClkDivisor(&sdcard.dev, spiCalculateDivider(SDCARD_MAX_SPI_CLK_HZ));
+                spiSetClkDivisor(&sdcard.dev, spiCalculateDivider(sdcardSpiClockHz));
 
                 sdcard.multiWriteBlocksRemain = 0;
 

@@ -73,3 +73,7 @@ bool sdcard_poll(void);
 const sdcardMetadata_t* sdcard_getMetadata(void);
 
 void sdcard_setProfilerCallback(sdcard_profilerCallback_c callback);
+
+#if defined(USE_SDCARD_SPI) && defined(USE_SDCARD_BENCH)
+void sdcardSpi_setClockHz(uint32_t clockHz);
+#endif

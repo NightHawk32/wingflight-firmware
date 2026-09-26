@@ -3067,6 +3067,228 @@ static void cliWriteBytes(const uint8_t *buffer, int count)
     }
 }
 
+#ifdef USE_SDCARD_BENCH
+// Longest a single block may take before the card counts as having stopped responding
+#define SD_BENCH_STALL_US         3000000
+// Blocks per pre-erased multiple block write (64KiB), similar to the blackbox's writes through asyncfatfs
+#define SD_BENCH_MULTI_BLOCK_RUN  128u
+#define SD_BENCH_DEFAULT_MB       8
+#define SD_BENCH_SLOW_CLOCK_HZ    4000000
+
+// Upper bounds of the latency histogram buckets; the last bucket collects everything slower
+static const uint16_t sdBenchBucketMs[] = { 1, 2, 5, 10, 20, 50, 100, 250, 500, 1000 };
+
+typedef struct sdBenchResult_s {
+    uint32_t blocks;
+    uint32_t totalUs;
+    uint32_t maxUs;
+    uint32_t maxBlock;
+    uint32_t histogram[ARRAYLEN(sdBenchBucketMs) + 1];
+    bool stalled;
+} sdBenchResult_t;
+
+static volatile bool sdBenchReadDone;
+
+static void sdBenchReadComplete(sdcardBlockOperation_e operation, uint32_t blockIndex, uint8_t *buffer, uint32_t callbackData)
+{
+    UNUSED(operation);
+    UNUSED(blockIndex);
+    UNUSED(buffer);
+    UNUSED(callbackData);
+
+    sdBenchReadDone = true;
+}
+
+// Wait for the card to accept the next operation. False if it doesn't within SD_BENCH_STALL_US of startUs.
+static bool sdBenchWaitReady(timeUs_t startUs)
+{
+    while (!sdcard_poll()) {
+        if (micros() - startUs > SD_BENCH_STALL_US || !sdcard_isFunctional()) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static void sdBenchRecord(sdBenchResult_t *result, uint32_t block, uint32_t durationUs)
+{
+    result->blocks++;
+    result->totalUs += durationUs;
+
+    if (durationUs > result->maxUs) {
+        result->maxUs = durationUs;
+        result->maxBlock = block;
+    }
+
+    unsigned bucket = 0;
+    while (bucket < ARRAYLEN(sdBenchBucketMs) && durationUs >= sdBenchBucketMs[bucket] * 1000u) {
+        bucket++;
+    }
+    result->histogram[bucket]++;
+}
+
+static void sdBenchRead(sdBenchResult_t *result, uint32_t firstBlock, uint32_t blockCount, uint8_t *buffer)
+{
+    for (uint32_t i = 0; i < blockCount; i++) {
+        const uint32_t block = firstBlock + i;
+        const timeUs_t startUs = micros();
+
+        sdBenchReadDone = false;
+        while (!sdcard_readBlock(block, buffer, sdBenchReadComplete, 0)) {
+            if (!sdBenchWaitReady(startUs)) {
+                result->stalled = true;
+                return;
+            }
+        }
+        while (!sdBenchReadDone) {
+            sdcard_poll();
+            if (micros() - startUs > SD_BENCH_STALL_US || !sdcard_isFunctional()) {
+                result->stalled = true;
+                return;
+            }
+        }
+
+        sdBenchRecord(result, block, micros() - startUs);
+    }
+}
+
+/**
+ * Time from starting each block's write until the card can take the next command, which includes the time the card
+ * keeps itself busy programming the block: the delay that can stall logging.
+ */
+static void sdBenchWrite(sdBenchResult_t *result, uint32_t firstBlock, uint32_t blockCount, bool multipleBlock, uint8_t *buffer)
+{
+    for (uint32_t i = 0; i < blockCount; i++) {
+        const uint32_t block = firstBlock + i;
+        const timeUs_t startUs = micros();
+
+        if (multipleBlock && i % SD_BENCH_MULTI_BLOCK_RUN == 0) {
+            while (sdcard_beginWriteBlocks(block, MIN(SD_BENCH_MULTI_BLOCK_RUN, blockCount - i)) == SDCARD_OPERATION_BUSY) {
+                if (!sdBenchWaitReady(startUs)) {
+                    result->stalled = true;
+                    return;
+                }
+            }
+        }
+
+        sdcardOperationStatus_e status;
+        while ((status = sdcard_writeBlock(block, buffer, NULL, 0)) == SDCARD_OPERATION_BUSY) {
+            if (!sdBenchWaitReady(startUs)) {
+                result->stalled = true;
+                return;
+            }
+        }
+        if (status == SDCARD_OPERATION_FAILURE || !sdBenchWaitReady(startUs)) {
+            result->stalled = true;
+            return;
+        }
+
+        sdBenchRecord(result, block, micros() - startUs);
+    }
+}
+
+static void sdBenchPrint(const char *name, const sdBenchResult_t *result)
+{
+    const uint32_t kBps = result->totalUs ? (uint32_t)((uint64_t)result->blocks * 512 * 1000 / result->totalUs) : 0;
+
+    cliPrintLinef("%s: %u blocks, %u kB/s, max %u.%u ms (block %u)", name, result->blocks, kBps,
+        result->maxUs / 1000, (result->maxUs / 100) % 10, result->maxBlock);
+
+    cliPrint("  ");
+    for (unsigned i = 0; i < ARRAYLEN(sdBenchBucketMs); i++) {
+        cliPrintf("<%ums:%u ", sdBenchBucketMs[i], result->histogram[i]);
+    }
+    cliPrintLinef(">=%ums:%u", sdBenchBucketMs[ARRAYLEN(sdBenchBucketMs) - 1], result->histogram[ARRAYLEN(sdBenchBucketMs)]);
+
+    if (result->stalled) {
+        cliPrintLinef("  Card stopped responding after %u blocks", result->blocks);
+    }
+}
+
+/**
+ * Benchmark the card's block latencies by reading and overwriting the unused space of the asyncfatfs freefile.
+ */
+static void cliSdBench(const char *cmdName, char *cmdline)
+{
+    uint32_t megabytes = SD_BENCH_DEFAULT_MB;
+    bool slowClock = false;
+
+    for (char *arg = strtok(cmdline, " "); arg; arg = strtok(NULL, " ")) {
+        if (strcasecmp(arg, "slow") == 0) {
+            slowClock = true;
+        } else if (atoi(arg) > 0) {
+            megabytes = atoi(arg);
+        } else {
+            cliShowParseError(cmdName);
+            return;
+        }
+    }
+
+    if (ARMING_FLAG(ARMED)) {
+        cliPrintErrorLinef(cmdName, "NOT AVAILABLE WHILE ARMED");
+        return;
+    }
+    if (!blackboxMayEditConfig()) {
+        cliPrintErrorLinef(cmdName, "STOP BLACKBOX LOGGING FIRST");
+        return;
+    }
+
+    uint32_t firstBlock, freeBlocks;
+    if (afatfs_getFilesystemState() != AFATFS_FILESYSTEM_STATE_READY || !afatfs_getFreeFileSectors(&firstBlock, &freeBlocks)) {
+        cliPrintErrorLinef(cmdName, "NO SD CARD FILESYSTEM READY");
+        return;
+    }
+
+    const uint32_t blockCount = MIN(megabytes * 1024 * 1024 / 512, freeBlocks);
+
+#ifdef USE_SDCARD_SPI
+    if (slowClock) {
+        sdcardSpi_setClockHz(SD_BENCH_SLOW_CLOCK_HZ);
+    }
+#else
+    if (slowClock) {
+        cliPrintErrorLinef(cmdName, "SLOW CLOCK ONLY WITH SPI CARDS");
+        return;
+    }
+#endif
+
+    cliPrintLinef("Benchmarking %u kB from block %u%s, overwriting unused space in the log reservation",
+        blockCount / 2, firstBlock, slowClock ? " at a 4MHz SPI clock" : "");
+
+    static uint8_t buffer[512] __attribute__((aligned(4)));
+    for (unsigned i = 0; i < sizeof(buffer); i++) {
+        buffer[i] = i ^ 0x5A;
+    }
+
+    // Keep the passes apart on the card, so the reads don't hit what the writes just touched
+    const uint32_t writeBlocks = blockCount / 2;
+    const uint32_t singleBlocks = writeBlocks / 4;
+    sdBenchResult_t result;
+
+    memset(&result, 0, sizeof(result));
+    sdBenchRead(&result, firstBlock + writeBlocks, blockCount - writeBlocks, buffer);
+    sdBenchPrint("Read", &result);
+
+    // Single block writes first: the pre-erased multiple block writes are the likelier to make a card stop responding
+    if (!result.stalled) {
+        memset(&result, 0, sizeof(result));
+        sdBenchWrite(&result, firstBlock + writeBlocks - singleBlocks, singleBlocks, false, buffer);
+        sdBenchPrint("Write, single block", &result);
+    }
+
+    if (!result.stalled) {
+        memset(&result, 0, sizeof(result));
+        sdBenchWrite(&result, firstBlock, writeBlocks - singleBlocks, true, buffer);
+        sdBenchPrint("Write, multiple block (as logging)", &result);
+    }
+
+#ifdef USE_SDCARD_SPI
+    sdcardSpi_setClockHz(0);
+#endif
+}
+#endif // USE_SDCARD_BENCH
+
 static void cliSdInfo(const char *cmdName, char *cmdline)
 {
     UNUSED(cmdName);
@@ -6907,6 +7129,9 @@ const clicmd_t cmdTable[] = {
     CLI_COMMAND_DEF("rxfail", "show/set rx failsafe settings", NULL, cliRxFailsafe),
     CLI_COMMAND_DEF("save", "save and reboot", NULL, cliSave),
 #ifdef USE_SDCARD
+#ifdef USE_SDCARD_BENCH
+    CLI_COMMAND_DEF("sd_bench", "benchmark sdcard block latencies", "[<MB>] [slow]", cliSdBench),
+#endif
     CLI_COMMAND_DEF("sd_info", "sdcard info", NULL, cliSdInfo),
 #endif
     CLI_COMMAND_DEF("serial", "configure serial ports", NULL, cliSerial),
