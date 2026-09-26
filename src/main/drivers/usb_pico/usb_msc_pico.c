@@ -69,12 +69,71 @@ static int8_t pico_sdspi_IsWriteProtected(uint8_t lun)
     UNUSED(lun);
     return 0;
 }
+// Longest one block may take before the host is told the operation failed, instead of the device hanging. Longer
+// than the SD driver's own write timeout, so a card that is merely slow is waited for.
+#define PICO_SDSPI_OP_TIMEOUT_MS 3000
+
+static volatile bool pico_sdspi_opDone;
+static volatile bool pico_sdspi_opFailed;
+
+static void pico_sdspi_opComplete(sdcardBlockOperation_e operation, uint32_t blockIndex, uint8_t *buffer, uint32_t callbackData)
+{
+    UNUSED(operation);
+    UNUSED(blockIndex);
+    UNUSED(callbackData);
+
+    // The driver passes a NULL buffer when the operation failed
+    pico_sdspi_opFailed = buffer == NULL;
+    pico_sdspi_opDone = true;
+}
+
+// Whether an operation started at startMs has to be given up: it ran out of time, or the card was reset meanwhile
+// (a reset loses whatever was being written, even if the card comes back) or stopped responding altogether.
+static bool pico_sdspi_opAbandoned(timeMs_t startMs)
+{
+    return !sdcard_isInitialized() || millis() - startMs > PICO_SDSPI_OP_TIMEOUT_MS;
+}
+
+// Poll the card until it takes the next operation. False if the operation has to be given up.
+static bool pico_sdspi_waitReady(timeMs_t startMs)
+{
+    while (!sdcard_poll()) {
+        if (pico_sdspi_opAbandoned(startMs)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Poll the card until the pending operation's callback. False if the operation failed or has to be given up.
+static bool pico_sdspi_waitDone(timeMs_t startMs)
+{
+    while (!pico_sdspi_opDone) {
+        sdcard_poll();
+        if (!pico_sdspi_opDone && pico_sdspi_opAbandoned(startMs)) {
+            return false;
+        }
+    }
+
+    return !pico_sdspi_opFailed;
+}
+
 static int8_t pico_sdspi_Read(uint8_t lun, uint8_t *buf, uint32_t blk_addr, uint16_t blk_count)
 {
     UNUSED(lun);
     for (uint16_t i = 0; i < blk_count; i++) {
-        while (sdcard_readBlock(blk_addr + i, buf + (512u * i), NULL, 0) == 0) {}
-        while (sdcard_poll() == 0) {}
+        const timeMs_t startMs = millis();
+
+        pico_sdspi_opDone = false;
+        while (!sdcard_readBlock(blk_addr + i, buf + (512u * i), pico_sdspi_opComplete, 0)) {
+            if (!pico_sdspi_waitReady(startMs)) {
+                return -1;
+            }
+        }
+        if (!pico_sdspi_waitDone(startMs)) {
+            return -1;
+        }
     }
     mscSetActive();
     return 0;
@@ -83,12 +142,20 @@ static int8_t pico_sdspi_Write(uint8_t lun, uint8_t *buf, uint32_t blk_addr, uin
 {
     UNUSED(lun);
     for (uint16_t i = 0; i < blk_count; i++) {
-        sdcardOperationStatus_e st = sdcard_writeBlock(blk_addr + i, buf + (512u * i), NULL, 0);
-        if (st == SDCARD_OPERATION_IN_PROGRESS) {
-            while (sdcard_poll() == 0) {}
-        } else if (st == SDCARD_OPERATION_SUCCESS) {
-            // ok
-        } else {
+        const timeMs_t startMs = millis();
+        sdcardOperationStatus_e status;
+
+        pico_sdspi_opDone = false;
+        while ((status = sdcard_writeBlock(blk_addr + i, buf + (512u * i), pico_sdspi_opComplete, 0)) == SDCARD_OPERATION_BUSY) {
+            if (!pico_sdspi_waitReady(startMs)) {
+                return -1;
+            }
+        }
+        if (status == SDCARD_OPERATION_FAILURE) {
+            return -1;
+        }
+        // The callback comes once the block is sent; the card then stays busy until it has stored it
+        if ((status == SDCARD_OPERATION_IN_PROGRESS && !pico_sdspi_waitDone(startMs)) || !pico_sdspi_waitReady(startMs)) {
             return -1;
         }
     }
