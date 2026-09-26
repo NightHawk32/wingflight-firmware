@@ -167,12 +167,23 @@ static bool softSerialClaimGpioBase(ioTag_t tagTx, ioTag_t tagRx)
 
 // --- PIO programs (pico-examples uart_tx.pio / uart_rx.pio, pioasm output) ---
 
+// The stop bit is an instruction of its own rather than the side-set/delay of
+// the `pull` (as in pico-examples), so that "PC back at the pull" means the
+// frame is really over: the last `jmp x--` of bit 7 falls through to the next
+// address while its own delay cycles are still running, so with the stop bit
+// folded into the pull the PC already read 0 for most of bit 7. The BIDIR
+// turnaround releases the wire on that PC test - it let go during bit 7, and
+// a 0 in bit 7 (wire high on an inverted line) was left floating high with no
+// stop bit, corrupting the frame's last byte (seen on FBUS checksums).
+// Still exactly 10 bit times per character back to back: 7 cycles of stop
+// bit here plus the 1-cycle pull, which keeps driving the stop level.
 static const uint16_t uart_tx_program_instructions[] = {
             //     .wrap_target
-    0x9fa0, //  0: pull   block           side 1 [7]   ; stop bit (or idle-high wait)
+    0x98a0, //  0: pull   block           side 1       ; idle (stop level) wait / last 1/8 of stop bit
     0xf727, //  1: set    x, 7            side 0 [7]   ; start bit
     0x6001, //  2: out    pins, 1                      ; data bits, LSB first
     0x0642, //  3: jmp    x--, 2                 [6]
+    0xbe42, //  4: nop                    side 1 [6]   ; stop bit
             //     .wrap
 };
 
@@ -211,13 +222,19 @@ static float softSerialClkdiv(uint32_t baud)
     return (float)clock_get_hz(clk_sys) / (SOFTSERIAL_PIO_CYCLES_PER_BIT * (float)baud);
 }
 
-static bool softSerialTxProgramInit(PIO pio, uint sm, uint pin, uint32_t baud)
+static bool softSerialTxProgramInit(PIO pio, uint sm, uint pin, uint32_t baud, bool inverted)
 {
-    // Drive the pin to its idle level before handing it to PIO, so hooking
-    // up doesn't glitch a start bit onto the wire.
+    // Order matters on an inverted line. pio_gpio_init() rewrites the whole
+    // pad CTRL register and so clears the output inverter; on a BIDIR
+    // turnaround the pin is already PIO's, so doing that after enabling the
+    // output drove the non-inverted idle level - a ~1.6us start-bit pulse at
+    // 460800 that receivers took as the start of the reply's first byte.
+    // So: take the pin while it is still an input (the RX program left it
+    // one), set the inverter, and only then drive it to its idle level.
+    pio_gpio_init(pio, pin);
+    gpio_set_outover(pin, inverted ? GPIO_OVERRIDE_INVERT : GPIO_OVERRIDE_NORMAL);
     pio_sm_set_pins_with_mask64(pio, sm, 1ull << pin, 1ull << pin);
     pio_sm_set_pindirs_with_mask64(pio, sm, 1ull << pin, 1ull << pin);
-    pio_gpio_init(pio, pin);
 
     pio_sm_config c = pio_get_default_sm_config();
     sm_config_set_wrap(&c, txProgramOffset, txProgramOffset + ARRAYLEN(uart_tx_program_instructions) - 1);
@@ -248,6 +265,10 @@ static bool softSerialRxProgramInit(PIO pio, uint sm, uint pin, uint32_t baud, b
     // low for inverted protocols (the inover inverter below flips what the
     // SM sees, but the pull resistor acts on the real pad).
     gpio_set_pulls(pin, !inverted, inverted);
+    // Input inverter after pio_gpio_init() (which clears it) but before the
+    // SM starts: its first instruction waits for a 0, which is what an
+    // inverted line's idle level reads as without it.
+    gpio_set_inover(pin, inverted ? GPIO_OVERRIDE_INVERT : GPIO_OVERRIDE_NORMAL);
 
     pio_sm_config c = pio_get_default_sm_config();
     sm_config_set_wrap(&c, rxProgramOffset, rxProgramOffset + ARRAYLEN(uart_rx_program_instructions) - 1);
@@ -274,11 +295,8 @@ static bool softSerialBidirSwitchToTx(picoSoftSerial_t *s)
     pio_sm_set_enabled(softSerialPio, s->rxSm, false);
 
     const uint pin = IO_Pin(s->txIO);
-    if (!softSerialTxProgramInit(softSerialPio, s->txSm, pin, s->port.baudRate)) {
+    if (!softSerialTxProgramInit(softSerialPio, s->txSm, pin, s->port.baudRate, (s->port.options & SERIAL_INVERTED) != 0)) {
         return false;
-    }
-    if (s->port.options & SERIAL_INVERTED) {
-        gpio_set_outover(pin, GPIO_OVERRIDE_INVERT);
     }
     s->bidirTxActive = true;
     return true;
@@ -294,9 +312,6 @@ static void softSerialBidirSwitchToRx(picoSoftSerial_t *s)
 
     const uint pin = IO_Pin(s->rxIO);
     softSerialRxProgramInit(softSerialPio, s->rxSm, pin, s->port.baudRate, (s->port.options & SERIAL_INVERTED) != 0);
-    if (s->port.options & SERIAL_INVERTED) {
-        gpio_set_inover(pin, GPIO_OVERRIDE_INVERT);
-    }
     s->bidirTxActive = false;
 }
 
@@ -776,14 +791,11 @@ static serialPort_t *softSerialOpenSlot(picoSoftSerial_t *s, ioTag_t tagTx, ioTa
 
         if (!bidir) {
             const uint txPin = IO_Pin(s->txIO);
-            if (!softSerialTxProgramInit(softSerialPio, sm, txPin, baud)) {
+            if (!softSerialTxProgramInit(softSerialPio, sm, txPin, baud, (options & SERIAL_INVERTED) != 0)) {
                 pio_sm_unclaim(softSerialPio, sm);
                 s->txSm = -1;
                 IORelease(s->txIO); // don't leave the pin marked owned on a failed open
                 return NULL;
-            }
-            if (options & SERIAL_INVERTED) {
-                gpio_set_outover(txPin, GPIO_OVERRIDE_INVERT);
             }
         }
         // bidir: the SM is claimed but left uninitialized/disabled - idle
@@ -803,9 +815,6 @@ static serialPort_t *softSerialOpenSlot(picoSoftSerial_t *s, ioTag_t tagTx, ioTa
 
             const uint rxPin = IO_Pin(s->rxIO);
             rxOk = softSerialRxProgramInit(softSerialPio, sm, rxPin, baud, (options & SERIAL_INVERTED) != 0);
-            if (rxOk && (options & SERIAL_INVERTED)) {
-                gpio_set_inover(rxPin, GPIO_OVERRIDE_INVERT);
-            }
         }
         if (!rxOk) {
             if (sm >= 0) {
