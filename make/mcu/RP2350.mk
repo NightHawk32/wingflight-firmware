@@ -175,8 +175,13 @@ PICO_MEM_LD_FLAGS = $(foreach fn, $(PICO_MEM_WRAP_FNS), -Wl,--wrap=$(fn))
 
 EXTRA_LD_FLAGS += $(PICO_STDIO_LD_FLAGS) $(PICO_FLOAT_LD_FLAGS) $(PICO_DOUBLE_LD_FLAGS) $(PICO_BIT_OPS_LD_FLAGS) $(PICO_MEM_LD_FLAGS)
 
+# drivers/usb_pico must be an -I dir so TinyUSB's own sources pick up its
+# tusb_config.h. Otherwise they fall back to pico_stdio_usb's (SYS_INCLUDE_DIRS,
+# -isystem, searched later), which has no CFG_TUD_MSC: the MSC class driver
+# is then compiled out and SET_CONFIGURATION fails in MSC mode.
 INCLUDE_DIRS += \
             $(ROOT)/src/main/drivers \
+            $(ROOT)/src/main/drivers/usb_pico \
             $(ROOT)/lib/main/STM32_USB_Device_Library/Core/inc \
             $(ROOT)/lib/main/STM32_USB_Device_Library/Class/msc/inc \
             $(ROOT)/src/main/drivers/rp2350_config

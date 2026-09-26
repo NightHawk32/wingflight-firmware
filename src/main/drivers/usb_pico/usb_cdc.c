@@ -44,6 +44,11 @@
 #include "platform/multicore.h"
 #endif
 
+#ifdef USE_USB_MSC
+// Set by mscStart() (usb_msc_pico.c)
+extern bool pico_msc_active;
+#endif
+
 #ifndef CDC_USB_TASK_INTERVAL_US
 #define CDC_USB_TASK_INTERVAL_US 1000
 #endif
@@ -123,6 +128,14 @@ void cdc_usb_background_task(void)
 
 static void low_priority_worker_irq(void)
 {
+#ifdef USE_USB_MSC
+    // In MSC mode tud_task() runs the SCSI callbacks, which do blocking SD-card
+    // I/O (pico-sdk panics on sleeping in an exception handler). Leave the
+    // pumping to the owning core's thread-mode loop instead.
+    if (pico_msc_active) {
+        return;
+    }
+#endif
     if (mutex_try_enter(&cdc_usb_mutex, NULL)) {
         cdc_usb_service();
         mutex_exit(&cdc_usb_mutex);
