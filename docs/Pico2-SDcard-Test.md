@@ -12,6 +12,8 @@ be used as-is.
 
 | Function | GPIO | Pico 2 pin | Notes |
 |---|---|---|---|
+| SOFTSERIAL1 (loopback) | 4 | 6 | optional, only for the loopback test below |
+| **SOFTSERIAL1 FBUS** | 5 | 7 | single wire to the receiver's FBUS pin (reference: GPIO22) |
 | UART1_BIDIR_EN | 9 | 12 | bench choice (reference: GPIO30) |
 | GYRO_INT | 11 | 15 | as reference |
 | UART1 TX | 12 | 16 | as reference |
@@ -31,8 +33,17 @@ SD MISO has to be on GPIO28: the other SPI1 RX options are GPIO8 (motor 1),
 GPIO12 (UART1 TX) and GPIO24 (not on header). SD_CS is a plain GPIO and can
 move to any free pin.
 
-This uses the reference layout's SOFTSERIAL1 TX (GPIO22) and SOFTSERIAL2 TX
-(GPIO28), so soft serial is not available in this setup.
+The SD card takes the reference layout's SOFTSERIAL1 TX (GPIO22) and
+SOFTSERIAL2 TX (GPIO28), so soft serial moves to other pins. Soft serial is a
+PIO UART (pio1), which can use any GPIO, so this is only a matter of free
+pins. Here SOFTSERIAL1 carries the FBUS receiver on GPIO5. Free header pins
+for more ports: GPIO0, 1, 3, 4, 6, 7, 8, 10, 14, 15, 20, 21 (GPIO2 is
+motor 1).
+
+In half duplex (`serialrx_halfduplex = ON`, as FBUS uses) a soft serial port
+uses its TX pin only, as a single wire. No jumper, switch or RX pin is needed.
+The receiver can be on GPIO5 alone. It also works if GPIO4 is still
+jumpered to GPIO5 from the loopback test, since GPIO4 is then an unused input.
 
 A bare micro-SD socket needs 10k pull-ups to 3.3V on MISO and CS (and on the
 unused DAT1/DAT2). Breakout modules usually have them already.
@@ -66,8 +77,27 @@ set sdcard_mode = SPI
 set sdcard_spi_bus = 2
 set blackbox_device = SDCARD
 
+# FBUS receiver on SOFTSERIAL1 (serial port 30), single wire on GPIO5.
+# Resource index 11 is SOFTSERIAL1, 12 is SOFTSERIAL2.
+feature SOFTSERIAL
+feature RX_SERIAL
+feature TELEMETRY
+resource SERIAL_TX 11 A05
+serial 30 64 115200 57600 0 115200
+set serialrx_provider = FBUS
+set serialrx_inverted = ON
+set serialrx_halfduplex = ON
+
 save
 ```
+
+The same settings as a paste-in file:
+[Pico2-SDcard-Test.config](Pico2-SDcard-Test.config).
+
+Without `feature SOFTSERIAL` the soft serial ports are left out even when
+they have pins, and `serial` does not list port 30. If RX_SERIAL was on UART1
+before, clear it there (`serial 0 0 115200 57600 0 115200`), since only one
+port can have the RX function.
 
 If a `resource` command reports a pin as already in use, free the old
 assignment first with `resource <NAME> <index> NONE`.
@@ -98,3 +128,28 @@ assignment first with `resource <NAME> <index> NONE`.
 - Arm (with the default `blackbox_mode = NORMAL`) and check that a log file
   appears after disarming.
 - With USB mass storage (`USE_USB_MSC`) the card can be read from the PC.
+
+## Checking soft serial
+
+- **FBUS:** RXLOSS is gone from the arming disable flags in `status`, and the
+  receiver's channels show up (Receiver tab, or MSP_RC). Judge telemetry
+  only outside CLI mode: the
+  CLI stops the telemetry task, so in CLI the FC answers polls with null
+  frames only. Measured with a Saleae MSO on GPIO5 (10s, 460800 inverted):
+  control frame every 7.0ms, 0 framing errors in 64105 bytes, 979 of 979 FC
+  replies with a valid checksum (including telemetry data frames), reply
+  starting 520-850us after the poll.
+- **Loopback:** remove the receiver, set `resource SERIAL_TX 11 A04` and
+  `resource SERIAL_RX 11 A05`, and jumper GPIO4 to GPIO5. Then
+  `serialpassthrough 30 <baud>` echoes back everything sent from a terminal.
+  Measured 9600 baud to 12 Mbaud, byte-exact, with the bit time within
+  0.01% of nominal up to 1 Mbaud. The echo tops out at about 115 kB/s. That
+  is the passthrough loop over USB, not the port.
+- `serialpassthrough 30 0 rxtx reset` follows the terminal's baud rate
+  setting, and dropping DTR (closing the terminal) resets the board.
+  Without `reset`, only a power cycle ends passthrough.
+- **CPU load:** with FBUS running, the soft serial interrupts plus the FBUS
+  byte parsing take about 1% of core 0 (sampled PC, 3.2kHz gyro loop, board
+  idle otherwise). There is one interrupt per received byte, about 5000/s
+  for FBUS. The 8-byte PIO RX FIFO gives the interrupt about 170us at
+  460800 before bytes are lost.
