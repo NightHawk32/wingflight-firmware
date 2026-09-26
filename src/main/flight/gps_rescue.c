@@ -192,7 +192,7 @@ static void idleTasks(void)
     // in gpsRescueGetThrottle() but it would be better handled here.
 
     const float ct = getCosTiltAngle();
-    if (ct > 0.5 && ct < 0.96 && throttleSamples < 1E6 && rescueThrottle > 1070) { //5 to 45 degrees tilt
+    if (ct > 0.5f && ct < 0.96f && throttleSamples < 1E6f && rescueThrottle > 1070) { //5 to 45 degrees tilt
         //TO DO: only sample when acceleration is low
         uint16_t adjustedThrottle = 1000 + (rescueThrottle - PWM_RANGE_MIN) * ct;
         if (throttleSamples == 0) {
@@ -612,9 +612,9 @@ void updateGPSRescueState(void)
         // At this point, do not let the target altitude go up anymore, so if we overshoot, we dont' move in a parabolic trajectory
         // If we are over 150% of average magnitude, just disarm since we're pretty much home
         if (rescueState.sensor.currentAltitudeCm < GPS_RESCUE_ALMOST_LANDING_ALT) {
-            magnitudeTrigger = rescueState.sensor.accMagnitudeAvg * 1.2;
+            magnitudeTrigger = rescueState.sensor.accMagnitudeAvg * 1.2f;
         } else {
-            magnitudeTrigger = rescueState.sensor.accMagnitudeAvg * 1.5;
+            magnitudeTrigger = rescueState.sensor.accMagnitudeAvg * 1.5f;
         }
 
         if (rescueState.sensor.accMagnitude > magnitudeTrigger) {

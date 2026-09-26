@@ -35,7 +35,12 @@ static IO_t beeperIO = DEFIO_IO(NONE);
 static bool beeperInverted = false;
 static uint16_t beeperFrequency = 0;
 
-#ifdef USE_PWM_OUTPUT
+#if defined(USE_PWM_OUTPUT) && defined(PICO)
+// PWM-slice implementation in drivers/pwm_beeper_pico.c
+void pwmWriteBeeper(bool on);
+void pwmToggleBeeper(void);
+void beeperPwmInit(const ioTag_t tag, uint16_t frequency);
+#elif defined(USE_PWM_OUTPUT)
 static pwmOutputPort_t beeperPwm;
 static uint16_t freqBeep = 0;
 

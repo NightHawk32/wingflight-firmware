@@ -419,23 +419,23 @@ void send_SBS10G(
    uint32_t lat, lon;
    // scale latitude/longitude (add 0.5 for correct rounding)
    if (latitude > 0) {
-     lat = (600000.0*latitude) + 0.5;
+     lat = (600000.0f*latitude) + 0.5f;
    }
    else {
-     lat = (-600000.0*latitude) + 0.5;
+     lat = (-600000.0f*latitude) + 0.5f;
      // toggle south bit
      lat |= 0x4000000;
    }
    if (longitude > 0) {
-     lon = (600000.0*longitude) + 0.5;
+     lon = (600000.0f*longitude) + 0.5f;
    }
    else {
-     lon = (-600000.0*longitude) + 0.5;
+     lon = (-600000.0f*longitude) + 0.5f;
      // toggle west bit
      lon |= 0x8000000;
    }
    // convert altitude (add 0.5 for correct rounding)
-   uint16_t alt = (altitudeMeters>=-820 && altitudeMeters<=4830) ?(1.25*(altitudeMeters+820)) + 0.5  : 0;
+   uint16_t alt = (altitudeMeters>=-820 && altitudeMeters<=4830) ?(1.25f*(altitudeMeters+820)) + 0.5f  : 0;
    // error check speed
    if (speed < 512) {
     // set speed enable bit
@@ -479,7 +479,7 @@ void send_SBS10G(
    // error check vario
    if (gpsVario >= -150 && gpsVario <= 260) {
     // scale vario (add 0.5 for correct rounding)
-    vario = (10.0*(gpsVario + 150)) + 0.5;
+    vario = (10.0f*(gpsVario + 150)) + 0.5f;
     // set vario enable
     vario |= 0x1000;
    }

@@ -21,59 +21,77 @@
 
 #include "platform.h"
 
-#if defined(USE_GYRO_CLKIN)
+#if defined(USE_GYRO_CLK)
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
 #include "hardware/pwm.h"
 
-#include "drivers/gyro_clkin.h"
+#include "drivers/accgyro/accgyro.h"
+#include "drivers/accgyro/gyro_sync.h"
 #include "drivers/io.h"
 #include "drivers/io_impl.h"
 #include "drivers/resource.h"
 
-bool gyroClkInInit(ioTag_t tag, uint32_t freqHz, uint8_t resourceIndex)
+#include "pg/gyrodev.h"
+
+#include "sensors/gyro.h"
+
+// PICO version of gyroExternalClockInit() (the STM32 one in gyro_sync.c
+// allocates a hardware timer): a 50% square wave at clockFreq from the PWM
+// slice behind the gyro's CLKIN pin (resource GYRO_CLK).
+
+static IO_t gyroClkIO = IO_NONE;
+
+bool gyroExternalClockInit(const extDevice_t *dev, uint32_t clockFreq)
 {
-    if (!tag || freqHz == 0) {
+    const int cfg = 0; // Only on 1st gyro
+
+    if (&gyro.gyroSensor1.gyroDev.dev != dev) {
         return false;
     }
 
-    const IO_t io = IOGetByTag(tag);
-    if (!io) {
+    const IO_t io = IOGetByTag(gyroDeviceConfig(cfg)->clkInTag);
+    if (!io || clockFreq == 0) {
         return false;
     }
 
-    const uint8_t pin = IO_GPIOPinIdx(io);
-    const uint8_t slice = pwm_gpio_to_slice_num(pin);
-    const uint8_t channel = pwm_gpio_to_channel(pin);
+    if (gyroClkIO) {
+        // already running, OK if the same pin is shared
+        return gyroClkIO == io;
+    }
 
-    // PWM block clock is sys_clk; pick clkdiv=1 and derive wrap directly. The
-    // 16-bit wrap register caps the achievable lower bound (~sys_clk / 65536),
-    // which is well below the typical 32 kHz CLKIN rate even at 150 MHz sys_clk.
-    const uint32_t sysClk = clock_get_hz(clk_sys);
-    const uint32_t divisor = sysClk / freqHz;
+    const uint32_t pin = IO_Pin(io);
+    const uint32_t slice = pwm_gpio_to_slice_num(pin);
+    const uint32_t channel = pwm_gpio_to_channel(pin);
+
+    // clkdiv 1, so the 16-bit wrap sets the lower limit (sys_clk / 65536,
+    // ~2.3kHz at 150MHz) - well below the 32kHz CLKIN rate.
+    const uint32_t divisor = clock_get_hz(clk_sys) / clockFreq;
     if (divisor < 2 || divisor > (uint32_t)UINT16_MAX + 1) {
-        return false;  // freqHz too high (no valid square wave) or too low for 16-bit wrap
+        return false;
     }
-    const uint16_t wrap = (uint16_t)(divisor - 1);
 
-    // RP2350 PWM slices share clkdiv/wrap across both channels, so reconfiguring
-    // a slice that another peripheral has already claimed (motor, servo, beeper)
-    // would clobber its rate. Refuse if the slice is already running. The
-    // inverse direction (a later motor init clobbering CLKIN) is not protected
-    // here and relies on init order — gyro init runs before pwmInit.
+    // Both channels of a slice share clkdiv/wrap: refuse a slice something
+    // else (motor, servo, beeper) already runs. Gyro init runs before
+    // motor/servo init, so they find this slice taken in turn.
     if (pwm_hw->en & (1u << slice)) {
         return false;
     }
 
-    IOInit(io, OWNER_GYRO_CLKIN, resourceIndex);
+    const uint16_t wrap = (uint16_t)(divisor - 1);
+
+    IOInit(io, OWNER_GYRO_CLK, RESOURCE_INDEX(cfg));
     gpio_set_function(pin, GPIO_FUNC_PWM);
-    pwm_set_clkdiv(slice, 1.0f);
+    pwm_set_clkdiv_int_frac(slice, 1, 0);
     pwm_set_wrap(slice, wrap);
     pwm_set_chan_level(slice, channel, (uint16_t)((wrap + 1u) / 2u));
     pwm_set_enabled(slice, true);
+
+    gyroClkIO = io;
 
     return true;
 }

@@ -392,6 +392,16 @@ endif
 # Override the OPTIMISE_SPEED compiler setting to save flash space (mirrors betaflight RP2350.mk).
 OPTIMISE_SPEED  = -O2
 
+# The root Makefile has no LTO switch: -flto is part of OPTIMISATION_BASE, which
+# it has already folded into LTO_FLAGS by the time this file is included. So
+# `LTO := no` above did nothing on its own - every object went through LTO, the
+# hybrid linker script's */cli/*, */config/*, */pg/* patterns never matched,
+# and all code was copied to RAM. Drop -flto here for RAM builds.
+ifeq ($(RUN_FROM_RAM),1)
+OPTIMISATION_BASE := -ffast-math -fmerge-all-constants
+LTO_FLAGS         := $(OPTIMISATION_BASE) $(OPTIMISE_SPEED)
+endif
+
 VCP_SRC = \
             drivers/usb_io.c \
             drivers/usb_pico/usb_cdc.c \
@@ -410,6 +420,7 @@ MCU_COMMON_SRC = \
             drivers/dshot_bidir_pico.c \
             drivers/dshot_pico.c \
             drivers/exti_pico.c \
+            drivers/freq_pico.c \
             drivers/persistent_rp2350.c \
             drivers/pwm_motor_pico.c \
             drivers/pwm_servo_pico.c \
@@ -420,7 +431,9 @@ MCU_COMMON_SRC = \
             drivers/multicore.c \
             drivers/io_pico.c \
             drivers/light_ws2811strip_pico.c \
-            drivers/serial_softserial_pico.c
+            drivers/serial_softserial_pico.c \
+            drivers/serial_escserial_pico.c \
+            drivers/castle_telemetry_pico.c
 
 # Files replaced by the RP2350-specific equivalents above.
 # timer.c/timer_common.c/dma_reqmap.c are the STM32 hardware-timer and
@@ -433,12 +446,15 @@ MCU_EXCLUDES = \
             drivers/persistent.c \
             drivers/system.c \
             drivers/exti.c \
+            drivers/freq.c \
             drivers/rcc.c \
             drivers/rx/rx_pwm.c \
             drivers/timer.c \
             drivers/timer_common.c \
             drivers/dma_reqmap.c \
             drivers/serial_softserial.c \
+            drivers/serial_escserial.c \
+            drivers/castle_telemetry_decode.c \
             drivers/dshot_dpwm.c \
             drivers/pwm_output_dshot.c \
             drivers/pwm_output_dshot_shared.c \

@@ -4281,15 +4281,15 @@ static void castleDecodeTeleFrame(timeUs_t currentTimeUs, castleTelemetry_t* tel
 
     // We might want to use the configured min/max throttle values to create the telemetry
     // per-1000 value instead of the standard 1ms-2ms.
-    float throttleMs = constrainf(CASTLE_DECODE(tele, throttle, THROTTLE, halfMs), 1.0, 2.0);
-    uint16_t throttle = lrintf((throttleMs - 1.0) * 1000.0);
+    float throttleMs = constrainf(CASTLE_DECODE(tele, throttle, THROTTLE, halfMs), 1.0f, 2.0f);
+    uint16_t throttle = lrintf((throttleMs - 1.0f) * 1000.0f);
     uint16_t pwm = lrintf(CASTLE_DECODE(tele, outputPower, POWER, halfMs));
     uint32_t rpm = lrintf(CASTLE_DECODE(tele, rpm, RPM, halfMs));
     uint32_t voltage = lrintf(CASTLE_DECODE(tele, battVoltage, BATTERY_VOLTAGE, halfMs));
     uint32_t current = lrintf(CASTLE_DECODE(tele, battCurrent, BATTERY_CURRENT, halfMs));
     uint32_t becVoltage = lrintf(CASTLE_DECODE(tele, becVoltage, BEC_VOLTAGE, halfMs));
     uint32_t becCurrent = lrintf(CASTLE_DECODE(tele, becCurrent, BEC_CURRENT, halfMs));
-    int16_t temperature = lrintf(castleDecodeTemperature(tele) * 10.0);
+    int16_t temperature = lrintf(castleDecodeTemperature(tele) * 10.0f);
 
     escSensorData[0].id = ESC_SIG_CASTLE;
     escSensorData[0].age = 0;
@@ -4302,7 +4302,7 @@ static void castleDecodeTeleFrame(timeUs_t currentTimeUs, castleTelemetry_t* tel
     escSensorData[0].bec_current = becCurrent;
     escSensorData[0].temperature = temperature;
 
-    setConsumptionCurrent(current / 1000.0);
+    setConsumptionCurrent(current / 1000.0f);
 
     DEBUG(ESC_SENSOR, DEBUG_ESC_1_RPM, rpm);
     DEBUG(ESC_SENSOR, DEBUG_ESC_1_TEMP, temperature);

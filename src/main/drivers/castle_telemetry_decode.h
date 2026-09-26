@@ -19,7 +19,11 @@
 
 #include "platform.h"
 
+#ifdef PICO
+#include "drivers/io_types.h"
+#else
 #include "drivers/timer.h"
+#endif
 
 typedef struct castleTelemetry_s {
     uint16_t generation;
@@ -44,6 +48,13 @@ typedef struct castleTelemetry_s {
 #define CASTLE_PWM_PERIOD_MS_MAX 20
 
 void getCastleTelemetry(castleTelemetry_t* telem);
+#ifdef PICO
+// PIO implementation, drivers/castle_telemetry_pico.c
+bool castlePicoInit(IO_t io, uint16_t rateHz);
+void castlePicoWrite(uint16_t pulseUs);
+void castlePicoEnable(void);
+#else
 struct timerChannel_s;
 bool castleInputConfig(const timerHardware_t* timerHardware,
                        struct timerChannel_s* timerChannel, uint32_t hz);
+#endif

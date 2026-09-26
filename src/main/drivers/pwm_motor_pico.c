@@ -32,6 +32,7 @@
 #include "build/debug_pin.h"
 
 #include "common/maths.h"
+#include "drivers/castle_telemetry_decode.h"
 #include "drivers/io.h"
 #include "drivers/io_impl.h"
 #include "drivers/motor.h"
@@ -53,6 +54,11 @@ FAST_DATA_ZERO_INIT pwmOutputPort_t motors[MAX_SUPPORTED_MOTORS];
 static picoPwmOutput_t picoPwmMotors[MAX_SUPPORTED_MOTORS];
 static bool useUnsyncedPwm = false;
 
+#ifdef USE_TELEMETRY_CASTLE
+// Motor driven by the Castle Link PIO program instead of a PWM slice (-1: none)
+static int8_t castleMotorIndex = -1;
+#endif
+
 static FAST_DATA_ZERO_INIT motorDevice_t motorPwmDevice;
 
 static void pwmWriteUnused(uint8_t index, uint8_t mode, float value)
@@ -65,6 +71,12 @@ static void pwmWriteUnused(uint8_t index, uint8_t mode, float value)
 void pwmShutdownPulsesForAllMotors(void)
 {
     for (int index = 0; index < motorPwmDevice.count; index++) {
+#ifdef USE_TELEMETRY_CASTLE
+        if (index == castleMotorIndex) {
+            castlePicoWrite(0);
+            continue;
+        }
+#endif
         picoPwmMotors[index].level = 0;
         pwm_set_chan_level(picoPwmMotors[index].slice, picoPwmMotors[index].channel, 0);
     }
@@ -97,6 +109,12 @@ static void pwmWriteStandard(uint8_t index, uint8_t mode, float throttle)
 {
     const float value = pwmConvertToInternal(index, mode, throttle);
     const uint32_t level = constrain(lrintf(value * motors[index].pulseScale + motors[index].pulseOffset), 0, LEVELMAX);
+#ifdef USE_TELEMETRY_CASTLE
+    if (index == castleMotorIndex) {
+        castlePicoWrite(level); // pulse in us
+        return;
+    }
+#endif
     if (useUnsyncedPwm) {
         // Writes on a running slice latch at the next wrap (no glitches).
         pwm_set_chan_level(picoPwmMotors[index].slice, picoPwmMotors[index].channel, level);
@@ -153,6 +171,9 @@ bool pwmEnableMotors(void)
             gpio_set_function(IO_Pin(motors[index].io), GPIO_FUNC_PWM);
         }
     }
+#ifdef USE_TELEMETRY_CASTLE
+    castlePicoEnable();
+#endif
 
     return true;
 }
@@ -192,6 +213,13 @@ motorDevice_t *motorPwmDevInit(const motorDevConfig_t *motorDevConfig, uint8_t m
         sLen = 1e-3f;
         useUnsyncedPwm = true;
         break;
+#ifdef USE_TELEMETRY_CASTLE
+    case PWM_TYPE_CASTLE_LINK:
+        sMin = 1e-3f;
+        sLen = 1e-3f;
+        useUnsyncedPwm = true;
+        break;
+#endif
     }
 
     motorPwmVTable.postInit = motorPostInitNull;
@@ -224,6 +252,20 @@ motorDevice_t *motorPwmDevInit(const motorDevConfig_t *motorDevConfig, uint8_t m
         const uint16_t channel = pwm_gpio_to_channel(pin);
 
         IOInit(motors[motorIndex].io, OWNER_MOTOR, RESOURCE_INDEX(motorIndex));
+
+#ifdef USE_TELEMETRY_CASTLE
+        // Castle Link: the first motor gets the PIO program that also reads
+        // the telemetry ticks, with the level written in us; the others
+        // (no telemetry, as on STM32) the inverted PWM below.
+        const bool castle = motorDevConfig->motorPwmProtocol == PWM_TYPE_CASTLE_LINK;
+        if (castle && castleMotorIndex < 0 && castlePicoInit(motors[motorIndex].io, motorDevConfig->motorPwmRate)) {
+            castleMotorIndex = motorIndex;
+            motors[motorIndex].pulseScale = sLen * 1e6f / 1000.0f;
+            motors[motorIndex].pulseOffset = (sMin * 1e6f) - (motors[motorIndex].pulseScale * 1000);
+            motors[motorIndex].enabled = true;
+            continue;
+        }
+#endif
 
         picoPwmMotors[motorIndex].slice = slice;
         picoPwmMotors[motorIndex].channel = channel;
@@ -272,6 +314,11 @@ motorDevice_t *motorPwmDevInit(const motorDevConfig_t *motorDevConfig, uint8_t m
         pwm_config_set_clkdiv_int(&config, clkdiv);
         pwm_config_set_wrap(&config, wrap);
         gpio_set_function(pin, GPIO_FUNC_PWM);
+#ifdef USE_TELEMETRY_CASTLE
+        if (castle) {
+            gpio_set_outover(pin, GPIO_OVERRIDE_INVERT); // Castle pulses are active low
+        }
+#endif
 
         pwm_set_chan_level(slice, channel, 0);
         pwm_init(slice, &config, true);

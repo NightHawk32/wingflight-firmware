@@ -80,6 +80,7 @@
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
 #include "hardware/pio.h"
+#include "hardware/sync.h"
 #include "hardware/timer.h"
 #include "pico/time.h"
 
@@ -88,6 +89,12 @@
 #else
 #define MAX_SOFTSERIAL_PORTS 1
 #endif
+
+// Extra slots for ports opened on an arbitrary pin rather than the
+// SOFTSERIAL1/2 resources - ESC serial passthrough on motor pins, see
+// openSoftSerialOnPin() and drivers/serial_escserial_pico.c.
+#define SOFTSERIAL_PIN_PORTS 2
+#define SOFTSERIAL_SLOT_COUNT (MAX_SOFTSERIAL_PORTS + SOFTSERIAL_PIN_PORTS)
 
 #define SOFTSERIAL_PIO_CYCLES_PER_BIT 8
 
@@ -112,7 +119,7 @@ typedef struct picoSoftSerial_s {
 
 static const struct serialPortVTable picoSoftSerialVTable; // Forward
 
-static picoSoftSerial_t softSerialPorts[MAX_SOFTSERIAL_PORTS];
+static picoSoftSerial_t softSerialPorts[SOFTSERIAL_SLOT_COUNT];
 
 static PIO softSerialPio;
 static int txProgramOffset = -1;
@@ -362,7 +369,7 @@ static void softSerialServiceDrains(void)
     for (;;) {
         uint64_t earliest = 0;
 
-        for (int i = 0; i < MAX_SOFTSERIAL_PORTS; i++) {
+        for (int i = 0; i < SOFTSERIAL_SLOT_COUNT; i++) {
             picoSoftSerial_t *s = &softSerialPorts[i];
             if (!s->active || !s->drainPending) {
                 continue;
@@ -424,7 +431,7 @@ static void softSerialDrainAlarmInit(void)
 
 static void softSerialPioIrqHandler(void)
 {
-    for (int i = 0; i < MAX_SOFTSERIAL_PORTS; i++) {
+    for (int i = 0; i < SOFTSERIAL_SLOT_COUNT; i++) {
         picoSoftSerial_t *s = &softSerialPorts[i];
         if (!s->active) {
             continue;
@@ -663,22 +670,13 @@ static void softSerialSetMode(serialPort_t *instance, portMode_e mode)
     instance->mode = mode;
 }
 
-serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallbackPtr rxCallback, void *rxCallbackData, uint32_t baud, portMode_e mode, portOptions_e options)
+static serialPort_t *softSerialOpenSlot(picoSoftSerial_t *s, ioTag_t tagTx, ioTag_t tagRx, uint8_t pinCfgIndex, serialReceiveCallbackPtr rxCallback, void *rxCallbackData, uint32_t baud, portMode_e mode, portOptions_e options)
 {
-    if (portIndex >= MAX_SOFTSERIAL_PORTS) {
-        return NULL;
-    }
-
     const bool bidir = (options & SERIAL_BIDIR) != 0;
 
-    picoSoftSerial_t *s = &softSerialPorts[portIndex];
     if (s->active) {
         return NULL;
     }
-
-    const int pinCfgIndex = portIndex + RESOURCE_SOFT_OFFSET;
-    const ioTag_t tagRx = serialPinConfig()->ioTagRx[pinCfgIndex];
-    const ioTag_t tagTx = serialPinConfig()->ioTagTx[pinCfgIndex];
 
     if (bidir) {
         // Single-wire half duplex: only the TX pin is used (matches the
@@ -849,6 +847,81 @@ serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallb
     }
 
     return &s->port;
+}
+
+serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallbackPtr rxCallback, void *rxCallbackData, uint32_t baud, portMode_e mode, portOptions_e options)
+{
+    if (portIndex >= MAX_SOFTSERIAL_PORTS) {
+        return NULL;
+    }
+
+    const int pinCfgIndex = portIndex + RESOURCE_SOFT_OFFSET;
+
+    return softSerialOpenSlot(&softSerialPorts[portIndex],
+                              serialPinConfig()->ioTagTx[pinCfgIndex], serialPinConfig()->ioTagRx[pinCfgIndex],
+                              pinCfgIndex, rxCallback, rxCallbackData, baud, mode, options);
+}
+
+// Open a port on one given pin instead of the SOFTSERIAL1/2 resources: TX only
+// (MODE_TX) or single-wire half duplex (SERIAL_BIDIR, MODE_RXTX). Used by ESC
+// serial passthrough on motor pins. The pin keeps its owner; close with
+// closeSoftSerial().
+serialPort_t *openSoftSerialOnPin(ioTag_t tag, uint32_t baud, portMode_e mode, portOptions_e options)
+{
+    if (!tag || (!(options & SERIAL_BIDIR) && (mode & MODE_RX))) {
+        return NULL;
+    }
+
+    for (int i = MAX_SOFTSERIAL_PORTS; i < SOFTSERIAL_SLOT_COUNT; i++) {
+        if (!softSerialPorts[i].active) {
+            return softSerialOpenSlot(&softSerialPorts[i], tag, IO_TAG_NONE, 0, NULL, NULL, baud, mode, options);
+        }
+    }
+
+    return NULL;
+}
+
+// Stop a port and give its state machines back. Its pins are left as
+// inputs with pull-up (the idle level of an ESC signal line).
+void closeSoftSerial(serialPort_t *port)
+{
+    picoSoftSerial_t *s = (picoSoftSerial_t *)port;
+
+    if (!s->active) {
+        return;
+    }
+
+    const uint32_t irqState = save_and_disable_interrupts();
+
+    s->active = false;
+    s->drainPending = false;
+
+    if (s->rxSm >= 0) {
+        pio_set_irqn_source_enabled(softSerialPio, 0, pio_get_rx_fifo_not_empty_interrupt_source(s->rxSm), false);
+        pio_sm_set_enabled(softSerialPio, s->rxSm, false);
+        pio_sm_unclaim(softSerialPio, s->rxSm);
+        s->rxSm = -1;
+    }
+    if (s->txSm >= 0) {
+        pio_set_irqn_source_enabled(softSerialPio, 0, pio_get_tx_fifo_not_full_interrupt_source(s->txSm), false);
+        pio_sm_set_enabled(softSerialPio, s->txSm, false);
+        pio_sm_unclaim(softSerialPio, s->txSm);
+        s->txSm = -1;
+    }
+
+    restore_interrupts(irqState);
+
+    for (int i = 0; i < 2; i++) {
+        const IO_t io = i ? s->rxIO : s->txIO;
+        if (io) {
+            const uint pin = IO_Pin(io);
+            gpio_set_inover(pin, GPIO_OVERRIDE_NORMAL);
+            gpio_set_outover(pin, GPIO_OVERRIDE_NORMAL);
+            IOConfigGPIO(io, IOCFG_IPU);
+        }
+    }
+    s->rxIO = IO_NONE;
+    s->txIO = IO_NONE;
 }
 
 static const struct serialPortVTable picoSoftSerialVTable = {

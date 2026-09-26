@@ -228,7 +228,26 @@
 // there) that cli.c's resetConfigToCustomDefaults() applies on `defaults`.
 #define USE_CUSTOM_DEFAULTS
 
-#define USE_SERIALRX_SBUS
+// Same generic feature set as STM32_UNIFIED's target.h.
+#define USE_BEEPER                      // drivers/sound_beeper.c; frequency mode via pwm_beeper_pico.c
+#define USE_GYRO_CLK                    // gyro CLKIN square wave from a PWM slice, drivers/gyro_clkin_pico.c
+#define USE_USB_DETECT                  // plain GPIO input, drivers/usb_io.c
+#define USE_FREQ_SENSOR                 // RPM inputs: GPIO edge IRQ + cycle counter, drivers/freq_pico.c
+#define USE_ESCSERIAL                   // ESC passthrough on motor pins via PIO soft serial, drivers/serial_escserial_pico.c
+#define USE_TELEMETRY_CASTLE            // Castle Link Live on motor 1 via PIO, drivers/castle_telemetry_pico.c
+#define USE_SERVO_GEOMETRY_CORRECTION
+#undef  USE_GYRO_DLPF_EXPERIMENTAL
+#undef  USE_CRSF_V3
+#undef  USE_RCDEVICE
+
+// Keeps the RTC across a reboot into USB mass storage, so log files get real
+// timestamps. Only needs RTC time, flashfs, MSC and persistent objects, all of
+// which PICO has; common_pre.h grants it inside the STM32 family blocks only.
+#define USE_PERSISTENT_MSC_RTC
+
+// SBUS2 telemetry slots (Futaba): plain serial, 8E2 on the hardware UARTs.
+// common_pre.h grants it inside the STM32F7/H7 blocks only.
+#define USE_TELEMETRY_SBUS2
 
 #undef USE_TRANSPONDER
 #undef USE_TIMER
@@ -294,43 +313,21 @@
 // word yields its LSB as the wire bit, BIT_COMPARE_1=1/BIT_COMPARE_0=0), so
 // the shared core loop needed no PICO branch at all.
 
-// Various untested or unsupported elements are undefined below
-
-#undef USE_RX_SPI
-#undef USE_GYRO_REGISTER_DUMP
-#undef USE_GPS_RESCUE
-#undef USE_GPS_NAV
-#undef USE_PPM
-#undef USE_PWM
-#undef USE_RX_PWM
-#undef USE_RX_PPM
+// Not applicable to PICO. Receivers, telemetry, GPS rescue/nav and multi-gyro
+// are platform independent and stay enabled (common_pre.h defaults) - they
+// only need the generic serial/IO API.
+#undef USE_RX_SPI                       // SPI receivers (CC2500, ELRS, SX1280): no PICO support
 #undef USE_RX_CC2500
 #undef USE_RX_EXPRESSLRS
 #undef USE_RX_SX1280
-#undef USE_SERIALRX_CRSF
-#undef USE_SERIALRX_GHST
-#undef USE_SERIALRX_IBUS
-#undef USE_SERIALRX_JETIEXBUS
-#undef USE_SERIALRX_SPEKTRUM
-#undef USE_SERIALRX_SUMD
-#undef USE_SERIALRX_SUMH
-#undef USE_SERIALRX_XBUS
-#undef USE_SERIALRX_FPORT
+#undef USE_PPM                          // PPM/PWM receiver input needs STM32 timer input capture
+#undef USE_PWM
+#undef USE_RX_PWM
+#undef USE_RX_PPM
 
-#undef USE_TELEMETRY_GHST
-#undef USE_TELEMETRY_FRSKY_HUB
-#undef USE_TELEMETRY_HOTT
-#undef USE_TELEMETRY_IBUS
-#undef USE_TELEMETRY_IBUS_EXTENDED
-#undef USE_TELEMETRY_JETIEXBUS
-#undef USE_TELEMETRY_LTM
-#undef USE_TELEMETRY_MAVLINK
-#undef USE_TELEMETRY_SMARTPORT
-#undef USE_TELEMETRY_SRXL
-#undef USE_TELEMETRY_CRSF
-#undef USE_TELEMETRY_SBUS2
-#undef USE_TELEMETRY_CASTLE
-#undef USE_SPORT_MASTER
+// USE_TELEMETRY_SMARTPORT stays ENABLED (common_pre.h default): FBUS/FPORT2
+// telemetry (rx/fbus.c) is built entirely on it - without it the FBUS driver
+// compiles out its downlink handling and never answers the receiver's polls.
 // USE_BLACKBOX stays enabled (common_pre.h default) now that a real storage
 // backend is in scope - see the SDCARD/FLASH block above and
 // docs/RP2350-Porting-Plan.md's blackbox storage decision.
@@ -348,14 +345,9 @@
 // IOGetByTag/IOConfigGPIO, all of which PICO implements - the same basis on which
 // ESC 4-way programming is kept enabled above. Verified on RP2350 hardware: a
 // GP0<->GP1 loopback through the passthrough echoes back byte-for-byte.
-#undef USE_MULTI_GYRO
-
-#undef USE_RANGEFINDER_HCSR04
+#undef USE_RANGEFINDER_HCSR04              // STM32_UNIFIED leaves these out too
 #undef USE_VTX_RTC6705
 #undef USE_VTX_RTC6705_SOFTSPI
-#undef USE_SRXL
-#undef USE_SPEKTRUM
-#undef USE_SPEKTRUM_BIND
 
 #undef USE_CAMERA_CONTROL
 

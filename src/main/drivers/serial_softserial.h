@@ -29,6 +29,12 @@ typedef enum {
 
 serialPort_t *openSoftSerial(softSerialPortIndex_e portIndex, serialReceiveCallbackPtr rxCallback, void *rxCallbackData, uint32_t baud, portMode_e mode, portOptions_e options);
 
+#ifdef PICO
+// PIO soft serial on an arbitrary pin (ESC serial passthrough), drivers/serial_softserial_pico.c
+serialPort_t *openSoftSerialOnPin(ioTag_t tag, uint32_t baud, portMode_e mode, portOptions_e options);
+void closeSoftSerial(serialPort_t *port);
+#endif
+
 // serialPort API
 void softSerialWriteByte(serialPort_t *instance, uint8_t ch);
 uint32_t softSerialRxBytesWaiting(const serialPort_t *instance);

@@ -167,7 +167,7 @@ void gyroSetSampleRate(gyroDev_t *gyro)
 }
 
 
-#if defined(USE_GYRO_CLK)
+#if defined(USE_GYRO_CLK) && !defined(PICO) // PICO: drivers/gyro_clkin_pico.c
 
 static pwmOutputPort_t pwmGyroClk = INIT_ZERO;
 

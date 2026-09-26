@@ -325,7 +325,9 @@
 
 #if defined(USE_TIMER_MGMT)
 #undef USED_TIMERS
-#else
+#elif !defined(PICO)
+// PICO has no STM32 timers at all (PWM slices/PIO instead), so it is a
+// unified target without timer management.
 #undef USE_UNIFIED_TARGET
 #endif
 

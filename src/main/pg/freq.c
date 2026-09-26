@@ -21,7 +21,9 @@
 
 #include "drivers/io.h"
 #include "drivers/nvic.h"
+#ifdef USE_TIMER
 #include "drivers/timer.h"
+#endif
 #include "drivers/freq.h"
 
 #include "pg/pg.h"
@@ -33,9 +35,11 @@ PG_REGISTER_WITH_RESET_FN(freqConfig_t, freqConfig, PG_FREQ_SENSOR_CONFIG, 0);
 
 void pgResetFn_freqConfig(freqConfig_t *freqConfig)
 {
+#ifdef USE_TIMER
     for (unsigned index = 0; index < FREQ_SENSOR_PORT_COUNT; index++) {
         freqConfig->ioTag[index] = timerioTagGetByUsage(TIM_USE_FREQ, index);
     }
+#endif
 
     freqConfig->pullupdn = FREQ_INPUT_PULLUP;
     freqConfig->polarity = FREQ_INPUT_FALLING_EDGE;

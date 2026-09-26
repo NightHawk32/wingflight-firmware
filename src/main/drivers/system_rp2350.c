@@ -190,9 +190,21 @@ static void checkForBootLoaderRequest(void)
     while (1);
 }
 
+// Every firmware-initiated reboot goes through watchdog_reboot() (see
+// systemResetHard()), so a boot caused by the watchdog is a soft reset -
+// the counterpart of STM32's cached RCC SFTRSTF flag. Read once at boot.
+static bool softReset;
+
+bool isMPUSoftReset(void)
+{
+    return softReset;
+}
+
 void systemInit(void)
 {
     //TODO: implement
+
+    softReset = watchdog_caused_reboot();
 
     SystemInit();
 
