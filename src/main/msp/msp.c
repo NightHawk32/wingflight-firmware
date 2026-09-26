@@ -3979,8 +3979,9 @@ static mspResult_e mspProcessInCommand(mspDescriptor_t srcDesc, int16_t cmdMSP, 
 
 #ifdef USE_FBUS_MASTER
     case MSP_SET_XACT_SCAN:
-        // Start a new sensor discovery phase on the FBUS master link
-        if (!fbusMasterIsEnabled()) {
+        // Start a new sensor discovery phase on the FBUS master link. Not while armed: a
+        // rescan drops the discovered telemetry sensors until they are found again.
+        if (!fbusMasterIsEnabled() || ARMING_FLAG(ARMED)) {
             return MSP_RESULT_ERROR;
         }
         fbusXactStartSensorDiscovery();
@@ -3997,8 +3998,9 @@ static mspResult_e mspProcessInCommand(mspDescriptor_t srcDesc, int16_t cmdMSP, 
         // workingMode, maxAngle. targetPhyID selects which discovered servo to write to; the
         // "physicalId" value right after it is the new value to write into that servo's own
         // Physical ID field, and may differ from targetPhyID if the user is deliberately
-        // re-addressing the servo.
-        if (fbusMasterIsEnabled() && sbufBytesRemaining(src) >= 16) {
+        // re-addressing the servo. Refused while armed, so a servo's direction, center or
+        // channel can't change in flight.
+        if (fbusMasterIsEnabled() && !ARMING_FLAG(ARMED) && sbufBytesRemaining(src) >= 16) {
             const uint8_t phyID = sbufReadU8(src);
             xactServoParams_t params;
 
