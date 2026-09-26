@@ -236,8 +236,11 @@ typedef struct sdcardCSD_t {
 #define SDCARD_ACOMMAND_SEND_OP_COND             41
 #define SDCARD_ACOMMAND_SET_WR_BLOCK_ERASE_COUNT 23
 
-// These are worst-case timeouts defined for High Speed cards
+// Read: the worst case the spec defines for High Speed cards.
+// Write: the spec's 250ms (SDHC) / 500ms (SDXC) are exceeded by real cards now and then, and giving up resets the card
+// in the middle of a multiple block write, which can leave it unresponsive until power cycled. The wait is polled, not
+// blocking, so allowing more costs nothing but the time before a truly dead card is noticed.
 #define SDCARD_TIMEOUT_READ_MSEC   100
-#define SDCARD_TIMEOUT_WRITE_MSEC  250
+#define SDCARD_TIMEOUT_WRITE_MSEC  1000
 
 uint32_t readBitfield(uint8_t *buffer, unsigned bitIndex, unsigned bitLen);
