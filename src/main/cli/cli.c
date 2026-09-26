@@ -3110,7 +3110,7 @@ static void cliSdInfo(const char *cmdName, char *cmdline)
         cliPrint("Ready");
         break;
     case AFATFS_FILESYSTEM_STATE_INITIALIZATION:
-        cliPrint("Initializing");
+        cliPrint(afatfs_isFormatting() ? "Formatting blank card" : "Initializing");
         break;
     case AFATFS_FILESYSTEM_STATE_UNKNOWN:
     case AFATFS_FILESYSTEM_STATE_FATAL:

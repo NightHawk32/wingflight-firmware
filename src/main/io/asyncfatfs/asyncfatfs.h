@@ -93,4 +93,5 @@ bool afatfs_isFull(void);
 
 afatfsFilesystemState_e afatfs_getFilesystemState(void);
 afatfsError_e afatfs_getLastError(void);
+bool afatfs_isFormatting(void);
 bool afatfs_sectorCacheInSync(void);

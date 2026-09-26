@@ -75,6 +75,11 @@ assignment first with `resource <NAME> <index> NONE`.
 ## Checking
 
 - `sd_info` shows the card state, size and filesystem (FAT32).
+- A card that has never been formatted (no boot signature in sector 0) is
+  formatted as FAT32 automatically; `sd_info` shows `Formatting blank card`
+  meanwhile (about 20s for a 16GB card). Cards with any existing partition
+  table or volume are never touched, so a card formatted as exFAT or NTFS
+  still has to be reformatted as FAT32 on a PC.
 - Arm (with the default `blackbox_mode = NORMAL`) and check that a log file
   appears after disarming.
 - With USB mass storage (`USE_USB_MSC`) the card can be read from the PC.

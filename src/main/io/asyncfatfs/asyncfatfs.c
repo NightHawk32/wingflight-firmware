@@ -112,6 +112,20 @@
 // When allocating a freefile, leave this many clusters un-allocated for regular files to use
 #define AFATFS_FREEFILE_LEAVE_CLUSTERS 100
 
+// Give a card that has never been formatted (no boot signature in sector 0) an MBR and a FAT32 volume
+#define AFATFS_FORMAT_BLANK_CARD
+
+#ifdef AFATFS_FORMAT_BLANK_CARD
+// Align the partition to 4MiB, like the SD Association's formatter, so it starts on a flash erase block
+#define AFATFS_FORMAT_PARTITION_START_SECTOR 8192
+#define AFATFS_FORMAT_RESERVED_SECTORS       32
+#define AFATFS_FORMAT_FSINFO_SECTOR          1
+#define AFATFS_FORMAT_BACKUP_BOOT_SECTOR     6
+// 32KiB clusters where the card is big enough, which keeps the FATs (and so the format) small
+#define AFATFS_FORMAT_MAX_SECTORS_PER_CLUSTER 64
+#define AFATFS_FORMAT_ROOT_CLUSTER           FAT_SMALLEST_LEGAL_CLUSTER_NUMBER
+#endif
+
 // Filename in 8.3 format:
 #define AFATFS_FREESPACE_FILENAME "RESERVED.DAT"
 #define AFATFS_INTROSPEC_LOG_FILENAME "ASYNCFAT.LOG"
@@ -423,6 +437,19 @@ typedef struct afatfsFile_t {
     struct afatfsFileOperation_t operation;
 } afatfsFile_t;
 
+#ifdef AFATFS_FORMAT_BLANK_CARD
+typedef struct afatfsFormat_t {
+    uint32_t partitionSectors;
+    uint32_t fatSectors;
+    uint32_t volumeID;
+    uint8_t sectorsPerCluster;
+
+    // Sectors [AFATFS_FORMAT_PARTITION_START_SECTOR, endSector) hold the reserved area, both FATs and the root directory
+    uint32_t nextSector;
+    uint32_t endSector;
+} afatfsFormat_t;
+#endif
+
 typedef enum {
     AFATFS_INITIALIZATION_READ_MBR,
     AFATFS_INITIALIZATION_READ_VOLUME_ID,
@@ -441,7 +468,15 @@ typedef enum {
     AFATFS_INITIALIZATION_INTROSPEC_LOG_CREATING,
 #endif
 
-    AFATFS_INITIALIZATION_DONE
+    AFATFS_INITIALIZATION_DONE,
+
+    // Only entered from READ_MBR, and back to READ_MBR once done. Kept after DONE so that the phases above, which
+    // advance with initPhase++, never step into them.
+#ifdef AFATFS_FORMAT_BLANK_CARD
+    AFATFS_INITIALIZATION_FORMAT_WRITE_VOLUME,
+    AFATFS_INITIALIZATION_FORMAT_WRITE_MBR,
+    AFATFS_INITIALIZATION_FORMAT_FINISH,
+#endif
 } afatfsInitializationPhase_e;
 
 typedef struct afatfs_t {
@@ -456,6 +491,10 @@ typedef struct afatfs_t {
         afatfsFreeSpaceSearch_t freeSpaceSearch;
         afatfsFreeSpaceFAT_t freeSpaceFAT;
     } initState;
+#endif
+
+#ifdef AFATFS_FORMAT_BLANK_CARD
+    afatfsFormat_t format;
 #endif
 
 #ifdef STM32H7
@@ -1088,6 +1127,144 @@ static bool afatfs_parseVolumeID(const uint8_t *sector)
 
     return true;
 }
+
+#ifdef AFATFS_FORMAT_BLANK_CARD
+
+/**
+ * A card counts as never formatted when sector 0 carries no boot signature at all. Anything else (an MBR with
+ * partitions we don't support, a partitionless "superfloppy" volume) might hold the user's data, so is left alone.
+ */
+static bool afatfs_sectorIsUnformatted(const uint8_t *sector)
+{
+    return sector[AFATFS_SECTOR_SIZE - 2] != FAT_VOLUME_ID_SIGNATURE_1 || sector[AFATFS_SECTOR_SIZE - 1] != FAT_VOLUME_ID_SIGNATURE_2;
+}
+
+/**
+ * Lay out a FAT32 volume filling the card. Returns false if the card is too small to hold FAT32.
+ */
+static bool afatfs_formatPlan(void)
+{
+    const sdcardMetadata_t *metadata = sdcard_getMetadata();
+    afatfsFormat_t *format = &afatfs.format;
+
+    if (metadata->numBlocks <= AFATFS_FORMAT_PARTITION_START_SECTOR) {
+        return false;
+    }
+
+    format->partitionSectors = metadata->numBlocks - AFATFS_FORMAT_PARTITION_START_SECTOR;
+
+    // Take the biggest clusters that still leave enough of them for the volume to count as FAT32
+    for (uint32_t sectorsPerCluster = AFATFS_FORMAT_MAX_SECTORS_PER_CLUSTER; sectorsPerCluster >= 1; sectorsPerCluster /= 2) {
+        // FAT size calculation from Microsoft's FAT specification ("FAT32 File System Specification", section 3.5)
+        const uint32_t sectorsAfterReserved = format->partitionSectors - AFATFS_FORMAT_RESERVED_SECTORS;
+        const uint32_t divisor = (256 * sectorsPerCluster + AFATFS_NUM_FATS) / 2;
+        const uint32_t fatSectors = (sectorsAfterReserved + divisor - 1) / divisor;
+        const uint32_t numClusters = (sectorsAfterReserved - AFATFS_NUM_FATS * fatSectors) / sectorsPerCluster;
+
+        if (numClusters > FAT16_MAX_CLUSTERS) {
+            format->sectorsPerCluster = sectorsPerCluster;
+            format->fatSectors = fatSectors;
+            format->volumeID = metadata->productSerial;
+            format->nextSector = AFATFS_FORMAT_PARTITION_START_SECTOR;
+            // The root directory is the first data cluster
+            format->endSector = AFATFS_FORMAT_PARTITION_START_SECTOR + AFATFS_FORMAT_RESERVED_SECTORS
+                + AFATFS_NUM_FATS * fatSectors + sectorsPerCluster;
+
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void afatfs_formatBuildVolumeID(uint8_t *sector)
+{
+    const afatfsFormat_t *format = &afatfs.format;
+    fatVolumeID_t *volume = (fatVolumeID_t *) sector;
+
+    static const uint8_t jmpBoot[] = { 0xEB, 0x58, 0x90 };
+    memcpy(volume->jmpBoot, jmpBoot, sizeof(jmpBoot));
+    memcpy(volume->oemName, "MSWIN4.1", sizeof(volume->oemName));
+    volume->bytesPerSector = AFATFS_SECTOR_SIZE;
+    volume->sectorsPerCluster = format->sectorsPerCluster;
+    volume->reservedSectorCount = AFATFS_FORMAT_RESERVED_SECTORS;
+    volume->numFATs = AFATFS_NUM_FATS;
+    volume->media = 0xF8; // Fixed disk
+    volume->sectorsPerTrack = 63;
+    volume->numHeads = 255;
+    volume->hiddenSectors = AFATFS_FORMAT_PARTITION_START_SECTOR;
+    volume->totalSectors32 = format->partitionSectors;
+
+    fat32Descriptor_t *fat32 = &volume->fatDescriptor.fat32;
+    fat32->FATSize32 = format->fatSectors;
+    fat32->rootCluster = AFATFS_FORMAT_ROOT_CLUSTER;
+    fat32->fsInfo = AFATFS_FORMAT_FSINFO_SECTOR;
+    fat32->backupBootSector = AFATFS_FORMAT_BACKUP_BOOT_SECTOR;
+    fat32->driveNumber = 0x80;
+    fat32->bootSignature = 0x29; // The volume ID, label and type fields below are present
+    fat32->volumeID = format->volumeID;
+    memcpy(fat32->volumeLabel, "NO NAME    ", sizeof(fat32->volumeLabel));
+    memcpy(fat32->fileSystemType, "FAT32   ", sizeof(fat32->fileSystemType));
+
+    sector[AFATFS_SECTOR_SIZE - 2] = FAT_VOLUME_ID_SIGNATURE_1;
+    sector[AFATFS_SECTOR_SIZE - 1] = FAT_VOLUME_ID_SIGNATURE_2;
+}
+
+static void afatfs_formatBuildFSInfo(uint8_t *sector)
+{
+    uint32_t *words = (uint32_t *) sector;
+
+    words[0] = 0x41615252;                        // Lead signature
+    words[484 / sizeof(uint32_t)] = 0x61417272;   // Struct signature
+    words[488 / sizeof(uint32_t)] = 0xFFFFFFFF;   // Free cluster count: unknown
+    words[492 / sizeof(uint32_t)] = 0xFFFFFFFF;   // Next free cluster hint: unknown
+    words[508 / sizeof(uint32_t)] = 0xAA550000;   // Trail signature
+}
+
+/**
+ * Fill in the given sector of the new volume. partitionSector is relative to the start of the partition, and only
+ * covers the reserved area, the FATs and the root directory (everything else is left as it is).
+ */
+static void afatfs_formatBuildSector(uint32_t partitionSector, uint8_t *sector)
+{
+    const uint32_t firstFATSector = AFATFS_FORMAT_RESERVED_SECTORS;
+    const uint32_t secondFATSector = firstFATSector + afatfs.format.fatSectors;
+
+    memset(sector, 0, AFATFS_SECTOR_SIZE);
+
+    if (partitionSector == 0 || partitionSector == AFATFS_FORMAT_BACKUP_BOOT_SECTOR) {
+        afatfs_formatBuildVolumeID(sector);
+    } else if (partitionSector == AFATFS_FORMAT_FSINFO_SECTOR || partitionSector == AFATFS_FORMAT_BACKUP_BOOT_SECTOR + AFATFS_FORMAT_FSINFO_SECTOR) {
+        afatfs_formatBuildFSInfo(sector);
+    } else if (partitionSector == firstFATSector || partitionSector == secondFATSector) {
+        uint32_t *fat = (uint32_t *) sector;
+
+        fat[0] = 0x0FFFFFF8;                           // Media descriptor
+        fat[1] = 0x0FFFFFFF;                           // Reserved, "clean shutdown"
+        fat[AFATFS_FORMAT_ROOT_CLUSTER] = 0x0FFFFFFF;  // Root directory: a single-cluster chain
+    }
+    // Everything else, including the root directory cluster, is zero: an empty FAT and an empty directory
+}
+
+static void afatfs_formatBuildMBR(uint8_t *sector)
+{
+    memset(sector, 0, AFATFS_SECTOR_SIZE);
+
+    mbrPartitionEntry_t *partition = (mbrPartitionEntry_t *) (sector + 446);
+
+    // CHS addresses are unused by LBA partitions, fill them with the conventional "beyond CHS range" marker
+    static const uint8_t chsBeyondRange[] = { 0xFE, 0xFF, 0xFF };
+    memcpy(partition->chsBegin, chsBeyondRange, sizeof(chsBeyondRange));
+    memcpy(partition->chsEnd, chsBeyondRange, sizeof(chsBeyondRange));
+    partition->type = MBR_PARTITION_TYPE_FAT32_LBA;
+    partition->lbaBegin = AFATFS_FORMAT_PARTITION_START_SECTOR;
+    partition->numSectors = afatfs.format.partitionSectors;
+
+    sector[AFATFS_SECTOR_SIZE - 2] = FAT_VOLUME_ID_SIGNATURE_1;
+    sector[AFATFS_SECTOR_SIZE - 1] = FAT_VOLUME_ID_SIGNATURE_2;
+}
+
+#endif
 
 /**
  * Get the position of the FAT entry for the cluster with the given number.
@@ -3446,6 +3623,11 @@ static void afatfs_initContinue(void)
                 if (afatfs_parseMBR(sector)) {
                     afatfs.initPhase = AFATFS_INITIALIZATION_READ_VOLUME_ID;
                     goto doMore;
+#ifdef AFATFS_FORMAT_BLANK_CARD
+                } else if (afatfs_sectorIsUnformatted(sector) && afatfs_formatPlan()) {
+                    afatfs.initPhase = AFATFS_INITIALIZATION_FORMAT_WRITE_VOLUME;
+                    goto doMore;
+#endif
                 } else {
                     afatfs.lastError = AFATFS_ERROR_BAD_MBR;
                     afatfs.filesystemState = AFATFS_FILESYSTEM_STATE_FATAL;
@@ -3553,7 +3735,74 @@ static void afatfs_initContinue(void)
         case AFATFS_INITIALIZATION_DONE:
             afatfs.filesystemState = AFATFS_FILESYSTEM_STATE_READY;
         break;
+
+#ifdef AFATFS_FORMAT_BLANK_CARD
+        case AFATFS_INITIALIZATION_FORMAT_WRITE_VOLUME:
+            // Queue as many sectors as the cache will take, afatfs_poll() flushes them in order
+            while (afatfs.format.nextSector < afatfs.format.endSector) {
+                const bool firstSector = afatfs.format.nextSector == AFATFS_FORMAT_PARTITION_START_SECTOR;
+                // Tell the card up front how long the run is, so it can be written as one multi-block write
+                const uint32_t eraseCount = firstSector ? afatfs.format.endSector - afatfs.format.nextSector : 0;
+
+                const afatfsOperationStatus_e status = afatfs_cacheSector(afatfs.format.nextSector, &sector,
+                    AFATFS_CACHE_WRITE | AFATFS_CACHE_DISCARDABLE, eraseCount);
+
+                if (status == AFATFS_OPERATION_IN_PROGRESS) {
+                    break;
+                } else if (status == AFATFS_OPERATION_FAILURE) {
+                    afatfs.lastError = AFATFS_ERROR_GENERIC;
+                    afatfs.filesystemState = AFATFS_FILESYSTEM_STATE_FATAL;
+                    return;
+                }
+
+                afatfs_formatBuildSector(afatfs.format.nextSector - AFATFS_FORMAT_PARTITION_START_SECTOR, sector);
+                afatfs.format.nextSector++;
+            }
+
+            if (afatfs.format.nextSector == afatfs.format.endSector) {
+                afatfs.initPhase = AFATFS_INITIALIZATION_FORMAT_WRITE_MBR;
+            }
+        break;
+        case AFATFS_INITIALIZATION_FORMAT_WRITE_MBR:
+            // The MBR goes last: until it is on the card, a format cut short by a power loss still leaves a card that
+            // reads as unformatted, and is formatted again on the next boot.
+            if (!afatfs_sectorCacheInSync()) {
+                break;
+            }
+
+            // Sector 0 is still cached from READ_MBR unless it has been evicted since
+            if (afatfs_cacheSector(0, &sector, AFATFS_CACHE_READ | AFATFS_CACHE_DISCARDABLE, 0) == AFATFS_OPERATION_SUCCESS) {
+                afatfs_formatBuildMBR(sector);
+
+                // afatfs_cacheSector() refuses AFATFS_CACHE_WRITE for sector 0 so that nothing else can ever overwrite
+                // the MBR, so mark it dirty here instead.
+                afatfs_cacheSectorMarkDirty(&afatfs.cacheDescriptor[afatfs_allocateCacheSector(0)]);
+
+                afatfs.initPhase = AFATFS_INITIALIZATION_FORMAT_FINISH;
+            }
+        break;
+        case AFATFS_INITIALIZATION_FORMAT_FINISH:
+            if (afatfs_sectorCacheInSync()) {
+                // Mount the new volume the normal way, from its MBR
+                afatfs.initPhase = AFATFS_INITIALIZATION_READ_MBR;
+                goto doMore;
+            }
+        break;
+#endif
     }
+}
+
+/**
+ * True while initialization is formatting a blank card.
+ */
+bool afatfs_isFormatting(void)
+{
+#ifdef AFATFS_FORMAT_BLANK_CARD
+    return afatfs.filesystemState == AFATFS_FILESYSTEM_STATE_INITIALIZATION
+        && afatfs.initPhase > AFATFS_INITIALIZATION_DONE;
+#else
+    return false;
+#endif
 }
 
 /**
