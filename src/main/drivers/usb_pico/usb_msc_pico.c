@@ -34,6 +34,7 @@
 #include "drivers/system.h"
 #include "drivers/time.h"
 #include "drivers/usb_msc.h"
+#include "drivers/usb_pico/usb_cdc.h"
 
 // Storage backends (SD SPI / EMFAT) use the legacy USBD storage fops interface.
 // On PICO we include the lightweight header with the callback struct.
@@ -339,7 +340,14 @@ uint8_t mscStart(void)
 
 void mscTask(void)
 {
-    tud_task();
+    // Once the VCP is up, usb_cdc.c's worker IRQ also pumps the stack, so go
+    // through its mutex: tud_task() is not re-entrant, and a nested call arms
+    // the same endpoint twice ("ep %02X was already available" panic).
+    if (cdc_usb_configured()) {
+        cdc_usb_background_task();
+    } else {
+        tud_task();
+    }
 }
 #endif // USE_USB_MSC
 
