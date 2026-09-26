@@ -45,5 +45,12 @@ bool cdc_usb_deinit(void);
 bool cdc_usb_configured(void);
 bool cdc_usb_connected(void);
 bool cdc_usb_bytes_available(void);
+// Last baud rate the host set (SET_LINE_CODING), 115200 until it sets one.
 uint32_t cdc_usb_baud_rate(void);
+// Count of SET_LINE_CODING requests; changes whenever the host sets line coding.
+uint32_t cdc_usb_line_coding_seq(void);
+// Last control line state the host set: bit 0 DTR, bit 1 RTS.
+uint16_t cdc_usb_line_state(void);
+// Count of SET_CONTROL_LINE_STATE requests.
+uint32_t cdc_usb_line_state_seq(void);
 uint32_t cdc_usb_tx_bytes_free(void);

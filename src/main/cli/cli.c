@@ -1728,7 +1728,8 @@ static void cliSerialPassthrough(const char *cmdName, char *cmdline)
 #endif /* USE_PINIO */
         )) {
         // Register control line state callback
-        serialSetCtrlLineStateCb(ports[0].port, cbCtrlLine, (void *)(intptr_t)(port1PinioDtr));
+        // on the VCP (port 2) - only it reports control line state
+        serialSetCtrlLineStateCb(ports[1].port, cbCtrlLine, (void *)(intptr_t)(port1PinioDtr));
     }
 
 // XXX Review ESC pass through under refactored motor handling

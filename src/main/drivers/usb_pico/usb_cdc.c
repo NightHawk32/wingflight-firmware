@@ -39,6 +39,7 @@
 #include "pico/mutex.h"
 #include "pico/critical_section.h"
 #include "hardware/irq.h"
+#include "hardware/sync.h"
 
 #ifdef USE_MULTICORE
 #include "platform/multicore.h"
@@ -357,9 +358,56 @@ bool cdc_usb_bytes_available(void)
     return tud_cdc_available();
 }
 
+// SET_LINE_CODING / SET_CONTROL_LINE_STATE from the host. TinyUSB reports them
+// on whichever core owns the stack (core 1 once the VCP is offloaded), which
+// must not act on them: the consumers reconfigure other serial ports, or reset
+// the board. So the callbacks only record the request and bump a counter, and
+// serial_usb_vcp_pico.c picks it up on core 0 - see usbVcpServiceLineCallbacks().
+// Each value is written before its counter, with a barrier between, so a
+// reader that sees the new count also sees the new value.
+static volatile uint32_t cdc_line_baud = CDC_USD_BAUD_RATE;
+static volatile uint32_t cdc_line_coding_seq;
+static volatile uint16_t cdc_line_state; // bit 0 DTR, bit 1 RTS (CDC wValue layout)
+static volatile uint32_t cdc_line_state_seq;
+
+void tud_cdc_line_coding_cb(uint8_t itf, cdc_line_coding_t const *p_line_coding)
+{
+    UNUSED(itf);
+    cdc_line_baud = p_line_coding->bit_rate;
+    __dmb();
+    cdc_line_coding_seq++;
+}
+
+void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
+{
+    UNUSED(itf);
+    cdc_line_state = (dtr ? 0x01 : 0) | (rts ? 0x02 : 0);
+    __dmb();
+    cdc_line_state_seq++;
+}
+
 uint32_t cdc_usb_baud_rate(void)
 {
-    return CDC_USD_BAUD_RATE;
+    return cdc_line_baud;
+}
+
+uint32_t cdc_usb_line_coding_seq(void)
+{
+    const uint32_t seq = cdc_line_coding_seq;
+    __dmb();
+    return seq;
+}
+
+uint16_t cdc_usb_line_state(void)
+{
+    return cdc_line_state;
+}
+
+uint32_t cdc_usb_line_state_seq(void)
+{
+    const uint32_t seq = cdc_line_state_seq;
+    __dmb();
+    return seq;
 }
 
 uint32_t cdc_usb_tx_bytes_free(void)

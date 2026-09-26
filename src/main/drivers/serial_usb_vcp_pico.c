@@ -240,18 +240,58 @@ static void usbVcpSetMode(serialPort_t *instance, portMode_e mode)
     UNUSED(mode);
 }
 
+// Host line-coding / control-line-state callbacks (serialpassthrough: follow
+// the host's baud rate, reset when DTR drops). usb_cdc.c only counts the
+// requests - it runs on the USB core - and they are delivered from here, on
+// core 0, whenever the port is polled for received data. Registration takes
+// the current count as its baseline, so only requests made after it fire, as
+// on STM32 where the USB interrupt calls straight through.
+static void (*ctrlLineStateCb)(void *context, uint16_t ctrlLineState);
+static void *ctrlLineStateCbContext;
+static uint32_t ctrlLineStateSeenSeq;
+
+static void (*baudRateCb)(serialPort_t *context, uint32_t baud);
+static serialPort_t *baudRateCbContext;
+static uint32_t baudRateSeenSeq;
+
+static void usbVcpServiceLineCallbacks(void)
+{
+    if (baudRateCb) {
+        const uint32_t seq = cdc_usb_line_coding_seq();
+        if (seq != baudRateSeenSeq) {
+            baudRateSeenSeq = seq;
+            baudRateCb(baudRateCbContext, cdc_usb_baud_rate());
+        }
+    }
+
+    if (ctrlLineStateCb) {
+        const uint32_t seq = cdc_usb_line_state_seq();
+        if (seq != ctrlLineStateSeenSeq) {
+            ctrlLineStateSeenSeq = seq;
+            // CDC wValue bit layout, same as CTRL_LINE_STATE_DTR/RTS
+            ctrlLineStateCb(ctrlLineStateCbContext, cdc_usb_line_state());
+        }
+    }
+}
+
 static void usbVcpSetCtrlLineStateCb(serialPort_t *instance, void (*cb)(void *context, uint16_t ctrlLineState), void *context)
 {
     UNUSED(instance);
-    UNUSED(cb);
-    UNUSED(context);
+
+    ctrlLineStateCb = NULL;
+    ctrlLineStateSeenSeq = cdc_usb_line_state_seq();
+    ctrlLineStateCbContext = context;
+    ctrlLineStateCb = cb;
 }
 
 static void usbVcpSetBaudRateCb(serialPort_t *instance, void (*cb)(serialPort_t *context, uint32_t baud), serialPort_t *context)
 {
     UNUSED(instance);
-    UNUSED(cb);
-    UNUSED(context);
+
+    baudRateCb = NULL;
+    baudRateSeenSeq = cdc_usb_line_coding_seq();
+    baudRateCbContext = context;
+    baudRateCb = cb;
 }
 
 static bool isUsbVcpTransmitBufferEmpty(const serialPort_t *instance)
@@ -268,6 +308,9 @@ static bool isUsbVcpTransmitBufferEmpty(const serialPort_t *instance)
 static uint32_t usbVcpRxBytesAvailable(const serialPort_t *instance)
 {
     UNUSED(instance);
+
+    usbVcpServiceLineCallbacks();
+
 #ifdef USE_MULTICORE
     if (vcpTxOffloaded) {
         // taskHandleSerial() polls this about 100 times a second, which makes
