@@ -155,3 +155,22 @@ Reference. It records the signal chain, the design rationale behind each stage, 
 - Some behaviour that looks intentional is a known defect or a disabled path (for example, the
   flight-controller failsafe stage 2 is disabled, and the "airborne" state is read from stick and tilt only).
   Section 4 lists them. Check it before building on, or "fixing", the surrounding code.
+
+## Issues and Pull Requests
+
+Maintainers and users read these, so keep them short and precise. No filler, no restating the diff.
+
+**Issues**
+
+- Title: the symptom in one line.
+- Body: firmware version and target, steps to reproduce, expected vs actual behaviour. Attach CLI `diff all` or a
+  Blackbox log when relevant.
+
+**Pull requests**
+
+- Title: imperative, under ~70 characters (e.g. "Fix ATTHOLD drift after stick release").
+- Body, a few lines each:
+  - **What**: the change and why it is needed. Link the issue (`Fixes #123`).
+  - **Compatibility**: MSP, CLI or setting changes, and whether the Configurator or wingflight-docs need updating.
+  - **Testing**: what was built and run (unit tests, SITL, bench, flight).
+- One topic per PR. Leave out file-by-file change lists and generated summaries.
