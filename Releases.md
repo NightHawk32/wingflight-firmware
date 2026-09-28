@@ -1,3 +1,21 @@
+# 0.0.29
+
+Change the MSP API to 22.10. Updating resets every PID profile and thrust-vector profile to defaults (the stored I-term decay and relax values changed meaning), so note your tune before flashing and re-enter it afterwards. Use the 0.0.29 Configurator and Lua suites with this firmware.
+Add GPS speed attenuation (SPA) beside TPA: P and D scale with GPS speed, multiplied with the throttle-based TPA, so a tune that is right at cruise does not oscillate in a fast dive with the throttle closed. Set per profile with fw_spa_gain, fw_spa_curve (a slot of the shared gain-curve pool) and fw_spa_speed_max, on GPS builds. After a fix loss it holds the last scale for 3 s, then eases back to 100%. Blackbox logs an fw_spa header and a GAIN_ATTEN debug mode.
+Change I-term decay time (iterm_decay_time, tv_iterm_decay_time) to 0.01 s steps from 0.01 to 1.00 s (default 0.60 s), set per axis (roll, pitch, yaw). 0 no longer turns decay off. Adjustment functions 114-116 (main) and 117-119 (thrust vector).
+Make I-term relax always on for roll, pitch and yaw in both loops, and replace the relax cutoff in Hz with a per-axis 1-10 score, iterm_relax / tv_iterm_relax (default 5, higher = less bounce-back). iterm_relax_type and tv_iterm_relax_type are removed, and iterm_relax_level is now sent over MSP. Adjustment functions 120-122 (main) and 123-125 (thrust vector).
+Blackbox headers follow: iterm_decay is roll,pitch,yaw,limit, iterm_relax_level replaces iterm_relax_type, and iterm_relax replaces iterm_relax_cutoff.
+Add per-axis gain curves to the thrust-vector loop (tv_gain_curve), and give the main loop's gain_curve a CLI entry.
+Set a minimum F gain of 50 on roll, pitch and yaw, since MANUAL moves the surfaces by the F-term alone and F = 0 left no surface movement. Saved profiles below 50 are raised on load.
+Stop the yaw mixer rate capping rudder travel while AUTOHOVER is holding, so the hover yaw correction can use full rudder travel. Other modes are unchanged.
+Keep LOITER and RTH flying through GPS fix dropouts of up to 5 s by dead-reckoning from the last good fix, then ease the bank back to level. One satellite under nav_min_sats is accepted while the estimate is fresh, engaging during a dropout no longer needs the switch cycled, and RTH with no recorded home no longer steers toward 0,0. Nav holds level pitch instead of full nose-up when there is no altitude estimate.
+Fuse the accelerometer into altitude and vario, so vario tracks without lag and altitude coasts through short measurement dropouts (position_fusion_baro_tc, position_fusion_gps_tc). Boards without a baro now use GPS altitude; before, they had none.
+Change the nav_min_sats default from 8 to 6 and position_gps_min_sats from 12 to 6 for new and reset configs. Saved configs keep their values.
+Fix MSP_COPY_PROFILE not reloading the active rate profile after copying onto it, or switching it when the target index matched the active PID profile.
+Block XACT servo scans and parameter writes while armed, and fix XACT saves of about 6 or more changed fields losing their flash save.
+Stop a GPS port with no module answering from reinitialising the UART endlessly (retry every 30 s after 10 failed cycles), and harden the F7/H7/G4 UART reconfigure path against the in-flight freezes seen in Betaflight.
+Rename 21 debug modes that no longer log anything to UNUSED_<slot>, without renumbering.
+
 # 0.0.28
 
 Add two packed status telemetry sensors over CRSF and S.Port/FPort/FPort2: SYSTEM_STATUS (120) with armed/airborne state, main and backup RX link, failsafe phase, GPS fix and health, LOITER/RTH blocked, battery state, control saturation, gyro overflow, autotrim and Blackbox state; and SYSTEM_CONFIG (121) with the PID/rates/battery/TV profile numbers, unsaved settings, reboot required and sensors present. The 0.0.28 Lua suites read their FC status from them. This is a hard cut: the arming flags (90), PID/rates/battery/LED profile (95-98), TV profile (118) and GPS fix type (119) sensors are removed, and FLIGHT_MODE (89) no longer carries the GPS-unavailable bit 15 (now NAV_BLOCKED in SYSTEM_STATUS). Jeti EX Bus is unchanged. Use the 0.0.28 Configurator and Lua suites with this firmware.
