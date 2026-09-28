@@ -64,6 +64,7 @@
 
 #include "io/serial.h"
 #include "io/serial_4way.h"
+#include "io/serial_4way_escape32.h"
 
 #include "esc_sensor.h"
 
@@ -128,6 +129,7 @@ enum {
 #define ESC_SIG_GRAUPNER          0xC0
 #define ESC_SIG_BLHELI_S          0xC1
 #define ESC_SIG_AM32              0xC2
+#define ESC_SIG_ESCAPE32          0xC3
 #define ESC_SIG_CASTLE            0xCC
 #define ESC_SIG_RESTART           0xFF
 
@@ -553,7 +555,7 @@ static void updateConsumption(timeUs_t currentTimeUs)
  * Mapping to 4wayif
  */
 
-#if defined(USE_AM32_FORWARD_PROGRAMMING) || defined(USE_BLHELI_FORWARD_PROGRAMMING)
+#if defined(USE_AM32_FORWARD_PROGRAMMING) || defined(USE_BLHELI_FORWARD_PROGRAMMING) || defined(USE_ESCAPE32_FORWARD_PROGRAMMING)
 #define USE_4WAY_FORWARD_PROGRAMMING
 #endif
 
@@ -587,6 +589,11 @@ static void updateConsumption(timeUs_t currentTimeUs)
 #define BLHELI_S_PARAM_PROTOCOL_VERSION 0
 #endif
 
+#ifdef USE_ESCAPE32_FORWARD_PROGRAMMING
+// Payload is the ESCape32 binary config reply, see io/serial_4way_escape32.c
+#define ESCAPE32_PARAM_PROTOCOL_VERSION 0
+#endif
+
 #define ESC_INIT_DELAY 2500
 #define ESC_DEINIT_DELAY 100
 #define FWIF_RETRY_DELAY 5
@@ -595,7 +602,9 @@ static void updateConsumption(timeUs_t currentTimeUs)
 #define FWIF_WRITE_TIMEOUT 100
 #define FWIF_POST_WRITE_SETTLE_DELAY 1000
 
-#ifdef USE_BLHELI_FORWARD_PROGRAMMING
+#if defined(USE_ESCAPE32_FORWARD_PROGRAMMING)
+#define FWIF_MAX_EEPROM_BYTES ESC32_PAYLOAD_MAX_SIZE
+#elif defined(USE_BLHELI_FORWARD_PROGRAMMING)
 #define FWIF_MAX_EEPROM_BYTES BLHELI_S_NUM_EEPROM_BYTES
 #else
 #define FWIF_MAX_EEPROM_BYTES AM32_NUM_EEPROM_BYTES
@@ -650,6 +659,14 @@ static void fourwayResetAllEscs(void)
         if (!pwmMotors[i].enabled || pwmMotors[i].io == IO_NONE) {
             continue;
         }
+
+#ifdef USE_ESCAPE32_FORWARD_PROGRAMMING
+        // Not in a bootloader. ESCape32 leaves its CLI by itself (framing
+        // error reset) once the line carries motor protocol again.
+        if (fwifParamSig[i] == ESC_SIG_ESCAPE32) {
+            continue;
+        }
+#endif
 
         if (fwifWaitForDeviceInitFlash(i) != NULL) {
             fwifCmdDeviceReset(false);
@@ -788,6 +805,27 @@ static bool fourwayIfFetchData(uint8_t escID)
 
     if (pwmMotors[escID].enabled && escID < fourwayEscCount) {
         if (pwmMotors[escID].io != IO_NONE) {
+#ifdef USE_ESCAPE32_FORWARD_PROGRAMMING
+            // Probe ESCape32 first: the bootloader handshake below is sent at
+            // a different baud rate, which makes an ESCape32 ESC reset.
+            if (fwifParamSig[escID] == ESC_SIG_NONE || fwifParamSig[escID] == ESC_SIG_ESCAPE32) {
+                const uint8_t payloadLength = esc32ReadConfig(escID, paramPayload);
+                if (payloadLength) {
+                    escSig = ESC_SIG_ESCAPE32;
+                    memcpy(fwifParamBuffers[escID], paramPayload, payloadLength);
+                    fwifParamCached[escID] = true;
+                    fwifParamWritten[escID] = false;
+                    fwifParamSig[escID] = ESC_SIG_ESCAPE32;
+                    fwifParamLength[escID] = payloadLength;
+                    paramPayloadLength = payloadLength;
+                    paramBufferEscID = escID;
+                    return true;
+                }
+                if (fwifParamSig[escID] == ESC_SIG_ESCAPE32) {
+                    return false;
+                }
+            }
+#endif
             uint8_32_u *devInfo = fwifWaitForDeviceInitFlash(escID);
 
             if (devInfo != NULL) {
@@ -835,6 +873,23 @@ static bool fourwayIfWriteData(uint8_t escID)
     }
 
     pwmOutputPort_t *pwmMotors = pwmGetMotors();
+
+#ifdef USE_ESCAPE32_FORWARD_PROGRAMMING
+    if (fwifParamSig[escID] == ESC_SIG_ESCAPE32) {
+        if (!pwmMotors[escID].enabled || escID >= fourwayEscCount || pwmMotors[escID].io == IO_NONE) {
+            return false;
+        }
+        // The reply holds the config as saved, after the ESC's range checks
+        const uint8_t payloadLength = esc32WriteConfig(escID, paramUpdPayload, fwifParamLength[escID], fwifParamBuffers[escID]);
+        if (payloadLength == 0) {
+            return false;
+        }
+        fwifParamLength[escID] = payloadLength;
+        fwifParamCached[escID] = true;
+        fwifParamWritten[escID] = true;
+        return true;
+    }
+#endif
 
     if (pwmMotors[escID].enabled && escID < fourwayEscCount) {
         if (pwmMotors[escID].io != IO_NONE) {
@@ -4883,6 +4938,12 @@ static bool is4wayParamBufferValid(uint8_t id)
                 (paramBuffer[PARAM_HEADER_VER] & PARAM_HEADER_VER_MASK) == AM32_PARAM_PROTOCOL_VERSION &&
                 (paramUpdBuffer[PARAM_HEADER_VER] & PARAM_HEADER_VER_MASK) == AM32_PARAM_PROTOCOL_VERSION;
 #endif
+#ifdef USE_ESCAPE32_FORWARD_PROGRAMMING
+        case ESC_SIG_ESCAPE32:
+            return paramPayloadLength == fwifParamLength[id] &&
+                (paramBuffer[PARAM_HEADER_VER] & PARAM_HEADER_VER_MASK) == ESCAPE32_PARAM_PROTOCOL_VERSION &&
+                (paramUpdBuffer[PARAM_HEADER_VER] & PARAM_HEADER_VER_MASK) == ESCAPE32_PARAM_PROTOCOL_VERSION;
+#endif
 #ifdef USE_BLHELI_FORWARD_PROGRAMMING
         case ESC_SIG_BLHELI_S:
             return paramPayloadLength == BLHELI_S_NUM_EEPROM_BYTES &&
@@ -4958,6 +5019,11 @@ uint8_t *escGetParamBuffer(void)
 #ifdef USE_BLHELI_FORWARD_PROGRAMMING
             case ESC_SIG_BLHELI_S:
                 protocolVersion = BLHELI_S_PARAM_PROTOCOL_VERSION;
+                break;
+#endif
+#ifdef USE_ESCAPE32_FORWARD_PROGRAMMING
+            case ESC_SIG_ESCAPE32:
+                protocolVersion = ESCAPE32_PARAM_PROTOCOL_VERSION;
                 break;
 #endif
             default:

@@ -3,6 +3,27 @@
 This file is collecting the changes in the firmware that are affecting
 the APIs or flight performance.
 
+## ESCape32 Forward Programming
+
+ESCape32 ESCs can be read and written through `MSP_ESC_PARAMETERS` /
+`MSP_SET_ESC_PARAMETERS` after selecting the ESC with
+`MSP_SET_4WIF_ESC_FWD_PROG`, like AM32 and BLHeli_S. The FC talks to the
+ESC's CLI over the signal wire using ESCape32's binary config commands
+(`io/serial_4way_escape32.c`), so it carries no parameter names or text
+parsing.
+
+- New ESC signature `0xC3`, parameter protocol version 0.
+- Payload (113 bytes for ESCape32 rev 17): revision, patch, name (16 bytes,
+  NUL padded), value count, then that many int16 little-endian values.
+  Value `i` is ESCape32 parameter `i` in `CFG_MAP` order (`src/prog.c` in
+  ESCape32; same order as its CRSF parameter IDs minus one). The music
+  string is reported as 0 and ignored on write.
+- On write, the ESC range-checks and saves the values and returns the
+  config as saved. It rejects a payload whose revision or value count differ
+  from its own firmware.
+- The Configurator needs a parameter table per ESCape32 revision to show it.
+- Requires ESCape32 firmware with the binary config commands.
+
 ## PARALYZE, STICK COMMANDS DISABLE, ALTHOLD and CALIB Removed
 
 Four modes the Configurator already hid, or that never did anything, are

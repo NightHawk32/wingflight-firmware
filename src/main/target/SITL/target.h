@@ -155,6 +155,7 @@
 // whose driver timestamps bytes with microsISR() from drivers/system.c.
 #undef USE_BLHELI_FORWARD_PROGRAMMING
 #undef USE_AM32_FORWARD_PROGRAMMING
+#undef USE_ESCAPE32_FORWARD_PROGRAMMING
 #undef USE_SRXL2_ESC
 
 #undef USE_I2C

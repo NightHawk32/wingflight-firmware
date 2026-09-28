@@ -125,6 +125,7 @@ COMMON_SRC = \
             io/serial_4way.c \
             io/serial_4way_avrootloader.c \
             io/serial_4way_stk500v2.c \
+            io/serial_4way_escape32.c \
             rx/ibus.c \
             rx/ibus2.c \
             rx/ibus2_telemetry.c \
@@ -326,6 +327,7 @@ SIZE_OPTIMISED_SRC := $(SIZE_OPTIMISED_SRC) \
             io/serial_4way.c \
             io/serial_4way_avrootloader.c \
             io/serial_4way_stk500v2.c \
+            io/serial_4way_escape32.c \
             io/usb_cdc_hid.c \
             msp/msp_serial.c \
             rx/rx_bind.c
